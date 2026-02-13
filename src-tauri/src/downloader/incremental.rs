@@ -254,6 +254,10 @@ async fn run_hpatchz(
     Ok(())
 }
 
+pub async fn ensure_hpatchz_public() -> Result<PathBuf, String> {
+    ensure_hpatchz().await
+}
+
 async fn ensure_hpatchz() -> Result<PathBuf, String> {
     let tools_dir = crate::utils::file_manager::get_tools_dir();
     let hpatchz_path = tools_dir.join("hpatchz");

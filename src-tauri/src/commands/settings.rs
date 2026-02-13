@@ -7,12 +7,13 @@ use tauri::State;
 pub fn load_settings(config: State<'_, Mutex<AppConfig>>) -> Result<AppConfig, String> {
     // 优先从 SQLite 读取
     let pairs = db::get_all_settings();
-    let loaded = if pairs.is_empty() {
+    let mut loaded = if pairs.is_empty() {
         // 尝试从旧 settings.json 迁移
         migrate_json_to_db()?
     } else {
         settings_from_kv(&pairs)
     };
+    normalize_settings(&mut loaded);
 
     // 同步全局 dataDir
     apply_data_dir(&loaded);
@@ -25,8 +26,10 @@ pub fn load_settings(config: State<'_, Mutex<AppConfig>>) -> Result<AppConfig, S
 #[tauri::command]
 pub fn save_settings(
     config: State<'_, Mutex<AppConfig>>,
-    settings: AppConfig,
+    mut settings: AppConfig,
 ) -> Result<(), String> {
+    normalize_settings(&mut settings);
+
     // 写入 SQLite
     settings_to_kv(&settings);
 
@@ -60,13 +63,28 @@ fn migrate_json_to_db() -> Result<AppConfig, String> {
 
 /// AppConfig → SQLite KV 写入
 fn settings_to_kv(cfg: &AppConfig) {
-    db::set_setting("background_type", &cfg.background_type);
+    db::set_setting("bg_type", &cfg.bg_type);
+    // 向后兼容旧键名
+    db::set_setting("background_type", &cfg.bg_type);
+
+    db::set_setting("bg_image", &cfg.bg_image);
+    db::set_setting("bg_video", &cfg.bg_video);
+    db::set_setting("content_opacity", &cfg.content_opacity.to_string());
+    db::set_setting("content_blur", &cfg.content_blur.to_string());
     db::set_setting("cache_dir", &cfg.cache_dir);
+    db::set_setting("current_config_name", &cfg.current_config_name);
+    db::set_setting("github_token", &cfg.github_token);
+    db::set_setting("show_mods", if cfg.show_mods { "true" } else { "false" });
+    db::set_setting("show_websites", if cfg.show_websites { "true" } else { "false" });
+    db::set_setting("show_documents", if cfg.show_documents { "true" } else { "false" });
+    db::set_setting("locale", &cfg.locale);
+    // 向后兼容旧键名
+    db::set_setting("language", &cfg.locale);
+
     db::set_setting("window_width", &cfg.window_width.to_string());
     db::set_setting("window_height", &cfg.window_height.to_string());
     db::set_setting("window_x", &cfg.window_x.map(|v| v.to_string()).unwrap_or_default());
     db::set_setting("window_y", &cfg.window_y.map(|v| v.to_string()).unwrap_or_default());
-    db::set_setting("language", &cfg.language);
     db::set_setting("theme", &cfg.theme);
     db::set_setting("custom_search_paths", &serde_json::to_string(&cfg.custom_search_paths).unwrap_or_default());
     db::set_setting("data_dir", &cfg.data_dir);
@@ -78,20 +96,134 @@ fn settings_from_kv(pairs: &[(String, String)]) -> AppConfig {
     let get = |key: &str| -> String {
         pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()).unwrap_or_default()
     };
+    let get_any = |keys: &[&str]| -> String {
+        keys.iter()
+            .find_map(|key| pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()))
+            .unwrap_or_default()
+    };
 
     let defaults = AppConfig::default();
+
+    let bg_type_raw = get_any(&["bg_type", "bgType", "background_type", "backgroundType"]);
+    let locale_raw = get_any(&["locale", "language"]);
+
     AppConfig {
-        background_type: { let v = get("background_type"); if v.is_empty() { defaults.background_type } else { v } },
-        cache_dir: { let v = get("cache_dir"); if v.is_empty() { defaults.cache_dir } else { v } },
-        window_width: get("window_width").parse().unwrap_or(defaults.window_width),
-        window_height: get("window_height").parse().unwrap_or(defaults.window_height),
-        window_x: get("window_x").parse().ok(),
-        window_y: get("window_y").parse().ok(),
-        language: { let v = get("language"); if v.is_empty() { defaults.language } else { v } },
-        theme: { let v = get("theme"); if v.is_empty() { defaults.theme } else { v } },
-        custom_search_paths: serde_json::from_str(&get("custom_search_paths")).unwrap_or_default(),
-        data_dir: get("data_dir"),
-        initialized: get("initialized") == "true",
+        bg_type: normalize_bg_type(if bg_type_raw.is_empty() { &defaults.bg_type } else { &bg_type_raw }),
+        bg_image: {
+            let v = get_any(&["bg_image", "bgImage"]);
+            if v.is_empty() { defaults.bg_image } else { v }
+        },
+        bg_video: {
+            let v = get_any(&["bg_video", "bgVideo"]);
+            if v.is_empty() { defaults.bg_video } else { v }
+        },
+        content_opacity: {
+            let v = get_any(&["content_opacity", "contentOpacity"]);
+            parse_f64_or_default(&v, defaults.content_opacity)
+        },
+        content_blur: {
+            let v = get_any(&["content_blur", "contentBlur"]);
+            parse_f64_or_default(&v, defaults.content_blur)
+        },
+        cache_dir: {
+            let v = get_any(&["cache_dir", "cacheDir"]);
+            if v.is_empty() { defaults.cache_dir } else { v }
+        },
+        current_config_name: {
+            let v = get_any(&["current_config_name", "currentConfigName"]);
+            if v.is_empty() { defaults.current_config_name } else { v }
+        },
+        github_token: {
+            let v = get_any(&["github_token", "githubToken"]);
+            if v.is_empty() { defaults.github_token } else { v }
+        },
+        show_mods: {
+            let v = get_any(&["show_mods", "showMods"]);
+            parse_bool_or_default(&v, defaults.show_mods)
+        },
+        show_websites: {
+            let v = get_any(&["show_websites", "showWebsites"]);
+            parse_bool_or_default(&v, defaults.show_websites)
+        },
+        show_documents: {
+            let v = get_any(&["show_documents", "showDocuments"]);
+            parse_bool_or_default(&v, defaults.show_documents)
+        },
+        locale: normalize_locale(if locale_raw.is_empty() { &defaults.locale } else { &locale_raw }),
+        window_width: parse_f64_or_default(&get_any(&["window_width", "windowWidth"]), defaults.window_width),
+        window_height: parse_f64_or_default(&get_any(&["window_height", "windowHeight"]), defaults.window_height),
+        window_x: get_any(&["window_x", "windowX"]).parse().ok(),
+        window_y: get_any(&["window_y", "windowY"]).parse().ok(),
+        theme: {
+            let v = get("theme");
+            if v.is_empty() { defaults.theme } else { v }
+        },
+        custom_search_paths: {
+            let v = get_any(&["custom_search_paths", "customSearchPaths"]);
+            if v.is_empty() {
+                defaults.custom_search_paths
+            } else {
+                serde_json::from_str(&v).unwrap_or_default()
+            }
+        },
+        data_dir: {
+            let v = get_any(&["data_dir", "dataDir"]);
+            if v.is_empty() { defaults.data_dir } else { v }
+        },
+        initialized: parse_bool_or_default(&get("initialized"), defaults.initialized),
+    }
+}
+
+fn parse_bool_or_default(value: &str, default: bool) -> bool {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "" => default,
+        "1" | "true" | "yes" | "on" => true,
+        "0" | "false" | "no" | "off" => false,
+        _ => default,
+    }
+}
+
+fn parse_f64_or_default(value: &str, default: f64) -> f64 {
+    value.parse().unwrap_or(default)
+}
+
+fn normalize_bg_type(value: &str) -> String {
+    if value.trim().eq_ignore_ascii_case("video") {
+        "Video".to_string()
+    } else {
+        "Image".to_string()
+    }
+}
+
+fn normalize_locale(value: &str) -> String {
+    let normalized = value.trim().to_ascii_lowercase().replace('_', "-");
+
+    if normalized == "zht"
+        || normalized.starts_with("zh-tw")
+        || normalized.starts_with("zh-hk")
+        || normalized.starts_with("zh-hant")
+    {
+        "zht".to_string()
+    } else if normalized == "zhs"
+        || normalized.starts_with("zh")
+    {
+        "zhs".to_string()
+    } else {
+        "en".to_string()
+    }
+}
+
+fn normalize_settings(cfg: &mut AppConfig) {
+    cfg.bg_type = normalize_bg_type(&cfg.bg_type);
+    cfg.locale = normalize_locale(&cfg.locale);
+
+    if cfg.content_opacity.is_nan() {
+        cfg.content_opacity = 0.0;
+    }
+    cfg.content_opacity = cfg.content_opacity.clamp(0.0, 1.0);
+
+    if cfg.content_blur.is_nan() || cfg.content_blur < 0.0 {
+        cfg.content_blur = 0.0;
     }
 }
 

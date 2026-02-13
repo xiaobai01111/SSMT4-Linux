@@ -49,6 +49,10 @@ const KNOWN_LAUNCHER_APIS: Record<string, { launcherApi: string; defaultFolder: 
     launcherApi: 'https://prod-cn-alicdn-gamestarter.kurogame.com/launcher/game/G152/10003_Y8xXrXk65DqFHEDgApn3cpK5lfczpFx5/index.json',
     defaultFolder: 'Wuthering Waves Game',
   },
+  'SRMI': {
+    launcherApi: 'https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1',
+    defaultFolder: 'StarRail',
+  },
 };
 
 const close = () => {
