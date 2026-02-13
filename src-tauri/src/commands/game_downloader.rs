@@ -35,7 +35,8 @@ pub async fn get_game_state(
     // Fetch remote info
     let launcher_info = match cdn::fetch_launcher_info(&launcher_api).await {
         Ok(info) => info,
-        Err(_e) => {
+        Err(e) => {
+            tracing::error!("fetch_launcher_info failed: {}", e);
             return Ok(GameState {
                 state: LauncherState::NetworkError,
                 local_version: get_local_version_internal(&game_path),
@@ -229,7 +230,7 @@ pub fn get_game_launcher_api(game_preset: String) -> Result<serde_json::Value, S
     }
 }
 
-/// 返回游戏默认安装目录
+/// 返回游戏默认安装目录（自动跟随软件数据目录 dataDir）
 #[tauri::command]
 pub fn get_default_game_folder(game_name: String) -> Result<String, String> {
     let data_dir = crate::configs::app_config::get_app_data_dir();

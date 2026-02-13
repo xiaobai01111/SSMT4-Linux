@@ -283,6 +283,28 @@ export async function deleteGameConfigFolder(gameName: string): Promise<void> {
   return invoke('delete_game_config_folder', { gameName });
 }
 
+// 游戏配置模板
+export interface GameTemplateInfo {
+  name: string;
+  gameId: string;
+  displayName: string;
+  iconPath: string;
+  hasIcon: boolean;
+  alreadyExists: boolean;
+}
+
+export async function getGameTemplatesDir(): Promise<string> {
+  return invoke<string>('get_game_templates_dir');
+}
+
+export async function listGameTemplates(): Promise<GameTemplateInfo[]> {
+  return invoke<GameTemplateInfo[]>('list_game_templates');
+}
+
+export async function importGameTemplate(templateName: string, overwrite: boolean = false): Promise<void> {
+  return invoke('import_game_template', { templateName, overwrite });
+}
+
 export async function setGameBackground(
   gameName: string, filePath: string, bgType: string
 ): Promise<void> {
@@ -291,6 +313,10 @@ export async function setGameBackground(
 
 export async function setGameIcon(gameName: string, filePath: string): Promise<void> {
   return invoke('set_game_icon', { gameName, filePath });
+}
+
+export async function resetGameBackground(gameName: string): Promise<void> {
+  return invoke('reset_game_background', { gameName });
 }
 
 export async function updateGameBackground(
@@ -527,12 +553,16 @@ export async function getDefaultGameFolder(gameName: string): Promise<string> {
   return invoke<string>('get_default_game_folder', { gameName });
 }
 
+export async function getVideoServerPort(): Promise<number> {
+  return invoke<number>('get_video_server_port');
+}
+
 // ============================================================
 // Tauri 辅助函数封装
 // ============================================================
 
-export function convertFileSrc(path: string): string {
-  return tauriConvertFileSrc(path);
+export function convertFileSrc(path: string, protocol?: string): string {
+  return tauriConvertFileSrc(path, protocol);
 }
 
 export async function joinPath(...parts: string[]): Promise<string> {

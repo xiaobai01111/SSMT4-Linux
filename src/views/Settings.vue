@@ -9,11 +9,23 @@ const selectCacheDir = async () => {
   const selected = await openFileDialog({
     directory: true,
     multiple: false,
-    title: '选择 SSMT 缓存文件夹'
+    title: t('settings.selectcachedir')
   });
 
   if (selected && typeof selected === 'string') {
     appSettings.cacheDir = selected;
+  }
+};
+
+const selectDataDir = async () => {
+  const selected = await openFileDialog({
+    directory: true,
+    multiple: false,
+    title: t('settings.selectdatadir')
+  });
+
+  if (selected && typeof selected === 'string') {
+    appSettings.dataDir = selected;
   }
 };
 </script>
@@ -24,7 +36,7 @@ const selectCacheDir = async () => {
     <el-card>
       <template #header>
         <div class="card-header">
-          <span>基础设置</span>
+          <span>{{ t('settings.basicsettings') }}</span>
         </div>
       </template>
       <el-form label-width="140px">
@@ -35,14 +47,23 @@ const selectCacheDir = async () => {
             <el-option label="English" value="en" />
           </el-select>
         </el-form-item>
-        <el-form-item label="SSMT缓存文件夹">
+        <el-form-item :label="t('settings.datadir')">
           <div style="display: flex; gap: 10px; width: 100%;">
-            <el-input v-model="appSettings.cacheDir" placeholder="请选择或输入缓存文件夹路径" />
-            <el-button @click="selectCacheDir">选择文件夹</el-button>
+            <el-input v-model="appSettings.dataDir" :placeholder="t('settings.datadir_placeholder')" />
+            <el-button @click="selectDataDir">{{ t('settings.selectfolder') }}</el-button>
+          </div>
+          <div style="font-size: 12px; color: rgba(255,255,255,0.4); margin-top: 4px; line-height: 1.5;">
+            {{ t('settings.datadir_hint') }}
           </div>
         </el-form-item>
-        <el-form-item label="GitHub Token">
-          <el-input v-model="appSettings.githubToken" placeholder="可选: 填写Token可提高API请求限额" type="password"
+        <el-form-item :label="t('settings.cachedir')">
+          <div style="display: flex; gap: 10px; width: 100%;">
+            <el-input v-model="appSettings.cacheDir" :placeholder="t('settings.cachedir_placeholder')" />
+            <el-button @click="selectCacheDir">{{ t('settings.selectfolder') }}</el-button>
+          </div>
+        </el-form-item>
+        <el-form-item :label="t('settings.github_token')">
+          <el-input v-model="appSettings.githubToken" :placeholder="t('settings.github_token_placeholder')" type="password"
             show-password />
         </el-form-item>
       </el-form>
@@ -53,16 +74,16 @@ const selectCacheDir = async () => {
     <el-card>
       <template #header>
         <div class="card-header">
-          <span>外观设置</span>
+          <span>{{ t('settings.appearance') }}</span>
         </div>
       </template>
 
       <el-form label-width="140px">
-        <div class="settings-divider">内容区样式 (Content)</div>
-        <el-form-item label="不透明度 (Opacity)">
+        <div class="settings-divider">{{ t('settings.content_style') }}</div>
+        <el-form-item :label="t('settings.opacity')">
           <el-slider v-model="appSettings.contentOpacity" :min="0" :max="1" :step="0.01" show-input />
         </el-form-item>
-        <el-form-item label="模糊度 (Blur)">
+        <el-form-item :label="t('settings.blur')">
           <el-slider v-model="appSettings.contentBlur" :min="0" :max="50" :step="1" show-input />
         </el-form-item>
       </el-form>
@@ -73,17 +94,17 @@ const selectCacheDir = async () => {
     <el-card>
       <template #header>
         <div class="card-header">
-          <span>页面显示设置</span>
+          <span>{{ t('settings.page_display') }}</span>
         </div>
       </template>
       <el-form label-width="140px">
-        <el-form-item label="Mod管理页面">
+        <el-form-item :label="t('settings.modpage')">
           <el-switch v-model="appSettings.showMods" />
         </el-form-item>
-        <el-form-item label="常用网址页面">
+        <el-form-item :label="t('settings.websitepage')">
           <el-switch v-model="appSettings.showWebsites" />
         </el-form-item>
-        <el-form-item label="使用文档页面">
+        <el-form-item :label="t('settings.docpage')">
           <el-switch v-model="appSettings.showDocuments" />
         </el-form-item>
       </el-form>

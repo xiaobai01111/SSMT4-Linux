@@ -6,6 +6,7 @@ import {
   updateGame as apiUpdateGame,
   verifyGameFiles as apiVerifyGameFiles,
   cancelDownload as apiCancelDownload,
+  getDefaultGameFolder,
   listenEvent,
   openFileDialog,
   showMessage,
@@ -14,7 +15,6 @@ import {
   type GameState,
   type DownloadProgress,
 } from '../api';
-import { homeDir } from '@tauri-apps/api/path';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -64,12 +64,14 @@ const loadState = async () => {
 
   // 1. 先尝试从 Config.json 读取 GamePreset，失败则直接用 gameName
   let preset = props.gameName;
+  let savedFolder = '';
   try {
     const config = await loadGameConfig(props.gameName);
     preset = (config as any).GamePreset || config.basic?.gamePreset || props.gameName;
-    // 恢复之前保存的下载配置
-    launcherApi.value = (config as any).launcherApi || '';
-    gameFolder.value = (config as any).gameFolder || '';
+    // 恢复之前保存的下载配置（保存在 config.other 下）
+    const other = config.other || {};
+    launcherApi.value = other.launcherApi || '';
+    savedFolder = other.gameFolder || '';
   } catch (e) {
     console.warn('[GameDownload] loadGameConfig 失败，使用 gameName 作为 preset:', e);
   }
@@ -91,11 +93,20 @@ const loadState = async () => {
     launcherApi.value = knownApi.launcherApi;
   }
 
-  // 4. 自动填充游戏安装目录
-  if (!gameFolder.value) {
-    let home = '/tmp/ssmt4/games/';
-    try { home = await homeDir(); } catch { /* fallback */ }
-    gameFolder.value = home + '.local/share/ssmt4/games/' + props.gameName + '/' + knownApi.defaultFolder;
+  // 4. 始终从后端获取最新默认目录（跟随 dataDir 变化）
+  try {
+    const baseDir = await getDefaultGameFolder(props.gameName);
+    const defaultFolder = baseDir + '/' + knownApi.defaultFolder;
+    // 仅当用户没有手动设置过自定义目录时，使用默认路径
+    // 判断依据：savedFolder 为空，或 savedFolder 是旧的默认路径格式
+    if (!savedFolder || savedFolder.includes('/.local/share/ssmt4/') || savedFolder === defaultFolder) {
+      gameFolder.value = defaultFolder;
+    } else {
+      gameFolder.value = savedFolder;
+    }
+  } catch (e) {
+    console.warn('[GameDownload] getDefaultGameFolder failed:', e);
+    gameFolder.value = savedFolder || '';
   }
 
   statusMsg.value = '';
@@ -222,6 +233,10 @@ const selectGameFolder = async () => {
     const selected = await openFileDialog({ directory: true, title: '选择游戏安装目录' });
     if (selected && typeof selected === 'string') {
       gameFolder.value = selected;
+      // 自动保存用户选择的目录
+      await saveDownloadConfig();
+      // 用新目录重新检查游戏状态
+      await checkState();
     }
   } catch (e) { console.error(e); }
 };
@@ -299,7 +314,7 @@ watch(() => props.modelValue, (val) => {
     statusMsg.value = '';
     loadState();
   }
-});
+}, { immediate: true });
 </script>
 
 <template>
@@ -339,12 +354,28 @@ watch(() => props.modelValue, (val) => {
               </div>
             </div>
 
+            <!-- 安装目录（始终显示，下载前必须确认） -->
+            <div v-if="!isWorking" class="install-dir-section">
+              <label class="install-dir-label">安装目录</label>
+              <div class="install-dir-row">
+                <input v-model="gameFolder" type="text" class="dl-input" placeholder="选择游戏安装目录..." />
+                <button class="icon-btn" @click="selectGameFolder" title="选择目录">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                  </svg>
+                </button>
+              </div>
+              <p class="install-dir-hint">游戏文件将下载到此目录，请确保有足够磁盘空间（约 30GB+）</p>
+            </div>
+
             <!-- 下载/更新按钮 -->
             <div v-if="!isWorking" class="main-actions">
               <button
                 v-if="canDownload"
                 class="action-btn primary large"
                 @click="startDownload"
+                :disabled="!gameFolder"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
                   fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -382,20 +413,13 @@ watch(() => props.modelValue, (val) => {
               <button class="action-btn danger" @click="cancelDownload">取消</button>
             </div>
 
-            <!-- 下载配置（折叠） -->
+            <!-- 高级配置（折叠） -->
             <details class="config-details">
-              <summary>下载配置</summary>
+              <summary>高级配置</summary>
               <div class="config-content">
                 <div class="field">
                   <label>启动器 API</label>
                   <input v-model="launcherApi" type="text" class="dl-input" />
-                </div>
-                <div class="field">
-                  <label>安装目录</label>
-                  <div class="input-row">
-                    <input v-model="gameFolder" type="text" class="dl-input" />
-                    <button class="icon-btn" @click="selectGameFolder">📁</button>
-                  </div>
                 </div>
                 <button class="action-btn sm" @click="saveDownloadConfig">保存配置</button>
               </div>
@@ -481,6 +505,23 @@ watch(() => props.modelValue, (val) => {
 .state-versions {
   margin-top:6px; font-size:12px; color:rgba(255,255,255,0.45);
   display:flex; gap:16px;
+}
+
+/* 安装目录 */
+.install-dir-section { margin-bottom:16px; }
+.install-dir-label {
+  display:block; font-size:13px; font-weight:500;
+  color:rgba(255,255,255,0.7); margin-bottom:6px;
+}
+.install-dir-row { display:flex; gap:6px; }
+.install-dir-row .dl-input { flex:1; }
+.install-dir-row .icon-btn {
+  display:flex; align-items:center; justify-content:center;
+  color:rgba(255,255,255,0.6);
+}
+.install-dir-row .icon-btn:hover { color:#fff; }
+.install-dir-hint {
+  font-size:11px; color:rgba(255,255,255,0.35); margin-top:6px; line-height:1.4;
 }
 
 /* 主要操作按钮 */

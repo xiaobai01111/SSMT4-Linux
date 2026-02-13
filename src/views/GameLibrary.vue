@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { gamesList, switchToGame, appSettings, loadGames } from '../store';
 import { reactive, type CSSProperties, ref, onMounted, onUnmounted } from 'vue';
-import { setGameVisibility } from '../api';
+import { setGameVisibility, deleteGameConfigFolder, askConfirm, listGameTemplates, importGameTemplate, getGameTemplatesDir, type GameTemplateInfo } from '../api';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
+import { convertFileSrc } from '@tauri-apps/api/core';
+
+const { t, te } = useI18n();
 
 // Router
 const router = useRouter();
@@ -47,12 +51,99 @@ const addToFavorites = async () => {
   closeMenu();
 };
 
+// Delete Game
+const deleteGame = async () => {
+  if (!targetGame.value) return;
+  const gameName = targetGame.value.name;
+  const displayName = te(`games.${gameName}`) ? t(`games.${gameName}`) : gameName;
+  const yes = await askConfirm(
+    t('gamelibrary.deleteConfirm', { name: displayName }),
+    { title: t('gamelibrary.deleteTitle'), kind: 'warning', okLabel: t('gamelibrary.deleteOk'), cancelLabel: t('gamelibrary.deleteCancel') }
+  );
+  if (!yes) { closeMenu(); return; }
+  try {
+    await deleteGameConfigFolder(gameName);
+    await loadGames();
+  } catch (err) {
+    console.error('Failed to delete game:', err);
+  }
+  closeMenu();
+};
+
+// Blank Area Right-Click Menu
+const showBlankMenu = ref(false);
+const blankMenuX = ref(0);
+const blankMenuY = ref(0);
+
+const handleBlankContextMenu = (e: MouseEvent) => {
+  // Only trigger on the container itself, not on game cards
+  if ((e.target as HTMLElement).closest('.game-card')) return;
+  e.preventDefault();
+  blankMenuX.value = e.clientX;
+  blankMenuY.value = e.clientY;
+  showBlankMenu.value = true;
+};
+
+const closeBlankMenu = () => {
+  showBlankMenu.value = false;
+};
+
+// Import Dialog
+const showImportDialog = ref(false);
+const templateList = ref<GameTemplateInfo[]>([]);
+const importLoading = ref(false);
+
+const openImportDialog = async () => {
+  closeBlankMenu();
+  importLoading.value = true;
+  showImportDialog.value = true;
+  try {
+    templateList.value = await listGameTemplates();
+  } catch (err) {
+    console.error('Failed to list templates:', err);
+  } finally {
+    importLoading.value = false;
+  }
+};
+
+const handleImport = async (tmpl: GameTemplateInfo) => {
+  if (tmpl.alreadyExists) {
+    const yes = await askConfirm(
+      t('gamelibrary.overwriteConfirm', { name: tmpl.name }),
+      { title: t('gamelibrary.importTitle'), kind: 'warning', okLabel: t('gamelibrary.overwriteOk'), cancelLabel: t('gamelibrary.deleteCancel') }
+    );
+    if (!yes) return;
+  }
+  try {
+    await importGameTemplate(tmpl.name, tmpl.alreadyExists);
+    await loadGames();
+    templateList.value = await listGameTemplates();
+  } catch (err) {
+    console.error('Failed to import template:', err);
+  }
+};
+
+const openTemplatesFolder = async () => {
+  try {
+    const dir = await getGameTemplatesDir();
+    const { open } = await import('@tauri-apps/plugin-shell');
+    await open(dir);
+  } catch (err) {
+    console.error('Failed to open templates folder:', err);
+  }
+};
+
+const handleCloseAll = () => {
+  closeMenu();
+  closeBlankMenu();
+};
+
 onMounted(() => {
-  document.addEventListener('click', closeMenu);
+  document.addEventListener('click', handleCloseAll);
 });
 
 onUnmounted(() => {
-  document.removeEventListener('click', closeMenu);
+  document.removeEventListener('click', handleCloseAll);
 });
 
 // Animation Timer Management
@@ -358,7 +449,7 @@ const spawnLoveExplosion = (e: MouseEvent) => {
 </script>
 
 <template>
-    <div class="game-library-container">
+    <div class="game-library-container" @contextmenu="handleBlankContextMenu">
         <!-- Background Effects Layer -->
         <div class="effects-layer">
             <div 
@@ -454,7 +545,66 @@ const spawnLoveExplosion = (e: MouseEvent) => {
           @click.stop
         >
           <div class="menu-item" @click="addToFavorites">
-            添加此游戏到常用列表
+            {{ t('gamelibrary.addToFavorites') }}
+          </div>
+          <div class="menu-item menu-item-danger" @click="deleteGame">
+            {{ t('gamelibrary.deleteGame') }}
+          </div>
+        </div>
+
+        <!-- Blank Area Context Menu -->
+        <div
+          v-if="showBlankMenu"
+          class="context-menu"
+          :style="{ top: blankMenuY + 'px', left: blankMenuX + 'px' }"
+          @click.stop
+        >
+          <div class="menu-item" @click="openImportDialog">
+            {{ t('gamelibrary.importGameConfig') }}
+          </div>
+          <div class="menu-item" @click="openTemplatesFolder">
+            {{ t('gamelibrary.openTemplatesFolder') }}
+          </div>
+        </div>
+
+        <!-- Import Dialog -->
+        <div v-if="showImportDialog" class="import-overlay" @click.self="showImportDialog = false">
+          <div class="import-dialog">
+            <div class="import-header">
+              <span>{{ t('gamelibrary.importTitle') }}</span>
+              <button class="import-close" @click="showImportDialog = false">✕</button>
+            </div>
+            <div class="import-body">
+              <div v-if="importLoading" class="import-loading">Loading...</div>
+              <div v-else-if="templateList.length === 0" class="import-empty">{{ t('gamelibrary.noTemplates') }}</div>
+              <div v-else class="import-list">
+                <div
+                  v-for="tmpl in templateList"
+                  :key="tmpl.name"
+                  class="import-item"
+                  :class="{ 'import-item-exists': tmpl.alreadyExists }"
+                  @click="handleImport(tmpl)"
+                >
+                  <img
+                    v-if="tmpl.hasIcon && tmpl.iconPath"
+                    :src="convertFileSrc(tmpl.iconPath)"
+                    class="import-icon"
+                    alt=""
+                  />
+                  <div v-else class="import-icon-placeholder">?</div>
+                  <div class="import-info">
+                    <div class="import-name">{{ te(`games.${tmpl.gameId}`) ? t(`games.${tmpl.gameId}`) : (tmpl.displayName || tmpl.name) }}</div>
+                    <div class="import-name-sub">{{ tmpl.name }} ({{ tmpl.gameId }})</div>
+                  </div>
+                  <div v-if="tmpl.alreadyExists" class="import-badge">{{ t('gamelibrary.alreadyExists') }}</div>
+                </div>
+              </div>
+            </div>
+            <div class="import-footer">
+              <button class="import-open-folder" @click="openTemplatesFolder">
+                {{ t('gamelibrary.openTemplatesFolder') }}
+              </button>
+            </div>
           </div>
         </div>
     </div>
@@ -504,6 +654,137 @@ const spawnLoveExplosion = (e: MouseEvent) => {
   background-color: rgba(255, 255, 255, 0.1);
   color: #fff;
 }
+
+.menu-item-danger {
+  color: #ff6b6b;
+}
+.menu-item-danger:hover {
+  background-color: rgba(255, 80, 80, 0.2);
+  color: #ff4444;
+}
+
+/* Import Dialog */
+.import-overlay {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100vw; height: 100vh;
+  background: rgba(0,0,0,0.6);
+  z-index: 20000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.import-dialog {
+  background: rgba(30, 30, 30, 0.98);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  width: 420px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+}
+.import-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+}
+.import-close {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.import-close:hover { color: #fff; background: rgba(255,255,255,0.1); }
+.import-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+}
+.import-loading, .import-empty {
+  text-align: center;
+  color: #888;
+  padding: 32px 0;
+  font-size: 14px;
+}
+.import-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.import-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.import-item:hover { background: rgba(255,255,255,0.08); }
+.import-item-exists { opacity: 0.6; }
+.import-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+.import-icon-placeholder {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+  font-size: 18px;
+}
+.import-info { flex: 1; min-width: 0; }
+.import-name {
+  color: #eee;
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.import-name-sub {
+  color: #888;
+  font-size: 11px;
+  margin-top: 2px;
+}
+.import-badge {
+  font-size: 11px;
+  color: #F7CE46;
+  background: rgba(247,206,70,0.15);
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.import-footer {
+  padding: 12px 16px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  text-align: center;
+}
+.import-open-folder {
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.15);
+  color: #ccc;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.import-open-folder:hover { background: rgba(255,255,255,0.15); color: #fff; }
 
 /* Meteor Star CSS */
 .meteor-layer {

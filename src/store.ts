@@ -6,7 +6,27 @@ import {
   scanGames as apiScanGames,
   convertFileSrc,
   showMessage,
+  getVideoServerPort,
 } from './api'
+
+// 视频流服务器端口
+let videoServerPort = 0;
+async function ensureVideoPort() {
+  if (videoServerPort === 0) {
+    try {
+      videoServerPort = await getVideoServerPort();
+      console.log('[BG] 视频服务器端口:', videoServerPort);
+    } catch (e) {
+      console.error('[BG] 获取视频服务器端口失败:', e);
+    }
+  }
+  return videoServerPort;
+}
+
+function getVideoStreamUrl(filePath: string): string {
+  if (videoServerPort === 0) return '';
+  return `http://127.0.0.1:${videoServerPort}/${encodeURIComponent(filePath)}`;
+}
 
 // Global UI State
 export const isDrawerOpen = ref(false);
@@ -32,6 +52,8 @@ export interface AppSettings {
   showWebsites: boolean;
   showDocuments: boolean;
   locale: Locale;  // 我新增
+  dataDir: string;
+  initialized: boolean;
 }
 
 export interface GameInfo {
@@ -40,6 +62,7 @@ export interface GameInfo {
   iconPath: string;
   bgPath: string;
   bgVideoPath?: string;
+  bgVideoRawPath?: string;
   bgType: BGType;
   showSidebar: boolean;
 }
@@ -56,7 +79,9 @@ const defaultSettings: AppSettings = {
   showMods: true,
   showWebsites: false,
   showDocuments: false,
-  locale: 'zhs' // 新增
+  locale: 'zhs', // 新增
+  dataDir: '',
+  initialized: false,
 }
 
 export const appSettings = reactive<AppSettings>({ ...defaultSettings })
@@ -64,6 +89,10 @@ export const gamesList = reactive<GameInfo[]>([])
 
 // Initial load
 let isInitialized = false;
+let _settingsLoadedResolve: () => void;
+export const settingsLoaded = new Promise<void>((resolve) => {
+  _settingsLoadedResolve = resolve;
+});
 
 async function loadSettings() {
   try {
@@ -76,6 +105,8 @@ async function loadSettings() {
   } catch (e) {
     console.error('Failed to load settings:', e)
     await showMessage(`加载设置失败: ${e}`, { title: '错误', kind: 'error' });
+  } finally {
+    _settingsLoadedResolve();
   }
 }
 
@@ -98,6 +129,7 @@ async function initDefaultBackground() {
 
 export async function loadGames() {
   try {
+    await ensureVideoPort();
     const games = await apiScanGames();
     console.log('Scanned games:', games);
 
@@ -110,7 +142,8 @@ export async function loadGames() {
         displayName: g.displayName || g.name,
         iconPath: g.iconPath ? convertFileSrc(g.iconPath) + `?t=${timestamp}` : '',
         bgPath: g.bgPath ? convertFileSrc(g.bgPath) + `?t=${timestamp}` : '',
-        bgVideoPath: g.bgVideoPath ? convertFileSrc(g.bgVideoPath) + `?t=${timestamp}` : undefined,
+        bgVideoPath: g.bgVideoPath ? getVideoStreamUrl(g.bgVideoPath) : undefined,
+        bgVideoRawPath: g.bgVideoPath || undefined,
         bgType: g.bgType || BGType.Image,
         showSidebar: g.showSidebar,
       } as GameInfo;

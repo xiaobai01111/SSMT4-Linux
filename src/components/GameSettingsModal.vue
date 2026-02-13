@@ -8,6 +8,7 @@ import {
   setGameIcon as apiSetGameIcon,
   setGameBackground as apiSetGameBackground,
   updateGameBackground as apiUpdateGameBackground,
+  resetGameBackground as apiResetGameBackground,
   get3dmigotoLatestRelease,
   install3dmigotoUpdate as apiInstall3dmigotoUpdate,
   ensureDirectory,
@@ -166,30 +167,28 @@ const activeTab = ref('basic');
 const tabs = computed(() => [
   { id: 'basic', label: t('gamesettingsmodal.basicsettings') },
   { id: '3dmigoto', label: t('gamesettingsmodal.migoto') },
-  { id: 'wine', label: 'Wine / Proton' },
+  { id: 'wine', label: t('gamesettingsmodal.wine') },
   { id: 'other', label: t('gamesettingsmodal.other') },
 ]);
 
-const presetOptions = [
-  { label: '原神 (GIMI)', value: 'GIMI' },
-  { label: '崩坏3 (HIMI)', value: 'HIMI' },
-  { label: '崩坏：星穹铁道 (SRMI)', value: 'SRMI' },
-  { label: '绝区零 (ZZMI)', value: 'ZZMI' },
-  { label: '鸣潮 (WWMI)', value: 'WWMI' },
-  { label: '尘白禁区 (EFMI)', value: 'EFMI' },
-  { label: '少女前线2：追放 (GF2)', value: 'GF2' },
-  { label: '第五人格 NeoX2', value: 'IdentityVNeoX2' },
-  { label: '第五人格 NeoX3', value: 'IdentityVNeoX3' },
+const presetOptions = computed(() => [
+  { label: `${t('games.GIMI')} (GIMI)`, value: 'GIMI' },
+  { label: `${t('games.HIMI')} (HIMI)`, value: 'HIMI' },
+  { label: `${t('games.SRMI')} (SRMI)`, value: 'SRMI' },
+  { label: `${t('games.ZZMI')} (ZZMI)`, value: 'ZZMI' },
+  { label: `${t('games.WWMI')} (WWMI)`, value: 'WWMI' },
+  { label: `${t('games.EFMI')} (EFMI)`, value: 'EFMI' },
+  { label: `${t('games.GF2')} (GF2)`, value: 'GF2' },
+  { label: `${t('games.IdentityV')} NeoX2`, value: 'IdentityVNeoX2' },
+  { label: `${t('games.IdentityV')} NeoX3`, value: 'IdentityVNeoX3' },
   { label: 'AI LIMIT', value: 'AILIMIT' },
-  { label: '死或生：Venus Vacation (DOAV)', value: 'DOAV' },
+  { label: `${t('games.DOAV')} (DOAV)`, value: 'DOAV' },
   { label: 'MiSide', value: 'MiSide' },
-  { label: '尘白禁区 (SnowBreak)', value: 'SnowBreak' },
+  { label: `${t('games.SnowBreak')} (SnowBreak)`, value: 'SnowBreak' },
   { label: 'Strinova', value: 'Strinova' },
-  { label: '仁王2 (Nioh2)', value: 'Nioh2' },
-  { label: '阴阳师：神令师 (YYSLS)', value: 'YYSLS' },
-  { label: '鸣潮 (WuWa)', value: 'WuWa' },
-  { label: '永劫无间 (AEMI)', value: 'AEMI' },
-];
+  { label: `${t('games.Nioh2')} (Nioh2)`, value: 'Nioh2' },
+  { label: `${t('games.AEMI')} (AEMI)`, value: 'AEMI' },
+]);
 
 // Load/Save Logic
 const loadConfig = async () => {
@@ -250,6 +249,32 @@ const saveConfig = async () => {
   }
 };
 
+const resetToDefault = async () => {
+  const yes = await askConfirm(
+    t('gamesettingsmodal.resetconfirm_msg'),
+    { title: t('gamesettingsmodal.resetconfirm_title') }
+  );
+  if (!yes) return;
+
+  try {
+    isLoading.value = true;
+    // 删除自定义背景文件
+    await apiResetGameBackground(props.gameName);
+    // 重置配置为默认值
+    await apiSaveGameConfig(props.gameName, {
+      basic: { gamePreset: 'GIMI', backgroundType: 'Image' },
+      threeDMigoto: {},
+      other: {}
+    } as any);
+    await loadConfig();
+    await loadGames();
+  } catch (e) {
+    console.error('Reset failed:', e);
+  } finally {
+    isLoading.value = false;
+  }
+};
+
 const handleBgTypeChange = async () => {
   await saveConfig();
   // Refresh global state if this is the active game
@@ -295,8 +320,8 @@ const selectBackground = async () => {
   }
 };
 
-const autoSupportedPresets = ['GIMI', 'HIMI', 'SRMI', 'ZZMI'];
-const canAutoUpdate = computed(() => autoSupportedPresets.includes(config.basic.gamePreset));
+// 自动更新背景暂不可用（资源目录中无默认背景文件）
+const canAutoUpdate = computed(() => false);
 
 const autoUpdateBackground = async () => {
   try {
@@ -594,7 +619,7 @@ defineExpose({
     if (canUpdatePackage.value) {
       check3DMigotoPackageUpdate();
     } else {
-      showMessage('当前预设不支持自动更新整合包', { title: '提示', kind: 'info' });
+      showMessage(t('gamesettingsmodal.no_auto_update'), { title: 'Info', kind: 'info' });
     }
   }
 });
@@ -607,12 +632,12 @@ defineExpose({
         <!-- Loading Overlay -->
         <div v-if="isLoading" class="loading-overlay">
           <div class="spinner"></div>
-          <div class="loading-text">处理中...</div>
+          <div class="loading-text">{{ t('gamesettingsmodal.processing') }}</div>
         </div>
 
         <!-- Sidebar -->
         <div class="settings-sidebar">
-          <div class="sidebar-title">游戏设置</div>
+          <div class="sidebar-title">{{ t('gamesettingsmodal.title') }}</div>
 
           <div v-for="tab in tabs" :key="tab.id" class="sidebar-item" :class="{ active: activeTab === tab.id }"
             @click="activeTab = tab.id">
@@ -637,21 +662,24 @@ defineExpose({
             <!-- Basic Settings -->
             <div v-if="activeTab === 'basic'" class="tab-pane">
               <div class="setting-group">
-                <div class="setting-label">配置名称 (文件夹名)</div>
-                <input v-model="configName" type="text" class="custom-input" placeholder="请输入配置名称" />
+                <div class="setting-label">{{ t('gamesettingsmodal.configname') }}</div>
+                <input v-model="configName" type="text" class="custom-input" :placeholder="t('gamesettingsmodal.configname_placeholder')" />
 
                 <div class="button-row">
                   <button class="action-btn create" @click="createNewConfig">
-                    以此名称创建新配置
+                    {{ t('gamesettingsmodal.createnew') }}
                   </button>
                   <button class="action-btn delete" @click="deleteCurrentConfig">
-                    删除当前配置
+                    {{ t('gamesettingsmodal.deletecurrent') }}
+                  </button>
+                  <button class="action-btn" @click="resetToDefault">
+                    {{ t('gamesettingsmodal.resetdefault') }}
                   </button>
                 </div>
               </div>
 
               <div class="setting-group">
-                <div class="setting-label">游戏预设</div>
+                <div class="setting-label">{{ t('gamesettingsmodal.gamepreset') }}</div>
                 <el-select v-model="config.basic.gamePreset" placeholder="Select" class="custom-select"
                   @change="saveConfig">
                   <el-option v-for="item in presetOptions" :key="item.value" :label="item.label" :value="item.value" />
@@ -659,25 +687,25 @@ defineExpose({
               </div>
 
               <div class="setting-group">
-                <div class="setting-label">游戏图标</div>
-                <button class="action-btn" @click="selectIcon">选择图标文件 (.png)</button>
+                <div class="setting-label">{{ t('gamesettingsmodal.gameicon') }}</div>
+                <button class="action-btn" @click="selectIcon">{{ t('gamesettingsmodal.selecticon') }}</button>
               </div>
 
               <div class="setting-group">
-                <div class="setting-label">背景设置</div>
+                <div class="setting-label">{{ t('gamesettingsmodal.bgsettings') }}</div>
                 <div style="margin-bottom: 10px;">
                   <el-radio-group v-model="config.basic.backgroundType" @change="handleBgTypeChange">
-                    <el-radio value="Image" label="Image">图片</el-radio>
-                    <el-radio value="Video" label="Video">视频</el-radio>
+                    <el-radio value="Image" label="Image">{{ t('gamesettingsmodal.image') }}</el-radio>
+                    <el-radio value="Video" label="Video">{{ t('gamesettingsmodal.video') }}</el-radio>
                   </el-radio-group>
                 </div>
                 <!-- Separate check: if video, show video file btn, if image, show image file btn -->
                 <div class="button-row">
                   <button class="action-btn" @click="selectBackground">
-                    {{ config.basic.backgroundType === 'Video' ? '选择背景视频' : '选择背景图片' }}
+                    {{ config.basic.backgroundType === 'Video' ? t('gamesettingsmodal.selectbgvideo') : t('gamesettingsmodal.selectbgimage') }}
                   </button>
                   <button v-if="canAutoUpdate" class="action-btn" @click="autoUpdateBackground">
-                    自动更新背景
+                    {{ t('gamesettingsmodal.autoupdatebg') }}
                   </button>
                 </div>
               </div>
@@ -687,88 +715,88 @@ defineExpose({
             <div v-if="activeTab === '3dmigoto'" class="tab-pane">
 
               <div class="setting-group">
-                <div class="setting-label">3Dmigoto 目录</div>
+                <div class="setting-label">{{ t('gamesettingsmodal.migotodir') }}</div>
                 <input v-model="config.threeDMigoto.installDir" type="text" class="custom-input"
-                  placeholder="请选择或输入目录" />
+                  :placeholder="t('gamesettingsmodal.migotodir_placeholder')" />
                 <div class="button-row">
-                  <button class="action-btn" @click="pick3dmigotoDir">选择文件夹</button>
-                  <button class="action-btn" @click="open3dmigotoDir">打开文件夹</button>
+                  <button class="action-btn" @click="pick3dmigotoDir">{{ t('gamesettingsmodal.selectfolder') }}</button>
+                  <button class="action-btn" @click="open3dmigotoDir">{{ t('gamesettingsmodal.openfolder') }}</button>
                   <button v-if="canUpdatePackage" class="action-btn highlight"
-                    @click="check3DMigotoPackageUpdate">更新整合包</button>
+                    @click="check3DMigotoPackageUpdate">{{ t('gamesettingsmodal.updatepackage') }}</button>
                 </div>
               </div>
 
               <div class="setting-group">
-                <div class="setting-label">目标进程路径 (Target Exe)</div>
+                <div class="setting-label">{{ t('gamesettingsmodal.targetexe') }}</div>
                 <input v-model="config.threeDMigoto.targetExePath" type="text" class="custom-input"
-                  placeholder="选择游戏主程序" />
+                  :placeholder="t('gamesettingsmodal.targetexe_placeholder')" />
                 <div class="button-row">
-                  <button class="action-btn" @click="pickExe('targetExePath')">选择文件</button>
-                  <button class="action-btn" @click="openExeDir('targetExePath')">打开所在位置</button>
+                  <button class="action-btn" @click="pickExe('targetExePath')">{{ t('gamesettingsmodal.selectfile') }}</button>
+                  <button class="action-btn" @click="openExeDir('targetExePath')">{{ t('gamesettingsmodal.openlocation') }}</button>
                 </div>
               </div>
 
               <div class="setting-group">
-                <div class="setting-label">启动文件路径 (Launcher Exe)</div>
+                <div class="setting-label">{{ t('gamesettingsmodal.launcherexe') }}</div>
                 <input v-model="config.threeDMigoto.launcherExePath" type="text" class="custom-input"
-                  placeholder="选择启动器 (可选)" />
+                  :placeholder="t('gamesettingsmodal.launcherexe_placeholder')" />
                 <div class="button-row">
-                  <button class="action-btn" @click="pickExe('launcherExePath')">选择文件</button>
-                  <button class="action-btn" @click="openExeDir('launcherExePath')">打开所在位置</button>
+                  <button class="action-btn" @click="pickExe('launcherExePath')">{{ t('gamesettingsmodal.selectfile') }}</button>
+                  <button class="action-btn" @click="openExeDir('launcherExePath')">{{ t('gamesettingsmodal.openlocation') }}</button>
                 </div>
               </div>
 
               <div class="setting-group">
-                <div class="setting-label">启动参数</div>
+                <div class="setting-label">{{ t('gamesettingsmodal.launchargs') }}</div>
                 <input v-model="config.threeDMigoto.launchArgs" type="text" class="custom-input"
-                  placeholder="例如: -popupwindow" />
+                  :placeholder="t('gamesettingsmodal.launchargs_placeholder')" />
               </div>
 
               <div class="setting-checkbox-row">
                 <label class="checkbox-label">
                   <input type="checkbox" v-model="config.threeDMigoto.showErrorPopup" />
-                  显示左上角报错 (show_warnings)
+                  {{ t('gamesettingsmodal.show_warnings') }}
                 </label>
               </div>
 
               <div class="setting-checkbox-row">
                 <label class="checkbox-label">
                   <input type="checkbox" v-model="config.threeDMigoto.autoSetAnalyseOptions" />
-                  自动设置 analyse_options
+                  {{ t('gamesettingsmodal.auto_analyse') }}
                 </label>
               </div>
 
               <div class="setting-checkbox-row">
                 <label class="checkbox-label">
                   <input type="checkbox" v-model="config.threeDMigoto.useShell" />
-                  使用 Shell 方式运行
+                  {{ t('gamesettingsmodal.use_shell') }}
                 </label>
               </div>
 
               <div class="setting-checkbox-row">
                 <label class="checkbox-label">
                   <input type="checkbox" v-model="config.threeDMigoto.useUpx" />
-                  使用 UPX 默认选项加壳
+                  {{ t('gamesettingsmodal.use_upx') }}
                 </label>
               </div>
 
               <div class="flex-row">
                 <div class="setting-group half-width">
-                  <div class="setting-label">d3d11.dll 延迟 (Delay ms)</div>
+                  <div class="setting-label">{{ t('gamesettingsmodal.dll_delay') }}</div>
                   <input v-model.number="config.threeDMigoto.delay" type="number" class="custom-input" />
                 </div>
                 <div class="setting-group half-width">
-                  <div class="setting-label">自动退出秒数 (Auto Exit s)</div>
+                  <div class="setting-label">{{ t('gamesettingsmodal.auto_exit') }}</div>
                   <input v-model.number="config.threeDMigoto.autoExitSeconds" type="number" class="custom-input" />
                 </div>
               </div>
 
               <div class="setting-group">
-                <div class="setting-label">额外注入 DLL</div>
-                <input v-model="config.threeDMigoto.extraDll" type="text" class="custom-input" placeholder="选择或者留空" />
+                <div class="setting-label">{{ t('gamesettingsmodal.extra_dll') }}</div>
+                <input v-model="config.threeDMigoto.extraDll" type="text" class="custom-input" :placeholder="t('gamesettingsmodal.extra_dll_placeholder')" />
                 <div class="button-row">
-                  <button class="action-btn" @click="pickDll">选择文件</button>
-                  <button class="action-btn highlight" @click="setDefaultDll">设为当前d3d11.dll</button>
+                  <button class="action-btn" @click="pickDll">{{ t('gamesettingsmodal.selectfile') }}</button>
+                  <button class="action-btn highlight" @click="setDefaultDll">{{ t('gamesettingsmodal.setdefaultdll') }}</button>
                 </div>
               </div>
 
@@ -779,27 +807,27 @@ defineExpose({
 
               <!-- System Info -->
               <div v-if="displayInfo" class="setting-group info-card">
-                <div class="setting-label">系统环境</div>
+                <div class="setting-label">{{ t('gamesettingsmodal.sysinfo') }}</div>
                 <div class="info-grid">
-                  <span class="info-key">显示服务器</span>
+                  <span class="info-key">{{ t('gamesettingsmodal.displayserver') }}</span>
                   <span class="info-val">{{ displayInfo.server }}{{ displayInfo.wayland_compositor ? ` (${displayInfo.wayland_compositor})` : '' }}</span>
-                  <span class="info-key">GPU 驱动</span>
-                  <span class="info-val">{{ displayInfo.gpu_driver || '未知' }}</span>
+                  <span class="info-key">{{ t('gamesettingsmodal.gpu_driver') }}</span>
+                  <span class="info-val">{{ displayInfo.gpu_driver || t('gamesettingsmodal.unknown') }}</span>
                   <span class="info-key">Vulkan</span>
                   <span class="info-val" :class="{ 'text-ok': vulkanInfo?.available, 'text-err': !vulkanInfo?.available }">
-                    {{ vulkanInfo?.available ? `✓ ${vulkanInfo.version || ''}` : '✗ 未检测到' }}
+                    {{ vulkanInfo?.available ? `✓ ${vulkanInfo.version || ''}` : `✗ ${t('gamesettingsmodal.notdetected')}` }}
                   </span>
-                  <span class="info-key">手柄</span>
-                  <span class="info-val">{{ displayInfo.gamepad_detected ? '✓ 已检测到' : '— 未检测到' }}</span>
+                  <span class="info-key">{{ t('gamesettingsmodal.gamepad') }}</span>
+                  <span class="info-val">{{ displayInfo.gamepad_detected ? `✓ ${t('gamesettingsmodal.detected')}` : `— ${t('gamesettingsmodal.notdetected')}` }}</span>
                 </div>
               </div>
 
               <!-- Wine/Proton Version Selector -->
               <div class="setting-group">
-                <div class="setting-label">Wine / Proton 版本</div>
+                <div class="setting-label">{{ t('gamesettingsmodal.wineversion') }}</div>
                 <el-select
                   v-model="selectedWineVersionId"
-                  placeholder="选择 Wine/Proton 版本"
+                  :placeholder="t('gamesettingsmodal.wineversion_placeholder')"
                   class="custom-select"
                   filterable
                   style="width: 100%"
@@ -835,42 +863,42 @@ defineExpose({
 
               <!-- Proton Settings -->
               <div class="setting-group">
-                <div class="setting-label">Proton 设置</div>
+                <div class="setting-label">{{ t('gamesettingsmodal.protonsettings') }}</div>
 
                 <div class="setting-checkbox-row">
                   <label class="checkbox-label">
                     <input type="checkbox" v-model="protonSettings.use_pressure_vessel" />
-                    使用 pressure-vessel 容器 (推荐)
+                    {{ t('gamesettingsmodal.pressure_vessel') }}
                   </label>
                 </div>
                 <div class="setting-checkbox-row">
                   <label class="checkbox-label">
                     <input type="checkbox" v-model="protonSettings.proton_enable_wayland" />
-                    启用 Wayland 支持
+                    {{ t('gamesettingsmodal.wayland') }}
                   </label>
                 </div>
                 <div class="setting-checkbox-row">
                   <label class="checkbox-label">
                     <input type="checkbox" v-model="protonSettings.proton_no_d3d12" />
-                    禁用 D3D12 (PROTON_NO_D3D12)
+                    {{ t('gamesettingsmodal.no_d3d12') }}
                   </label>
                 </div>
                 <div class="setting-checkbox-row">
                   <label class="checkbox-label">
                     <input type="checkbox" v-model="protonSettings.proton_media_use_gst" />
-                    使用 GStreamer 媒体后端
+                    {{ t('gamesettingsmodal.gstreamer') }}
                   </label>
                 </div>
                 <div class="setting-checkbox-row">
                   <label class="checkbox-label">
                     <input type="checkbox" v-model="protonSettings.mangohud" />
-                    启用 MangoHud 性能覆盖
+                    {{ t('gamesettingsmodal.mangohud') }}
                   </label>
                 </div>
                 <div class="setting-checkbox-row">
                   <label class="checkbox-label">
                     <input type="checkbox" v-model="protonSettings.steam_deck_compat" />
-                    Steam Deck 兼容模式
+                    {{ t('gamesettingsmodal.steamdeck') }}
                   </label>
                 </div>
               </div>
@@ -878,12 +906,12 @@ defineExpose({
               <!-- Steam App ID -->
               <div class="setting-group">
                 <div class="setting-label">Steam App ID</div>
-                <input v-model="protonSettings.steam_app_id" type="text" class="custom-input" placeholder="0 = 不使用" />
+                <input v-model="protonSettings.steam_app_id" type="text" class="custom-input" placeholder="0 = N/A" />
               </div>
 
               <!-- Custom Environment Variables -->
               <div class="setting-group">
-                <div class="setting-label">自定义环境变量</div>
+                <div class="setting-label">{{ t('gamesettingsmodal.custom_env') }}</div>
                 <div v-for="(val, key) in protonSettings.custom_env" :key="key" class="env-row">
                   <span class="env-key">{{ key }}</span>
                   <span class="env-val">{{ val }}</span>
@@ -892,13 +920,13 @@ defineExpose({
                 <div class="env-add-row">
                   <input v-model="newEnvKey" type="text" class="custom-input env-input" placeholder="KEY" />
                   <input v-model="newEnvValue" type="text" class="custom-input env-input" placeholder="VALUE" />
-                  <button class="action-btn" style="flex: 0 0 auto;" @click="addCustomEnv">添加</button>
+                  <button class="action-btn" style="flex: 0 0 auto;" @click="addCustomEnv">{{ t('gamesettingsmodal.add') }}</button>
                 </div>
               </div>
 
               <!-- Save -->
               <div class="button-row">
-                <button class="action-btn highlight" @click="saveWineConfig">保存 Wine 设置</button>
+                <button class="action-btn highlight" @click="saveWineConfig">{{ t('gamesettingsmodal.save_wine') }}</button>
               </div>
 
             </div>
@@ -906,13 +934,13 @@ defineExpose({
             <!-- Other Settings -->
             <div v-if="activeTab === 'other'" class="tab-pane">
               <div class="setting-group">
-                <div class="setting-label">游戏可执行文件路径</div>
-                <input v-model="config.other.gamePath" type="text" class="custom-input" placeholder="游戏 .exe 文件的完整路径" />
+                <div class="setting-label">{{ t('gamesettingsmodal.gamepath') }}</div>
+                <input v-model="config.other.gamePath" type="text" class="custom-input" :placeholder="t('gamesettingsmodal.gamepath_placeholder')" />
                 <div class="button-row">
-                  <button class="action-btn" @click="pickGameExe">选择文件</button>
+                  <button class="action-btn" @click="pickGameExe">{{ t('gamesettingsmodal.selectfile') }}</button>
                 </div>
               </div>
-              <div class="empty-state" style="margin-top: 20px;">更多设置将在后续版本中添加</div>
+              <div class="empty-state" style="margin-top: 20px;">{{ t('gamesettingsmodal.more_coming') }}</div>
             </div>
           </div>
         </div>

@@ -1,5 +1,6 @@
 <script setup lang="ts" >
 import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { gamesList, switchToGame, appSettings, loadGames } from '../store'
 import {
   showMessage,
@@ -20,7 +21,9 @@ import { useI18n  } from 'vue-i18n';
 
 
 
-const { t } = useI18n()
+const { t, te } = useI18n()
+const router = useRouter()
+const getGameName = (game: any) => te(`games.${game.name}`) ? t(`games.${game.name}`) : (game.displayName || game.name)
 
 
 // Computed property to get sidebar games (filtered and reverse order)
@@ -264,7 +267,7 @@ onUnmounted(() => {
     <div class="sidebar-wrapper">
       <div class="sidebar-track">
         <!-- Games Loop -->
-        <el-tooltip v-for="game in sidebarGames" :key="game.name" :content="game.displayName" placement="right" effect="dark"
+        <el-tooltip v-for="game in sidebarGames" :key="game.name" :content="getGameName(game)" placement="right" effect="dark"
           popper-class="game-tooltip">
           <div class="sidebar-icon" :class="{ active: isGameActive(game.name) }" @click.stop="handleGameClick(game)"
             @contextmenu.prevent="handleContextMenu($event, game)">
@@ -273,13 +276,23 @@ onUnmounted(() => {
               @error="(e) => (e.target as HTMLImageElement).style.opacity = '0'" />
           </div>
         </el-tooltip>
+
+        <!-- Empty state: guide to Game Library -->
+        <el-tooltip v-if="sidebarGames.length === 0" content="添加游戏到侧边栏" placement="right" effect="dark" popper-class="game-tooltip">
+          <div class="sidebar-icon add-game-btn" @click="router.push('/games')">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+          </div>
+        </el-tooltip>
       </div>
     </div>
 
     <!-- Custom Context Menu -->
     <div v-if="showMenu" class="context-menu" :style="{ top: menuY + 'px', left: menuX + 'px' }" @click.stop>
       <div class="menu-item" @click="hideGame">
-        不显示此游戏
+        {{ t('home.contextmenu.hidegame') }}
       </div>
     </div>
 
@@ -307,7 +320,7 @@ onUnmounted(() => {
           <div class="play-triangle" v-if="gameHasExe"></div>
           <svg v-else xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
         </div>
-        <span class="btn-text">{{ gameHasExe ? t('home.css.startgame') : '下载游戏' }}</span>
+        <span class="btn-text">{{ gameHasExe ? t('home.css.startgame') : t('home.css.downloadgame') }}</span>
       </div>
 
       <!-- Settings Menu Button -->
@@ -321,12 +334,12 @@ onUnmounted(() => {
         </div>
         <template #dropdown>
           <el-dropdown-menu>
-            <el-dropdown-item @click="showSettings = true">游戏设置</el-dropdown-item>
-            <el-dropdown-item @click="open3dmigotoFolder">打开3Dmigoto文件夹</el-dropdown-item>
-            <el-dropdown-item @click="openD3dxIni">打开d3dx.ini</el-dropdown-item>
-            <el-dropdown-item divided @click="toggleSymlink(true)">开启Symlink</el-dropdown-item>
-            <el-dropdown-item @click="toggleSymlink(false)">关闭Symlink</el-dropdown-item>
-            <el-dropdown-item divided @click="openSettingsAndUpdate">检查3Dmigoto包更新</el-dropdown-item>
+            <el-dropdown-item @click="showSettings = true">{{ t('home.dropdown.gamesettings') }}</el-dropdown-item>
+            <el-dropdown-item @click="open3dmigotoFolder">{{ t('home.dropdown.open3dmigoto') }}</el-dropdown-item>
+            <el-dropdown-item @click="openD3dxIni">{{ t('home.dropdown.opend3dx') }}</el-dropdown-item>
+            <el-dropdown-item divided @click="toggleSymlink(true)">{{ t('home.dropdown.enablesymlink') }}</el-dropdown-item>
+            <el-dropdown-item @click="toggleSymlink(false)">{{ t('home.dropdown.disablesymlink') }}</el-dropdown-item>
+            <el-dropdown-item divided @click="openSettingsAndUpdate">{{ t('home.dropdown.checkupdate') }}</el-dropdown-item>
 
           </el-dropdown-menu>
         </template>
@@ -403,6 +416,21 @@ onUnmounted(() => {
   transition: transform 0.2s ease, box-shadow 0.2s ease;
   background-color: rgba(0, 0, 0, 0.3);
   /* Placeholder bg */
+}
+
+.sidebar-icon.add-game-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed rgba(255, 255, 255, 0.4);
+  background-color: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.sidebar-icon.add-game-btn:hover {
+  border-color: rgba(255, 255, 255, 0.7);
+  color: rgba(255, 255, 255, 0.9);
+  background-color: rgba(255, 255, 255, 0.15);
 }
 
 .sidebar-icon img {
@@ -545,6 +573,18 @@ onUnmounted(() => {
 
 .start-game-btn:active .play-triangle {
   border-color: transparent transparent transparent #000000;
+}
+
+.icon-wrapper svg {
+  color: #F7CE46;
+}
+
+.start-game-btn:hover .icon-wrapper svg {
+  color: #333333;
+}
+
+.start-game-btn:active .icon-wrapper svg {
+  color: #000000;
 }
 
 
