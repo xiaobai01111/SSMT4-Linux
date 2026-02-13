@@ -1,0 +1,64 @@
+{
+    "home": {
+        "hidegame": {
+            "fail": "Failed to hide game:"
+        },
+        "css": {
+            "startgame": "Start Game"
+        }
+    },
+    "settings": {
+        "language": "Surface Language"
+    },
+    "gamesettingsmodal": {
+        "basicsettings": "Basic Settings",
+        "migoto": "3DMigoto Settings",
+        "other": "Other Settings",
+        "error": {
+            "failconstructdefaultpath": "Failed to construct default 3dmigoto path",
+            "failloadconfig": "Failed to load game config: ",
+            "configfailedsaving": "Failed to save current conifg: {e}",
+            "failedopendir": "Open direction failed: {e}"
+        },
+        "log": {
+            "saving": "[GameSettingsModal] Starting saveConfig for: {gameName}",
+            "currentstate": "[GameSettingsModal] Current config state: {currentState}",
+            "configsaved": "[GameSettingsModal] Current config saved.",
+            "joinPathFailed": "Failed to join path: {error}",
+            "configCreated": "Created new config: {configName}",
+            "configCreateFailed": "Failed to create new config: {error}"
+        },
+        "message": {
+            "success": {
+                "title": "Success",
+                "backgroundupdated": "Background updated successfully!",
+                "updatedToVersion": "Update successful! Updated to version {version}"
+            },
+            "error": {
+                "title": "Error",
+                "updateFailed": "Update failed: {error}",
+                "operationFailed": "Operation failed: {error}"
+            }
+        },
+        "confirm": {
+            "checkUpdate": {
+                "title": "Check for Updates",
+                "message": "Are you sure you want to check for 3Dmigoto updates for {gamePreset}?"
+            },
+            "versionUpdate": {
+                "title": "Version Details",
+                "message": "New version found: {version}\n\nChangelog:\n{description}\n\nUpdate now? (Current files will be overwritten)"
+            },
+            "createConfig": {
+                "title": "Confirm Creation",
+                "message": "Are you sure you want to create new config \"{configName}\"?"
+            }
+        },
+        "filePicker": {
+            "title": "Select Executable",
+            "filterName": "Executables",
+            "dllTitle": "Select DLL File",
+            "dllFilterName": "DLL Files"
+        }
+    }
+}

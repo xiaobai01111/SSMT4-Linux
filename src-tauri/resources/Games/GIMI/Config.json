@@ -1,0 +1,21 @@
+{
+  "TargetPath": "",
+  "3DmigotoPath": "",
+  "LaunchPath": "",
+  "LaunchArgs": "",
+  "WorkSpace": "",
+  "GamePreset": "GIMI",
+  "LogicName": "GIMI",
+  "GameTypeName": "GIMI",
+  "MigotoPackage": "GIMI-Package",
+  "AutoSetAnalyseOptionsSelectedIndex": 0,
+  "GithubPackageVersion": "",
+  "DllInitializationDelay": 100,
+  "DllReplaceSelectedIndex": 0,
+  "DllPreProcessSelectedIndex": 1,
+  "PureGameMode": false,
+  "RunWithShell": true,
+  "AutoRunIgnoreErrorGIPlugin": false,
+  "Delay": 5,
+  "LaunchItems": []
+}

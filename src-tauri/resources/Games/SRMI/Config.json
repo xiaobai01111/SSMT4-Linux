@@ -1,0 +1,21 @@
+{
+  "TargetPath": "",
+  "3DmigotoPath": "",
+  "LaunchPath": "",
+  "LaunchArgs": "",
+  "WorkSpace": "",
+  "GamePreset": "SRMI",
+  "LogicName": "SRMI",
+  "GameTypeName": "SRMI",
+  "MigotoPackage": "SRMI-Package",
+  "AutoSetAnalyseOptionsSelectedIndex": 0,
+  "GithubPackageVersion": "",
+  "DllInitializationDelay": 100,
+  "DllReplaceSelectedIndex": 0,
+  "DllPreProcessSelectedIndex": 0,
+  "PureGameMode": false,
+  "RunWithShell": false,
+  "AutoRunIgnoreErrorGIPlugin": false,
+  "Delay": 5,
+  "LaunchItems": []
+}
