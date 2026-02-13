@@ -3,14 +3,19 @@ use tauri::Manager;
 #[tauri::command]
 pub fn run_resource_executable(
     app: tauri::AppHandle,
-    resource_name: &str,
+    resource_name: Option<String>,
+    filename: Option<String>,
     args: Vec<String>,
 ) -> Result<String, String> {
+    let resource_name = resource_name
+        .or(filename)
+        .ok_or("Missing resource executable name".to_string())?;
+
     let resource_path = app
         .path()
         .resource_dir()
         .map_err(|e| format!("Failed to get resource dir: {}", e))?
-        .join(resource_name);
+        .join(&resource_name);
 
     if !resource_path.exists() {
         return Err(format!(

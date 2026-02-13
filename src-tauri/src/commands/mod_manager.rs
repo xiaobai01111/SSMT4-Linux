@@ -1,5 +1,7 @@
 use notify::{Event, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager};
 use tracing::info;
@@ -36,15 +38,34 @@ pub struct ModScanResult {
     pub groups: Vec<GroupInfo>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArchivePreview {
+    pub root_dirs: Vec<String>,
+    pub file_count: usize,
+    pub has_ini: bool,
+    pub format: String,
+}
+
 #[derive(Default)]
 pub struct ModWatcher {
     pub watcher: Option<notify::RecommendedWatcher>,
 }
 
 fn resolve_game_path(app: &AppHandle, game_name: &str) -> Result<PathBuf, String> {
-    // 尝试从游戏配置中读取 gamePath
+    // 1) 优先从 SQLite 读取（save_game_config 的落盘位置）
+    if let Some(content) = crate::configs::database::get_game_config(game_name) {
+        if let Ok(data) = serde_json::from_str::<Value>(&content) {
+            if let Some(path) = extract_game_path_from_config(&data) {
+                return Ok(path);
+            }
+        }
+    }
+
+    // 2) 回退到文件系统 Config.json（兼容旧数据）
     let config_dirs: Vec<PathBuf> = {
         let mut dirs = Vec::new();
+        // 用户可写目录优先
+        dirs.push(crate::utils::file_manager::get_global_games_dir().join(game_name));
         if let Ok(resource_dir) = app.path().resource_dir() {
             dirs.push(resource_dir.join("resources").join("Games").join(game_name));
         }
@@ -63,11 +84,9 @@ fn resolve_game_path(app: &AppHandle, game_name: &str) -> Result<PathBuf, String
         let config_path = dir.join("Config.json");
         if config_path.exists() {
             if let Ok(content) = std::fs::read_to_string(&config_path) {
-                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&content) {
-                    if let Some(path) = data.get("gamePath").and_then(|v| v.as_str()) {
-                        if !path.is_empty() {
-                            return Ok(PathBuf::from(path));
-                        }
+                if let Ok(data) = serde_json::from_str::<Value>(&content) {
+                    if let Some(path) = extract_game_path_from_config(&data) {
+                        return Ok(path);
                     }
                 }
             }
@@ -77,6 +96,42 @@ fn resolve_game_path(app: &AppHandle, game_name: &str) -> Result<PathBuf, String
     // 回退：使用全局游戏目录
     let games_dir = crate::utils::file_manager::get_global_games_dir();
     Ok(games_dir.join(game_name))
+}
+
+fn extract_game_path_from_config(data: &Value) -> Option<PathBuf> {
+    let candidate = data
+        .pointer("/other/gamePath")
+        .or_else(|| data.pointer("/other/game_path"))
+        .or_else(|| data.get("gamePath"))
+        .or_else(|| data.get("game_path"))
+        .or_else(|| data.get("TargetPath"))
+        .or_else(|| data.get("targetPath"))
+        .and_then(|v| v.as_str())?;
+
+    normalize_game_root(candidate)
+}
+
+fn normalize_game_root(raw: &str) -> Option<PathBuf> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let path = PathBuf::from(trimmed);
+
+    if path.is_dir() {
+        return Some(path);
+    }
+    if path.is_file() {
+        return path.parent().map(|p| p.to_path_buf());
+    }
+
+    // 路径不存在时：若像可执行文件路径，则使用其父目录作为游戏根目录。
+    if path.extension().is_some() {
+        return path.parent().map(|p| p.to_path_buf()).or(Some(path));
+    }
+
+    Some(path)
 }
 
 #[tauri::command]
@@ -104,8 +159,7 @@ fn scan_dir_recursive(
     mods: &mut Vec<ModInfo>,
     groups: &mut Vec<GroupInfo>,
 ) -> Result<(), String> {
-    let entries = std::fs::read_dir(dir)
-        .map_err(|e| format!("Failed to read mods dir: {}", e))?;
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("Failed to read mods dir: {}", e))?;
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -128,9 +182,7 @@ fn scan_dir_recursive(
             let display_name = if enabled {
                 name.clone()
             } else {
-                name.trim_start_matches("DISABLED")
-                    .trim_start()
-                    .to_string()
+                name.trim_start_matches("DISABLED").trim_start().to_string()
             };
 
             let relative = path
@@ -246,8 +298,7 @@ pub fn toggle_mod(
     }
 
     let new_path = parent.join(&new_name);
-    std::fs::rename(&mod_path, &new_path)
-        .map_err(|e| format!("Failed to toggle mod: {}", e))?;
+    std::fs::rename(&mod_path, &new_path).map_err(|e| format!("Failed to toggle mod: {}", e))?;
 
     let new_relative = new_path
         .strip_prefix(game_path.join("Mods"))
@@ -273,6 +324,8 @@ pub fn watch_mods(
     let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
         if let Ok(_event) = res {
             app_clone.emit("mods-changed", ()).ok();
+            // Keep legacy event name for frontend compatibility.
+            app_clone.emit("mod-filesystem-changed", ()).ok();
         }
     })
     .map_err(|e| format!("Failed to create watcher: {}", e))?;
@@ -323,8 +376,7 @@ pub fn rename_mod_group(
         return Err(format!("Group not found: {}", old_group));
     }
 
-    std::fs::rename(&old_path, &new_path)
-        .map_err(|e| format!("Failed to rename group: {}", e))?;
+    std::fs::rename(&old_path, &new_path).map_err(|e| format!("Failed to rename group: {}", e))?;
 
     info!("Renamed mod group: {} -> {}", old_group, new_group);
     Ok(())
@@ -335,8 +387,7 @@ pub fn delete_mod_group(app: AppHandle, game_name: &str, group_name: &str) -> Re
     let game_path = resolve_game_path(&app, game_name)?;
     let group_dir = game_path.join("Mods").join(group_name);
     if group_dir.exists() {
-        trash::delete(&group_dir)
-            .map_err(|e| format!("Failed to delete group: {}", e))?;
+        trash::delete(&group_dir).map_err(|e| format!("Failed to delete group: {}", e))?;
         info!("Deleted mod group: {}", group_name);
     }
     Ok(())
@@ -352,8 +403,7 @@ pub fn set_mod_group_icon(
     let game_path = resolve_game_path(&app, game_name)?;
     let group_dir = game_path.join("Mods").join(group_path);
     let dest = group_dir.join("icon.png");
-    std::fs::copy(icon_path, &dest)
-        .map_err(|e| format!("Failed to copy icon: {}", e))?;
+    std::fs::copy(icon_path, &dest).map_err(|e| format!("Failed to copy icon: {}", e))?;
     Ok(())
 }
 
@@ -362,8 +412,7 @@ pub fn delete_mod(app: AppHandle, game_name: &str, mod_relative_path: &str) -> R
     let game_path = resolve_game_path(&app, game_name)?;
     let mod_path = game_path.join("Mods").join(mod_relative_path);
     if mod_path.exists() {
-        trash::delete(&mod_path)
-            .map_err(|e| format!("Failed to delete mod: {}", e))?;
+        trash::delete(&mod_path).map_err(|e| format!("Failed to delete mod: {}", e))?;
         info!("Deleted mod: {}", mod_relative_path);
     }
     Ok(())
@@ -394,8 +443,7 @@ pub fn move_mod_to_group(
     crate::utils::file_manager::ensure_dir(&target_dir)?;
 
     let dest = target_dir.join(&mod_name);
-    std::fs::rename(&src, &dest)
-        .map_err(|e| format!("Failed to move mod: {}", e))?;
+    std::fs::rename(&src, &dest).map_err(|e| format!("Failed to move mod: {}", e))?;
 
     info!("Moved mod {} to group {}", mod_name, new_group);
     Ok(())
@@ -414,7 +462,11 @@ pub fn open_game_mods_folder(app: AppHandle, game_name: &str) -> Result<(), Stri
 }
 
 #[tauri::command]
-pub fn open_mod_group_folder(app: AppHandle, game_name: &str, group_path: &str) -> Result<(), String> {
+pub fn open_mod_group_folder(
+    app: AppHandle,
+    game_name: &str,
+    group_path: &str,
+) -> Result<(), String> {
     let game_path = resolve_game_path(&app, game_name)?;
     let group_dir = game_path.join("Mods").join(group_path);
     if !group_dir.exists() {
@@ -428,7 +480,7 @@ pub fn open_mod_group_folder(app: AppHandle, game_name: &str, group_path: &str) 
 }
 
 #[tauri::command]
-pub fn preview_mod_archive(path: &str) -> Result<Vec<String>, String> {
+pub fn preview_mod_archive(path: &str) -> Result<ArchivePreview, String> {
     let archive_path = PathBuf::from(path);
     let ext = archive_path
         .extension()
@@ -437,28 +489,64 @@ pub fn preview_mod_archive(path: &str) -> Result<Vec<String>, String> {
         .to_lowercase();
 
     match ext.as_str() {
-        "zip" => preview_zip(&archive_path),
-        "7z" => preview_7z(&archive_path),
+        "zip" => preview_zip(&archive_path).map(|files| build_archive_preview("zip", files)),
+        "7z" => preview_7z(&archive_path).map(|files| build_archive_preview("7z", files)),
         _ => Err(format!("Unsupported archive format: {}", ext)),
     }
 }
 
-fn preview_zip(path: &Path) -> Result<Vec<String>, String> {
-    let file = std::fs::File::open(path)
-        .map_err(|e| format!("Failed to open zip: {}", e))?;
-    let mut archive = zip::ZipArchive::new(file)
-        .map_err(|e| format!("Failed to read zip: {}", e))?;
+fn build_archive_preview(format: &str, files: Vec<String>) -> ArchivePreview {
+    let mut root_dirs = Vec::new();
+    let mut seen = HashSet::new();
+    let mut has_ini = false;
 
-    let names: Vec<String> = (0..archive.len())
-        .filter_map(|i| archive.by_index(i).ok().map(|f| f.name().to_string()))
-        .collect();
+    for file in &files {
+        let normalized = file.replace('\\', "/");
+        let trimmed = normalized.trim_start_matches("./").trim_start_matches('/');
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if trimmed.to_ascii_lowercase().ends_with(".ini") {
+            has_ini = true;
+        }
+
+        if let Some((root, _)) = trimmed.split_once('/') {
+            if !root.is_empty() && root != "." && seen.insert(root.to_string()) {
+                root_dirs.push(root.to_string());
+            }
+        }
+    }
+
+    ArchivePreview {
+        root_dirs,
+        file_count: files.len(),
+        has_ini,
+        format: format.to_string(),
+    }
+}
+
+fn preview_zip(path: &Path) -> Result<Vec<String>, String> {
+    let file = std::fs::File::open(path).map_err(|e| format!("Failed to open zip: {}", e))?;
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|e| format!("Failed to read zip: {}", e))?;
+
+    let mut names = Vec::new();
+    for i in 0..archive.len() {
+        let file = archive
+            .by_index(i)
+            .map_err(|e| format!("Failed to read zip entry {}: {}", i, e))?;
+        if file.is_dir() {
+            continue;
+        }
+        names.push(file.name().to_string());
+    }
 
     Ok(names)
 }
 
 fn preview_7z(path: &Path) -> Result<Vec<String>, String> {
-    let file = std::fs::File::open(path)
-        .map_err(|e| format!("Failed to open 7z: {}", e))?;
+    let file = std::fs::File::open(path).map_err(|e| format!("Failed to open 7z: {}", e))?;
     let len = file
         .metadata()
         .map_err(|e| format!("Failed to get file metadata: {}", e))?
@@ -522,10 +610,10 @@ pub fn install_mod_archive(
 }
 
 fn install_from_zip(archive_path: &Path, target_dir: &Path) -> Result<(), String> {
-    let file = std::fs::File::open(archive_path)
-        .map_err(|e| format!("Failed to open zip: {}", e))?;
-    let mut archive = zip::ZipArchive::new(file)
-        .map_err(|e| format!("Failed to read zip: {}", e))?;
+    let file =
+        std::fs::File::open(archive_path).map_err(|e| format!("Failed to open zip: {}", e))?;
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|e| format!("Failed to read zip: {}", e))?;
 
     for i in 0..archive.len() {
         let mut file = archive
@@ -542,8 +630,7 @@ fn install_from_zip(archive_path: &Path, target_dir: &Path) -> Result<(), String
             }
             let mut out = std::fs::File::create(&dest)
                 .map_err(|e| format!("Failed to create file: {}", e))?;
-            std::io::copy(&mut file, &mut out)
-                .map_err(|e| format!("Failed to extract: {}", e))?;
+            std::io::copy(&mut file, &mut out).map_err(|e| format!("Failed to extract: {}", e))?;
         }
     }
     Ok(())

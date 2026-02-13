@@ -9,6 +9,12 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
+fn emit_update_progress(app: &AppHandle, progress: &DownloadProgress) {
+    app.emit("game-update-progress", progress).ok();
+    // Keep legacy progress event for older frontends that still listen to download updates.
+    app.emit("game-download-progress", progress).ok();
+}
+
 /// Full comparison update — mirrors LutheringLaves.py `update_game`
 /// Compares MD5 of each file and re-downloads mismatches.
 pub async fn update_game_full(
@@ -57,7 +63,7 @@ pub async fn update_game_full(
                 speed_bps: speed_tracker.speed_bps(),
                 eta_seconds: speed_tracker.eta_seconds(remaining),
             };
-            app.emit("game-update-progress", &progress).ok();
+            emit_update_progress(&app, &progress);
             continue;
         }
 
@@ -89,7 +95,7 @@ pub async fn update_game_full(
             speed_bps: speed_tracker.speed_bps(),
             eta_seconds: speed_tracker.eta_seconds(remaining),
         };
-        app.emit("game-update-progress", &progress).ok();
+        emit_update_progress(&app, &progress);
     }
 
     info!("Full comparison update complete");
@@ -109,15 +115,12 @@ pub async fn update_game_patch(
         .patch_configs
         .iter()
         .find(|p| p.version == local_version)
-        .ok_or_else(|| {
-            format!(
-                "No patch config found for version {}",
-                local_version
-            )
-        })?;
+        .ok_or_else(|| format!("No patch config found for version {}", local_version))?;
 
     if patch.ext.is_empty() {
-        return Err("Patch has no ext data, incremental update not supported for this version".to_string());
+        return Err(
+            "Patch has no ext data, incremental update not supported for this version".to_string(),
+        );
     }
 
     info!(
@@ -153,8 +156,15 @@ pub async fn update_game_patch(
             .filter_map(|r| {
                 Some(cdn::ResourceFile {
                     dest: r.get("dest")?.as_str()?.to_string(),
-                    md5: r.get("md5").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    size: r.get("size")?.as_u64().or_else(|| r.get("size")?.as_str()?.parse().ok())?,
+                    md5: r
+                        .get("md5")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    size: r
+                        .get("size")?
+                        .as_u64()
+                        .or_else(|| r.get("size")?.as_str()?.parse().ok())?,
                 })
             })
             .collect();
@@ -165,7 +175,10 @@ pub async fn update_game_patch(
     };
 
     // Create temp folder
-    let temp_folder = game_folder.parent().unwrap_or(game_folder).join("temp_folder");
+    let temp_folder = game_folder
+        .parent()
+        .unwrap_or(game_folder)
+        .join("temp_folder");
     tokio::fs::create_dir_all(&temp_folder)
         .await
         .map_err(|e| format!("Failed to create temp folder: {}", e))?;
@@ -194,15 +207,12 @@ pub async fn update_game_patch(
             fetcher::download_with_resume(&client, &download_url, &dest_path, false, None).await?;
         }
 
-        app.emit(
-            "game-update-progress",
-            &DownloadProgress {
-                phase: "patch".to_string(),
-                current_file: file.dest.clone(),
-                ..Default::default()
-            },
-        )
-        .ok();
+        let progress = DownloadProgress {
+            phase: "patch".to_string(),
+            current_file: file.dest.clone(),
+            ..Default::default()
+        };
+        emit_update_progress(&app, &progress);
     }
 
     // Run hpatchz if needed
@@ -318,14 +328,12 @@ async fn merge_temp_to_game(temp_folder: &Path, game_folder: &Path) -> Result<()
                 tokio::fs::remove_file(&dest).await.ok();
             }
 
-            tokio::fs::rename(entry.path(), &dest)
-                .await
-                .or_else(|_| {
-                    // rename may fail across filesystems, fallback to copy+delete
-                    std::fs::copy(entry.path(), &dest)
-                        .and_then(|_| std::fs::remove_file(entry.path()))
-                        .map_err(|e| format!("Failed to move file: {}", e))
-                })?;
+            tokio::fs::rename(entry.path(), &dest).await.or_else(|_| {
+                // rename may fail across filesystems, fallback to copy+delete
+                std::fs::copy(entry.path(), &dest)
+                    .and_then(|_| std::fs::remove_file(entry.path()))
+                    .map_err(|e| format!("Failed to move file: {}", e))
+            })?;
         }
     }
     Ok(())

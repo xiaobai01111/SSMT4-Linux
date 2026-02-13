@@ -46,7 +46,7 @@ fn migrate_json_to_db() -> Result<AppConfig, String> {
     let config_dir = app_config::get_app_config_dir();
     let json_path = config_dir.join("settings.json");
 
-    let cfg = if json_path.exists() {
+    let mut cfg = if json_path.exists() {
         let content = std::fs::read_to_string(&json_path)
             .map_err(|e| format!("读取 settings.json 失败: {}", e))?;
         let loaded: AppConfig = serde_json::from_str(&content)
@@ -57,6 +57,7 @@ fn migrate_json_to_db() -> Result<AppConfig, String> {
         AppConfig::default()
     };
 
+    normalize_settings(&mut cfg);
     settings_to_kv(&cfg);
     Ok(cfg)
 }
@@ -75,26 +76,48 @@ fn settings_to_kv(cfg: &AppConfig) {
     db::set_setting("current_config_name", &cfg.current_config_name);
     db::set_setting("github_token", &cfg.github_token);
     db::set_setting("show_mods", if cfg.show_mods { "true" } else { "false" });
-    db::set_setting("show_websites", if cfg.show_websites { "true" } else { "false" });
-    db::set_setting("show_documents", if cfg.show_documents { "true" } else { "false" });
+    db::set_setting(
+        "show_websites",
+        if cfg.show_websites { "true" } else { "false" },
+    );
+    db::set_setting(
+        "show_documents",
+        if cfg.show_documents { "true" } else { "false" },
+    );
     db::set_setting("locale", &cfg.locale);
     // 向后兼容旧键名
     db::set_setting("language", &cfg.locale);
 
     db::set_setting("window_width", &cfg.window_width.to_string());
     db::set_setting("window_height", &cfg.window_height.to_string());
-    db::set_setting("window_x", &cfg.window_x.map(|v| v.to_string()).unwrap_or_default());
-    db::set_setting("window_y", &cfg.window_y.map(|v| v.to_string()).unwrap_or_default());
+    db::set_setting(
+        "window_x",
+        &cfg.window_x.map(|v| v.to_string()).unwrap_or_default(),
+    );
+    db::set_setting(
+        "window_y",
+        &cfg.window_y.map(|v| v.to_string()).unwrap_or_default(),
+    );
     db::set_setting("theme", &cfg.theme);
-    db::set_setting("custom_search_paths", &serde_json::to_string(&cfg.custom_search_paths).unwrap_or_default());
+    db::set_setting(
+        "custom_search_paths",
+        &serde_json::to_string(&cfg.custom_search_paths).unwrap_or_default(),
+    );
     db::set_setting("data_dir", &cfg.data_dir);
-    db::set_setting("initialized", if cfg.initialized { "true" } else { "false" });
+    db::set_setting(
+        "initialized",
+        if cfg.initialized { "true" } else { "false" },
+    );
 }
 
 /// SQLite KV → AppConfig 读取
 fn settings_from_kv(pairs: &[(String, String)]) -> AppConfig {
     let get = |key: &str| -> String {
-        pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()).unwrap_or_default()
+        pairs
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
     };
     let get_any = |keys: &[&str]| -> String {
         keys.iter()
@@ -108,14 +131,26 @@ fn settings_from_kv(pairs: &[(String, String)]) -> AppConfig {
     let locale_raw = get_any(&["locale", "language"]);
 
     AppConfig {
-        bg_type: normalize_bg_type(if bg_type_raw.is_empty() { &defaults.bg_type } else { &bg_type_raw }),
+        bg_type: normalize_bg_type(if bg_type_raw.is_empty() {
+            &defaults.bg_type
+        } else {
+            &bg_type_raw
+        }),
         bg_image: {
             let v = get_any(&["bg_image", "bgImage"]);
-            if v.is_empty() { defaults.bg_image } else { v }
+            if v.is_empty() {
+                defaults.bg_image
+            } else {
+                v
+            }
         },
         bg_video: {
             let v = get_any(&["bg_video", "bgVideo"]);
-            if v.is_empty() { defaults.bg_video } else { v }
+            if v.is_empty() {
+                defaults.bg_video
+            } else {
+                v
+            }
         },
         content_opacity: {
             let v = get_any(&["content_opacity", "contentOpacity"]);
@@ -127,15 +162,27 @@ fn settings_from_kv(pairs: &[(String, String)]) -> AppConfig {
         },
         cache_dir: {
             let v = get_any(&["cache_dir", "cacheDir"]);
-            if v.is_empty() { defaults.cache_dir } else { v }
+            if v.is_empty() {
+                defaults.cache_dir
+            } else {
+                v
+            }
         },
         current_config_name: {
             let v = get_any(&["current_config_name", "currentConfigName"]);
-            if v.is_empty() { defaults.current_config_name } else { v }
+            if v.is_empty() {
+                defaults.current_config_name
+            } else {
+                v
+            }
         },
         github_token: {
             let v = get_any(&["github_token", "githubToken"]);
-            if v.is_empty() { defaults.github_token } else { v }
+            if v.is_empty() {
+                defaults.github_token
+            } else {
+                v
+            }
         },
         show_mods: {
             let v = get_any(&["show_mods", "showMods"]);
@@ -149,14 +196,28 @@ fn settings_from_kv(pairs: &[(String, String)]) -> AppConfig {
             let v = get_any(&["show_documents", "showDocuments"]);
             parse_bool_or_default(&v, defaults.show_documents)
         },
-        locale: normalize_locale(if locale_raw.is_empty() { &defaults.locale } else { &locale_raw }),
-        window_width: parse_f64_or_default(&get_any(&["window_width", "windowWidth"]), defaults.window_width),
-        window_height: parse_f64_or_default(&get_any(&["window_height", "windowHeight"]), defaults.window_height),
+        locale: normalize_locale(if locale_raw.is_empty() {
+            &defaults.locale
+        } else {
+            &locale_raw
+        }),
+        window_width: parse_f64_or_default(
+            &get_any(&["window_width", "windowWidth"]),
+            defaults.window_width,
+        ),
+        window_height: parse_f64_or_default(
+            &get_any(&["window_height", "windowHeight"]),
+            defaults.window_height,
+        ),
         window_x: get_any(&["window_x", "windowX"]).parse().ok(),
         window_y: get_any(&["window_y", "windowY"]).parse().ok(),
         theme: {
             let v = get("theme");
-            if v.is_empty() { defaults.theme } else { v }
+            if v.is_empty() {
+                defaults.theme
+            } else {
+                v
+            }
         },
         custom_search_paths: {
             let v = get_any(&["custom_search_paths", "customSearchPaths"]);
@@ -168,7 +229,11 @@ fn settings_from_kv(pairs: &[(String, String)]) -> AppConfig {
         },
         data_dir: {
             let v = get_any(&["data_dir", "dataDir"]);
-            if v.is_empty() { defaults.data_dir } else { v }
+            if v.is_empty() {
+                defaults.data_dir
+            } else {
+                v
+            }
         },
         initialized: parse_bool_or_default(&get("initialized"), defaults.initialized),
     }
@@ -204,9 +269,7 @@ fn normalize_locale(value: &str) -> String {
         || normalized.starts_with("zh-hant")
     {
         "zht".to_string()
-    } else if normalized == "zhs"
-        || normalized.starts_with("zh")
-    {
+    } else if normalized == "zhs" || normalized.starts_with("zh") {
         "zhs".to_string()
     } else {
         "en".to_string()

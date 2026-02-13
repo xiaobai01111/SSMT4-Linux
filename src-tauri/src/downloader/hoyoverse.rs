@@ -93,10 +93,7 @@ pub struct ResourceEntry {
 
 /// 获取 HoYoverse 游戏包信息
 /// biz_prefix: 用于匹配游戏，如 "hkrpg_" (星穹铁道), "hk4e_" (原神), "nap_" (绝区零)
-pub async fn fetch_game_packages(
-    api_url: &str,
-    biz_prefix: &str,
-) -> Result<GamePackage, String> {
+pub async fn fetch_game_packages(api_url: &str, biz_prefix: &str) -> Result<GamePackage, String> {
     let client = Client::new();
     let resp = client
         .get(api_url)
@@ -121,12 +118,7 @@ pub async fn fetch_game_packages(
         .game_packages
         .into_iter()
         .find(|pkg| pkg.game.biz.starts_with(biz_prefix))
-        .ok_or_else(|| {
-            format!(
-                "API 响应中未找到游戏 (biz prefix: {})",
-                biz_prefix
-            )
-        })
+        .ok_or_else(|| format!("API 响应中未找到游戏 (biz prefix: {})", biz_prefix))
 }
 
 /// 获取资源文件列表（用于校验）
@@ -235,10 +227,9 @@ pub fn write_local_version(game_folder: &std::path::Path, version: &str) -> Resu
         "provider": "hoyoverse"
     });
     let config_path = game_folder.join("launcherDownloadConfig.json");
-    let content = serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("序列化版本配置失败: {}", e))?;
-    std::fs::write(&config_path, content)
-        .map_err(|e| format!("写入版本配置失败: {}", e))?;
+    let content =
+        serde_json::to_string_pretty(&config).map_err(|e| format!("序列化版本配置失败: {}", e))?;
+    std::fs::write(&config_path, content).map_err(|e| format!("写入版本配置失败: {}", e))?;
 
     Ok(())
 }

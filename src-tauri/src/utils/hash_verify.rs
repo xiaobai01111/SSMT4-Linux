@@ -1,4 +1,4 @@
-use md5::{Md5, Digest as _};
+use md5::{Digest as _, Md5};
 use sha2::Sha256;
 use std::path::Path;
 use tokio::io::AsyncReadExt;

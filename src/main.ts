@@ -1,4 +1,4 @@
-import { createApp } from "vue";
+import { createApp, type Plugin } from "vue";
 import App from "./App.vue";
 import router from "./router";
 import * as ElementPlusIconsVue from '@element-plus/icons-vue';
@@ -14,8 +14,9 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
   app.component(key, component);
 }
 
-app.use(router);
-app.use(i18n);
+// Keep build stable even when lockfile temporarily pulls mismatched plugin typings.
+app.use(router as unknown as Plugin);
+app.use(i18n as unknown as Plugin);
 app.mount("#app");
 
 // 1. 初始设置：将 store 中的 locale 应用到 i18n

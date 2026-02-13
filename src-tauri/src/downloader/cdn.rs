@@ -85,10 +85,7 @@ pub async fn fetch_launcher_info(launcher_api: &str) -> Result<LauncherInfo, Str
         })
         .unwrap_or_default();
 
-    info!(
-        "Launcher info: version={}, cdn={}",
-        version, cdn_url
-    );
+    info!("Launcher info: version={}, cdn={}", version, cdn_url);
 
     Ok(LauncherInfo {
         version,
@@ -119,9 +116,10 @@ pub async fn fetch_resource_index(
             Some(ResourceFile {
                 dest: r.get("dest")?.as_str()?.to_string(),
                 md5: r.get("md5")?.as_str()?.to_string(),
-                size: r.get("size")?.as_u64().or_else(|| {
-                    r.get("size")?.as_str()?.parse::<u64>().ok()
-                })?,
+                size: r
+                    .get("size")?
+                    .as_u64()
+                    .or_else(|| r.get("size")?.as_str()?.parse::<u64>().ok())?,
             })
         })
         .collect();
@@ -186,7 +184,12 @@ async fn fetch_json(client: &Client, url: &str) -> Result<Value, String> {
         .map_err(|e| format!("Failed to decode response: {}", e))?;
 
     serde_json::from_str(&text).map_err(|e| {
-        tracing::error!("Failed to parse JSON from {}: {} (first 200 chars: {:?})", url, e, &text[..text.len().min(200)]);
+        tracing::error!(
+            "Failed to parse JSON from {}: {} (first 200 chars: {:?})",
+            url,
+            e,
+            &text[..text.len().min(200)]
+        );
         format!("Failed to parse JSON: {}", e)
     })
 }

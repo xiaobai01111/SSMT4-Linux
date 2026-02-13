@@ -2,7 +2,7 @@ use crate::utils::ini_manager;
 use crate::wine::{detector, prefix};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 #[tauri::command]
 pub async fn start_game(
@@ -39,7 +39,10 @@ pub async fn start_game(
         "STEAM_COMPAT_DATA_PATH".to_string(),
         prefix_dir.to_string_lossy().to_string(),
     );
-    env.insert("WINEPREFIX".to_string(), pfx_dir.to_string_lossy().to_string());
+    env.insert(
+        "WINEPREFIX".to_string(),
+        pfx_dir.to_string_lossy().to_string(),
+    );
 
     if let Some(steam_root) = detector::get_steam_root_path() {
         env.insert(
@@ -179,10 +182,7 @@ pub fn check_3dmigoto_integrity(
 }
 
 #[tauri::command]
-pub fn toggle_symlink(
-    game_path: &str,
-    enabled: bool,
-) -> Result<bool, String> {
+pub fn toggle_symlink(game_path: &str, enabled: bool) -> Result<bool, String> {
     let game_dir = PathBuf::from(game_path);
     let ini_path = game_dir.join("d3dx.ini");
 

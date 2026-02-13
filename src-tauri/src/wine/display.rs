@@ -37,7 +37,10 @@ pub fn detect_display_info() -> DisplayInfo {
         gamepad_detected,
     };
 
-    info!("Display info: server={:?}, vulkan={}, gamepad={}", info.server, info.vulkan_available, info.gamepad_detected);
+    info!(
+        "Display info: server={:?}, vulkan={}, gamepad={}",
+        info.server, info.vulkan_available, info.gamepad_detected
+    );
     info
 }
 

@@ -30,12 +30,14 @@ pub async fn get_launcher_info(launcher_api: String) -> Result<LauncherInfo, Str
 pub async fn get_game_state(
     launcher_api: String,
     game_folder: String,
+    biz_prefix: Option<String>,
 ) -> Result<GameState, String> {
     let game_path = PathBuf::from(&game_folder);
 
     // HoYoverse 分支
     if hoyoverse::is_hoyoverse_api(&launcher_api) {
-        return get_game_state_hoyoverse(&launcher_api, &game_path).await;
+        let biz = biz_prefix.as_deref().unwrap_or("hkrpg_");
+        return get_game_state_hoyoverse(&launcher_api, &game_path, biz).await;
     }
 
     // Kuro Games 分支
@@ -85,6 +87,8 @@ pub async fn download_game(
     app: AppHandle,
     launcher_api: String,
     game_folder: String,
+    languages: Option<Vec<String>>,
+    biz_prefix: Option<String>,
 ) -> Result<(), String> {
     *CANCEL_TOKEN.lock().await = false;
 
@@ -92,11 +96,14 @@ pub async fn download_game(
     std::fs::create_dir_all(&game_path)
         .map_err(|e| format!("Failed to create game folder: {}", e))?;
 
+    let langs = languages.unwrap_or_default();
+
     // HoYoverse 分支
     if hoyoverse::is_hoyoverse_api(&launcher_api) {
-        let biz = detect_biz_prefix(&launcher_api);
+        let biz = biz_prefix.as_deref().unwrap_or("hkrpg_");
         let game_pkg = hoyoverse::fetch_game_packages(&launcher_api, biz).await?;
-        hoyoverse_download::download_game(app, &game_pkg, &game_path, CANCEL_TOKEN.clone()).await?;
+        hoyoverse_download::download_game(app, &game_pkg, &game_path, &langs, CANCEL_TOKEN.clone())
+            .await?;
         info!("HoYoverse full download completed for {}", game_folder);
         return Ok(());
     }
@@ -125,20 +132,29 @@ pub async fn update_game(
     app: AppHandle,
     launcher_api: String,
     game_folder: String,
+    languages: Option<Vec<String>>,
+    biz_prefix: Option<String>,
 ) -> Result<(), String> {
     *CANCEL_TOKEN.lock().await = false;
 
     let game_path = PathBuf::from(&game_folder);
+    let langs = languages.unwrap_or_default();
 
     // HoYoverse 分支
     if hoyoverse::is_hoyoverse_api(&launcher_api) {
-        let biz = detect_biz_prefix(&launcher_api);
+        let biz = biz_prefix.as_deref().unwrap_or("hkrpg_");
         let game_pkg = hoyoverse::fetch_game_packages(&launcher_api, biz).await?;
         let local_version = get_local_version_internal(&game_path)
             .ok_or("未找到本地版本，请使用全量下载".to_string())?;
         hoyoverse_download::update_game(
-            app, &game_pkg, &local_version, &game_path, CANCEL_TOKEN.clone()
-        ).await?;
+            app,
+            &game_pkg,
+            &local_version,
+            &game_path,
+            &langs,
+            CANCEL_TOKEN.clone(),
+        )
+        .await?;
         info!("HoYoverse update completed for {}", game_folder);
         return Ok(());
     }
@@ -195,6 +211,7 @@ pub async fn verify_game_files(
     app: AppHandle,
     launcher_api: String,
     game_folder: String,
+    biz_prefix: Option<String>,
 ) -> Result<verifier::VerifyResult, String> {
     *CANCEL_TOKEN.lock().await = false;
 
@@ -202,11 +219,10 @@ pub async fn verify_game_files(
 
     // HoYoverse 分支
     if hoyoverse::is_hoyoverse_api(&launcher_api) {
-        let biz = detect_biz_prefix(&launcher_api);
+        let biz = biz_prefix.as_deref().unwrap_or("hkrpg_");
         let game_pkg = hoyoverse::fetch_game_packages(&launcher_api, biz).await?;
-        return hoyoverse_download::verify_game(
-            app, &game_pkg, &game_path, CANCEL_TOKEN.clone()
-        ).await;
+        return hoyoverse_download::verify_game(app, &game_pkg, &game_path, CANCEL_TOKEN.clone())
+            .await;
     }
 
     // Kuro Games 分支
@@ -223,7 +239,15 @@ pub async fn verify_game_files(
     )
     .await?;
 
-    write_local_version(&game_path, &launcher_info.version)?;
+    if result.failed.is_empty() {
+        write_local_version(&game_path, &launcher_info.version)?;
+    } else {
+        tracing::warn!(
+            "Verification finished with {} failed files; local version will not be updated",
+            result.failed.len()
+        );
+    }
+
     Ok(result)
 }
 
@@ -257,7 +281,9 @@ fn get_local_version_internal(game_folder: &PathBuf) -> Option<String> {
     }
     let content = std::fs::read_to_string(&config_path).ok()?;
     let data: serde_json::Value = serde_json::from_str(&content).ok()?;
-    data.get("version").and_then(|v| v.as_str()).map(|s| s.to_string())
+    data.get("version")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }
 
 /// 根据游戏预设返回对应的 launcher API URL
@@ -271,11 +297,25 @@ pub fn get_game_launcher_api(game_preset: String) -> Result<serde_json::Value, S
             "defaultFolder": "Wuthering Waves Game",
             "supported": true
         })),
-        // 崩坏：星穹铁道（国服）
+        // 崩坏：星穹铁道
         "SRMI" => Ok(serde_json::json!({
-            "launcherApi": "https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1",
-            "defaultFolder": "StarRail",
-            "supported": true
+            "supported": true,
+            "defaultFolder": "StarRail"
+        })),
+        // 绝区零
+        "ZZMI" => Ok(serde_json::json!({
+            "supported": true,
+            "defaultFolder": "ZenlessZoneZero"
+        })),
+        // 原神
+        "GIMI" => Ok(serde_json::json!({
+            "supported": true,
+            "defaultFolder": "GenshinImpact"
+        })),
+        // 崩坏3
+        "HIMI" => Ok(serde_json::json!({
+            "supported": true,
+            "defaultFolder": "HonkaiImpact3rd"
         })),
         _ => Ok(serde_json::json!({
             "supported": false
@@ -286,8 +326,7 @@ pub fn get_game_launcher_api(game_preset: String) -> Result<serde_json::Value, S
 /// 返回游戏默认安装目录（自动跟随软件数据目录 dataDir）
 #[tauri::command]
 pub fn get_default_game_folder(game_name: String) -> Result<String, String> {
-    let data_dir = crate::configs::app_config::get_app_data_dir();
-    let game_dir = data_dir.join("games").join(&game_name);
+    let game_dir = crate::utils::file_manager::get_global_games_dir().join(&game_name);
     Ok(game_dir.to_string_lossy().to_string())
 }
 
@@ -295,8 +334,8 @@ pub fn get_default_game_folder(game_name: String) -> Result<String, String> {
 async fn get_game_state_hoyoverse(
     launcher_api: &str,
     game_path: &PathBuf,
+    biz: &str,
 ) -> Result<GameState, String> {
-    let biz = detect_biz_prefix(launcher_api);
     let game_pkg = match hoyoverse::fetch_game_packages(launcher_api, biz).await {
         Ok(pkg) => pkg,
         Err(e) => {
@@ -336,18 +375,6 @@ async fn get_game_state_hoyoverse(
     })
 }
 
-/// 根据 API URL 推断 biz_prefix
-fn detect_biz_prefix(launcher_api: &str) -> &str {
-    // 目前所有 HoYoverse API 共用同一个 launcher_id，需要靠 biz 前缀区分游戏
-    // 但实际上 getGamePackages 会返回所有游戏，我们通过 biz 前缀筛选
-    // 默认使用 hkrpg_ (星穹铁道)，未来可根据 URL 参数扩展
-    if launcher_api.contains("getGamePackages") {
-        // 通用 API，默认 Star Rail
-        "hkrpg_"
-    } else {
-        ""
-    }
-}
 
 fn write_local_version(game_folder: &PathBuf, version: &str) -> Result<(), String> {
     let config = serde_json::json!({
@@ -358,8 +385,8 @@ fn write_local_version(game_folder: &PathBuf, version: &str) -> Result<(), Strin
         "appId": "10003"
     });
     let config_path = game_folder.join("launcherDownloadConfig.json");
-    let content = serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("Failed to serialize: {}", e))?;
+    let content =
+        serde_json::to_string_pretty(&config).map_err(|e| format!("Failed to serialize: {}", e))?;
     std::fs::write(&config_path, content)
         .map_err(|e| format!("Failed to write version config: {}", e))
 }

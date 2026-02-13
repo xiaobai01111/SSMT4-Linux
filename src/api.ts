@@ -28,6 +28,8 @@ export interface AppSettings {
   showWebsites: boolean;
   showDocuments: boolean;
   locale: string;
+  dataDir: string;
+  initialized: boolean;
 }
 
 export interface GameInfo {
@@ -247,8 +249,12 @@ export async function openInExplorer(path: string): Promise<void> {
 // Process Commands
 // ============================================================
 
-export async function runResourceExecutable(filename: string, args: string[]): Promise<string> {
-  return invoke<string>('run_resource_executable', { filename, args });
+export async function runResourceExecutable(resourceName: string, args: string[]): Promise<string> {
+  return invoke<string>('run_resource_executable', {
+    resourceName,
+    filename: resourceName,
+    args,
+  });
 }
 
 // ============================================================
@@ -414,7 +420,43 @@ export async function moveModToGroup(
 }
 
 export async function previewModArchive(path: string): Promise<ArchivePreview> {
-  return invoke<ArchivePreview>('preview_mod_archive', { path });
+  const raw = await invoke<ArchivePreview | string[]>('preview_mod_archive', { path });
+
+  // Backward compatibility: older backend may return string[] file list.
+  if (Array.isArray(raw)) {
+    const files = raw.filter((item): item is string => typeof item === 'string');
+    const rootDirs: string[] = [];
+    const seen = new Set<string>();
+    let hasIni = false;
+
+    for (const file of files) {
+      const normalized = file.replace(/\\/g, '/').replace(/^\.?\//, '').replace(/^\/+/, '');
+      if (!normalized) continue;
+
+      if (normalized.toLowerCase().endsWith('.ini')) {
+        hasIni = true;
+      }
+
+      const idx = normalized.indexOf('/');
+      if (idx > 0) {
+        const root = normalized.slice(0, idx);
+        if (!seen.has(root)) {
+          seen.add(root);
+          rootDirs.push(root);
+        }
+      }
+    }
+
+    const ext = path.split('.').pop()?.toLowerCase() || 'unknown';
+    return {
+      root_dirs: rootDirs,
+      file_count: files.length,
+      has_ini: hasIni,
+      format: ext,
+    };
+  }
+
+  return raw;
 }
 
 export async function installModArchive(
@@ -510,24 +552,24 @@ export async function getLauncherInfo(launcherApi: string): Promise<any> {
   return invoke('get_launcher_info', { launcherApi });
 }
 
-export async function getGameState(launcherApi: string, gameFolder: string): Promise<GameState> {
-  return invoke<GameState>('get_game_state', { launcherApi, gameFolder });
+export async function getGameState(launcherApi: string, gameFolder: string, bizPrefix?: string): Promise<GameState> {
+  return invoke<GameState>('get_game_state', { launcherApi, gameFolder, bizPrefix: bizPrefix || null });
 }
 
-export async function downloadGame(launcherApi: string, gameFolder: string): Promise<void> {
-  return invoke('download_game', { launcherApi, gameFolder });
+export async function downloadGame(launcherApi: string, gameFolder: string, languages?: string[], bizPrefix?: string): Promise<void> {
+  return invoke('download_game', { launcherApi, gameFolder, languages: languages || null, bizPrefix: bizPrefix || null });
 }
 
-export async function updateGame(launcherApi: string, gameFolder: string): Promise<void> {
-  return invoke('update_game', { launcherApi, gameFolder });
+export async function updateGame(launcherApi: string, gameFolder: string, languages?: string[], bizPrefix?: string): Promise<void> {
+  return invoke('update_game', { launcherApi, gameFolder, languages: languages || null, bizPrefix: bizPrefix || null });
 }
 
 export async function updateGamePatch(launcherApi: string, gameFolder: string): Promise<void> {
   return invoke('update_game_patch', { launcherApi, gameFolder });
 }
 
-export async function verifyGameFiles(launcherApi: string, gameFolder: string): Promise<VerifyResult> {
-  return invoke<VerifyResult>('verify_game_files', { launcherApi, gameFolder });
+export async function verifyGameFiles(launcherApi: string, gameFolder: string, bizPrefix?: string): Promise<VerifyResult> {
+  return invoke<VerifyResult>('verify_game_files', { launcherApi, gameFolder, bizPrefix: bizPrefix || null });
 }
 
 export async function cancelDownload(): Promise<void> {

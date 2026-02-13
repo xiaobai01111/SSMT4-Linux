@@ -5,10 +5,10 @@ mod utils;
 mod wine;
 
 use configs::app_config::AppConfig;
+use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::Arc;
 use std::sync::Mutex;
 use tauri::Manager;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU16, Ordering};
 
 /// 视频流服务器端口（启动后写入，前端读取）
 static VIDEO_SERVER_PORT: AtomicU16 = AtomicU16::new(0);
@@ -62,12 +62,16 @@ async fn handle_video_connection(stream: tokio::net::TcpStream) {
             match tokio::time::timeout(
                 std::time::Duration::from_secs(30),
                 reader.read_line(&mut line),
-            ).await {
+            )
+            .await
+            {
                 Ok(Ok(0)) => return, // 连接关闭
                 Ok(Ok(_)) => {
                     let is_end = line == "\r\n" || line == "\n";
                     header_buf.push_str(&line);
-                    if is_end { break; }
+                    if is_end {
+                        break;
+                    }
                 }
                 _ => return, // 超时或错误
             }
@@ -79,7 +83,9 @@ async fn handle_video_connection(stream: tokio::net::TcpStream) {
             None => return,
         };
         let parts: Vec<&str> = request_line.split_whitespace().collect();
-        if parts.len() < 2 { return; }
+        if parts.len() < 2 {
+            return;
+        }
 
         let path = percent_encoding::percent_decode_str(parts[1].trim_start_matches('/'))
             .decode_utf8_lossy()
@@ -87,8 +93,11 @@ async fn handle_video_connection(stream: tokio::net::TcpStream) {
 
         let file_path = std::path::PathBuf::from(&path);
         if !file_path.exists() {
-            let resp = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n";
-            if writer.write_all(resp.as_bytes()).await.is_err() { return; }
+            let resp =
+                "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n";
+            if writer.write_all(resp.as_bytes()).await.is_err() {
+                return;
+            }
             continue;
         }
 
@@ -102,7 +111,11 @@ async fn handle_video_connection(stream: tokio::net::TcpStream) {
         };
 
         // MIME 类型
-        let ext = file_path.extension().unwrap_or_default().to_string_lossy().to_lowercase();
+        let ext = file_path
+            .extension()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_lowercase();
         let mime = match ext.as_str() {
             "mp4" | "m4v" => "video/mp4",
             "webm" => "video/webm",
@@ -112,7 +125,8 @@ async fn handle_video_connection(stream: tokio::net::TcpStream) {
         };
 
         // 解析 Range 头
-        let range = header_buf.lines()
+        let range = header_buf
+            .lines()
             .find(|l| l.to_lowercase().starts_with("range:"))
             .and_then(|l| l.split_once(':'))
             .map(|(_, v)| v.trim().to_string())
@@ -129,9 +143,13 @@ async fn handle_video_connection(stream: tokio::net::TcpStream) {
                  Access-Control-Allow-Origin: *\r\n\
                  Connection: keep-alive\r\n\r\n"
             );
-            if writer.write_all(header.as_bytes()).await.is_err() { return; }
+            if writer.write_all(header.as_bytes()).await.is_err() {
+                return;
+            }
 
-            if file.seek(std::io::SeekFrom::Start(start)).await.is_err() { return; }
+            if file.seek(std::io::SeekFrom::Start(start)).await.is_err() {
+                return;
+            }
             let mut remaining = nbytes;
             let mut chunk = vec![0u8; 262144]; // 256KB 块
             while remaining > 0 {
@@ -139,7 +157,9 @@ async fn handle_video_connection(stream: tokio::net::TcpStream) {
                 match file.read(&mut chunk[..to_read]).await {
                     Ok(0) => break,
                     Ok(n) => {
-                        if writer.write_all(&chunk[..n]).await.is_err() { return; }
+                        if writer.write_all(&chunk[..n]).await.is_err() {
+                            return;
+                        }
                         remaining -= n as u64;
                     }
                     Err(_) => break,
@@ -154,14 +174,18 @@ async fn handle_video_connection(stream: tokio::net::TcpStream) {
                  Access-Control-Allow-Origin: *\r\n\
                  Connection: keep-alive\r\n\r\n"
             );
-            if writer.write_all(header.as_bytes()).await.is_err() { return; }
+            if writer.write_all(header.as_bytes()).await.is_err() {
+                return;
+            }
 
             let mut chunk = vec![0u8; 262144]; // 256KB 块
             loop {
                 match file.read(&mut chunk).await {
                     Ok(0) => break,
                     Ok(n) => {
-                        if writer.write_all(&chunk[..n]).await.is_err() { return; }
+                        if writer.write_all(&chunk[..n]).await.is_err() {
+                            return;
+                        }
                     }
                     Err(_) => break,
                 }
@@ -229,9 +253,7 @@ pub fn run() {
             });
 
             if !data_dir_str.is_empty() {
-                configs::app_config::set_custom_data_dir(
-                    std::path::PathBuf::from(&data_dir_str),
-                );
+                configs::app_config::set_custom_data_dir(std::path::PathBuf::from(&data_dir_str));
             }
 
             // 2. 创建固定目录（config、cache、prefixes — 不受 dataDir 影响）
