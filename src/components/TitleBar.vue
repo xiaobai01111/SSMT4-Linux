@@ -86,7 +86,7 @@ const navTo = (path: string) => {
     
     <div class="window-controls">
       <!-- Game List Toggle Button -->
-      <div class="control-button game-list-toggle" :class="{ active: route.path === '/games' }" @click="toggleGamePage" title="Switch to Game Library">
+      <div class="control-button game-list-toggle" :class="{ active: route.path === '/games' }" @click="toggleGamePage" title="游戏库">
         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="3" width="7" height="7"></rect>
           <rect x="14" y="3" width="7" height="7"></rect>

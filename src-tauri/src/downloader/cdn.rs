@@ -161,10 +161,12 @@ async fn fetch_json(client: &Client, url: &str) -> Result<Value, String> {
     let resp = client
         .get(url)
         .header("User-Agent", "Mozilla/5.0")
-        .header("Accept-Encoding", "gzip")
         .send()
         .await
-        .map_err(|e| format!("HTTP request failed: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("HTTP request failed for {}: {}", url, e);
+            format!("HTTP request failed: {}", e)
+        })?;
 
     if !resp.status().is_success() {
         return Err(format!("HTTP {}: {}", resp.status(), url));
@@ -183,7 +185,10 @@ async fn fetch_json(client: &Client, url: &str) -> Result<Value, String> {
         })
         .map_err(|e| format!("Failed to decode response: {}", e))?;
 
-    serde_json::from_str(&text).map_err(|e| format!("Failed to parse JSON: {}", e))
+    serde_json::from_str(&text).map_err(|e| {
+        tracing::error!("Failed to parse JSON from {}: {} (first 200 chars: {:?})", url, e, &text[..text.len().min(200)]);
+        format!("Failed to parse JSON: {}", e)
+    })
 }
 
 pub fn join_url(base: &str, path: &str) -> String {

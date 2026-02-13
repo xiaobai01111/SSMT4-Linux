@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' asset: http: https: file: data:; frame-src *;",
+      "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' asset: http: https: file: data: stream:; media-src 'self' asset: http: https: file: data: stream: blob:; frame-src *;",
       "assetProtocol": {
         "enable": true,
         "scope": [

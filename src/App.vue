@@ -1,7 +1,15 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, provide } from "vue";
+import { onMounted, onUnmounted, provide, watch } from "vue";
 import { useRoute } from "vue-router";
 import { appSettings, BGType } from "./store";
+
+// Debug: 监控视频背景 URL 变化
+watch(() => appSettings.bgVideo, (url) => {
+  if (url) console.log('[BG] Video URL:', url);
+});
+watch(() => appSettings.bgType, (t) => {
+  console.log('[BG] Type changed to:', t);
+});
 import TitleBar from "./components/TitleBar.vue";
 import { ElMessage, ElNotification } from "element-plus";
 
@@ -115,9 +123,11 @@ onUnmounted(() => {
       <video 
         v-if="appSettings.bgType === BGType.Video && appSettings.bgVideo" 
         :key="appSettings.bgVideo"
-        :src="appSettings.bgVideo" 
+        :src="appSettings.bgVideo"
         autoplay loop muted playsinline 
         class="bg-item"
+        @error="(e: Event) => console.error('[BG] Video error:', (e.target as HTMLVideoElement)?.error)"
+        @loadeddata="(e: Event) => { console.log('[BG] Video loaded OK'); const v = e.target as HTMLVideoElement; v.play().catch(err => console.error('[BG] Play failed:', err)); }"
       ></video>
     </transition-group>
   </div>

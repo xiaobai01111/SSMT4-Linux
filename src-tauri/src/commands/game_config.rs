@@ -1,3 +1,4 @@
+use crate::configs::database as db;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -12,29 +13,37 @@ pub struct GameConfig {
 
 #[tauri::command]
 pub fn load_game_config(app: tauri::AppHandle, game_name: &str) -> Result<Value, String> {
+    // 优先从 SQLite 读取
+    if let Some(json_str) = db::get_game_config(game_name) {
+        return serde_json::from_str(&json_str)
+            .map_err(|e| format!("解析游戏配置失败: {}", e));
+    }
+
+    // 回退到文件系统（兼容资源目录中的 Config.json）
     let config_path = get_game_config_path(&app, game_name)?;
     if !config_path.exists() {
         return Err(format!("Config not found for game: {}", game_name));
     }
     let content = std::fs::read_to_string(&config_path)
         .map_err(|e| format!("Failed to read config: {}", e))?;
-    serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))
+    let val: Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse config: {}", e))?;
+
+    // 迁移到 SQLite
+    db::set_game_config(game_name, &content);
+    info!("从文件迁移游戏配置到 SQLite: {}", game_name);
+    Ok(val)
 }
 
 #[tauri::command]
 pub fn save_game_config(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     game_name: &str,
     config: Value,
 ) -> Result<(), String> {
-    let config_path = get_game_config_path(&app, game_name)?;
-    if let Some(parent) = config_path.parent() {
-        crate::utils::file_manager::ensure_dir(parent)?;
-    }
     let content = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
-    std::fs::write(&config_path, content)
-        .map_err(|e| format!("Failed to write config: {}", e))?;
+    db::set_game_config(game_name, &content);
     info!("Saved config for game: {}", game_name);
     Ok(())
 }
@@ -74,6 +83,27 @@ pub fn delete_game_config_folder(app: tauri::AppHandle, game_name: &str) -> Resu
             .map_err(|e| format!("Failed to delete game folder: {}", e))?;
         info!("Deleted config folder for game: {}", game_name);
     }
+    // 同时清理 SQLite 中的游戏配置
+    crate::configs::database::delete_game_config(game_name);
+    // 从 hidden_games.json 中移除
+    let _ = super::game_scanner::set_game_visibility(app, game_name.to_string(), false);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn reset_game_background(
+    app: tauri::AppHandle,
+    game_name: &str,
+) -> Result<(), String> {
+    let game_dir = get_game_dir(&app, game_name)?;
+    let bg_extensions = ["png", "jpg", "jpeg", "webp", "mp4", "webm", "ogg", "mov"];
+    for ext in &bg_extensions {
+        let path = game_dir.join(format!("Background.{}", ext));
+        if path.exists() {
+            std::fs::remove_file(&path).ok();
+            info!("Removed custom background: {}", path.display());
+        }
+    }
     Ok(())
 }
 
@@ -97,7 +127,6 @@ pub fn set_game_background(
     file_path: &str,
     bg_type: Option<String>,
 ) -> Result<String, String> {
-    let _ = bg_type; // 保留参数兼容前端，暂不使用
     let game_dir = get_game_dir(&app, game_name)?;
     let ext = std::path::Path::new(file_path)
         .extension()
@@ -107,6 +136,20 @@ pub fn set_game_background(
     let dest = game_dir.join(format!("Background.{}", ext));
     std::fs::copy(file_path, &dest)
         .map_err(|e| format!("Failed to copy background: {}", e))?;
+
+    // 同步更新 Config.json 中的 backgroundType
+    if let Some(bt) = &bg_type {
+        let mut config = load_game_config(app.clone(), game_name).unwrap_or(serde_json::json!({}));
+        if let Some(basic) = config.get_mut("basic") {
+            basic.as_object_mut().map(|obj| obj.insert("backgroundType".to_string(), serde_json::json!(bt)));
+        } else {
+            config.as_object_mut().map(|obj| obj.insert("basic".to_string(), serde_json::json!({"backgroundType": bt})));
+        }
+        let content = serde_json::to_string_pretty(&config).unwrap_or_default();
+        db::set_game_config(game_name, &content);
+        info!("Updated backgroundType to {} for {}", bt, game_name);
+    }
+
     Ok(dest.to_string_lossy().to_string())
 }
 
@@ -253,21 +296,47 @@ fn get_game_dir(app: &tauri::AppHandle, game_name: &str) -> Result<PathBuf, Stri
         .path()
         .resource_dir()
         .map_err(|e| format!("Failed to get resource dir: {}", e))?;
-    let prod_path = resource_dir.join("resources").join("Games").join(game_name);
-    if prod_path.exists() {
-        return Ok(prod_path);
+
+    // 搜索候选的 Games 目录列表
+    let candidates = vec![
+        resource_dir.join("resources").join("Games"),
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join("Games"),
+    ];
+
+    for games_dir in &candidates {
+        if !games_dir.exists() { continue; }
+
+        // 1. 直接匹配文件夹名（兼容旧结构）
+        let direct = games_dir.join(game_name);
+        if direct.exists() {
+            return Ok(direct);
+        }
+
+        // 2. 扫描所有子文件夹，通过 Config.json 的 LogicName/GamePreset 匹配
+        if let Ok(entries) = std::fs::read_dir(games_dir) {
+            for entry in entries.flatten() {
+                if !entry.path().is_dir() { continue; }
+                let config_path = entry.path().join("Config.json");
+                if !config_path.exists() { continue; }
+
+                if let Ok(content) = std::fs::read_to_string(&config_path) {
+                    if let Ok(data) = serde_json::from_str::<serde_json::Value>(&content) {
+                        let logic_name = data.get("LogicName")
+                            .or_else(|| data.get("GamePreset"))
+                            .and_then(|v| v.as_str());
+                        if logic_name == Some(game_name) {
+                            return Ok(entry.path());
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    // 开发模式回退
-    let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("resources")
-        .join("Games")
-        .join(game_name);
-    if dev_path.exists() {
-        return Ok(dev_path);
-    }
-
-    Ok(prod_path)
+    // 回退：返回默认路径（用于新建游戏等场景）
+    Ok(candidates[0].join(game_name))
 }
 
 fn get_game_config_path(app: &tauri::AppHandle, game_name: &str) -> Result<PathBuf, String> {
