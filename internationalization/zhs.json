@@ -1,0 +1,64 @@
+{
+    "home": {
+        "hidegame": {
+            "fail": "隐藏游戏失败:"
+        },
+        "css": {
+            "startgame": "开始游戏"
+        }
+    },
+    "settings": {
+        "language": "界面语言"
+    },
+    "gamesettingsmodal": {
+        "basicsettings": "基本设置",
+        "migoto": "3DMigoto 设置",
+        "other": "其他设置",
+        "error": {
+            "failconstructdefaultpath": "构建 3DMigoto 默认路径失败",
+            "failloadconfig": "游戏配置加载失败: ",
+            "configfailedsaving": "当前配置保存失败: {e}",
+            "failedopendir": "打开路径失败: {e}"
+        },
+        "log": {
+            "saving": "[GameSettingsModal] 正在为 {gameName} 保存配置",
+            "currentstate": "[GameSettingsModal] 当前配置状态: {currentState}",
+            "configsaved": "[GameSettingsModal] 当前配置已保存.",
+            "joinPathFailed": "路径合并失败：{error}",
+            "configCreated": "已创建新配置：{configName}",
+            "configCreateFailed": "创建新配置失败：{error}"
+        },
+        "message": {
+            "success": {
+                "title": "成功",
+                "backgroundupdated": "背景更新成功!",
+                "updatedToVersion": "更新成功！已更新至版本 {version}"
+            },
+            "error": {
+                "title": "错误",
+                "updateFailed": "更新失败: {error}",
+                "operationFailed": "操作失败：{error}"
+            }
+        },
+        "confirm": {
+            "checkUpdate": {
+                "title": "检查更新",
+                "message": "确定要检查 {gamePreset} 的 3Dmigoto 整合包更新吗？"
+            },
+            "versionUpdate": {
+                "title": "版本详情",
+                "message": "发现新版本: {version}\n\n更新内容:\n{description}\n\n是否立即更新？（将覆盖当前文件）"
+            },
+            "createConfig": {
+                "title": "创建确认",
+                "message": "确定要创建新配置 \"{configName}\" 吗？"
+            }
+        },
+        "filePicker": {
+            "title": "选择可执行文件",
+            "filterName": "可执行文件",
+            "dllTitle": "选择 DLL 文件",
+            "dllFilterName": "DLL 文件"
+        }
+    }
+}

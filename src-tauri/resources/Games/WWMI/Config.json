@@ -1,0 +1,19 @@
+{
+  "TargetPath": "",
+  "3DmigotoPath": "",
+  "LaunchPath": "",
+  "LaunchArgs": "",
+  "WorkSpace": "",
+  "LogicName": "WWMI",
+  "GameTypeName": "WWMI",
+  "AutoSetAnalyseOptions": true,
+  "GithubPackageVersion": "",
+  "DllInitializationDelay": 500,
+  "DllReplaceSelectedIndex": 0,
+  "DllPreProcessSelectedIndex": 0,
+  "LaunchItems": [],
+  "MigotoPackage": "WWMI-Package",
+  "AutoSetAnalyseOptionsSelectedIndex": 0,
+  "PureGameMode": false,
+  "GamePreset": "WWMI"
+}

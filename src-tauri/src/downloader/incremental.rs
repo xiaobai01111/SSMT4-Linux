@@ -1,0 +1,341 @@
+use crate::downloader::cdn::{self, LauncherInfo, ResourceIndex};
+use crate::downloader::fetcher;
+use crate::downloader::progress::{DownloadProgress, SpeedTracker};
+use crate::utils::hash_verify;
+use reqwest::Client;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter};
+use tokio::sync::Mutex;
+use tracing::{info, warn};
+
+/// Full comparison update — mirrors LutheringLaves.py `update_game`
+/// Compares MD5 of each file and re-downloads mismatches.
+pub async fn update_game_full(
+    app: AppHandle,
+    launcher_info: &LauncherInfo,
+    resource_index: &ResourceIndex,
+    game_folder: &Path,
+    cancel_token: Arc<Mutex<bool>>,
+) -> Result<(), String> {
+    let client = Client::new();
+    let total_count = resource_index.resource.len();
+    let total_size: u64 = resource_index.resource.iter().map(|r| r.size).sum();
+
+    info!(
+        "Starting full comparison update: {} files, {} bytes",
+        total_count, total_size
+    );
+
+    let mut finished_size: u64 = 0;
+    let mut finished_count: usize = 0;
+    let mut speed_tracker = SpeedTracker::new();
+
+    for file in &resource_index.resource {
+        if *cancel_token.lock().await {
+            return Err("Update cancelled".to_string());
+        }
+
+        let file_path = game_folder.join(&file.dest);
+
+        // Check MD5
+        let current_md5 = hash_verify::md5_file(&file_path).await.unwrap_or_default();
+        if current_md5 == file.md5 {
+            info!("{} MD5 match, skipping", file.dest);
+            finished_size += file.size;
+            finished_count += 1;
+
+            let remaining = total_size.saturating_sub(finished_size);
+            speed_tracker.record(file.size);
+            let progress = DownloadProgress {
+                phase: "update".to_string(),
+                total_size,
+                finished_size,
+                total_count,
+                finished_count,
+                current_file: file.dest.clone(),
+                speed_bps: speed_tracker.speed_bps(),
+                eta_seconds: speed_tracker.eta_seconds(remaining),
+            };
+            app.emit("game-update-progress", &progress).ok();
+            continue;
+        }
+
+        warn!(
+            "{} MD5 mismatch (expected: {}, got: {}), re-downloading",
+            file.dest, file.md5, current_md5
+        );
+
+        let download_url = build_resource_url(
+            &launcher_info.cdn_url,
+            &launcher_info.resources_base_path,
+            &file.dest,
+        );
+
+        fetcher::download_with_resume(&client, &download_url, &file_path, true, None).await?;
+
+        finished_size += file.size;
+        finished_count += 1;
+        speed_tracker.record(file.size);
+
+        let remaining = total_size.saturating_sub(finished_size);
+        let progress = DownloadProgress {
+            phase: "update".to_string(),
+            total_size,
+            finished_size,
+            total_count,
+            finished_count,
+            current_file: file.dest.clone(),
+            speed_bps: speed_tracker.speed_bps(),
+            eta_seconds: speed_tracker.eta_seconds(remaining),
+        };
+        app.emit("game-update-progress", &progress).ok();
+    }
+
+    info!("Full comparison update complete");
+    Ok(())
+}
+
+/// Incremental patch update — mirrors LutheringLaves.py `download_patch` + `merge_patch`
+pub async fn update_game_patch(
+    app: AppHandle,
+    launcher_info: &LauncherInfo,
+    local_version: &str,
+    game_folder: &Path,
+    cancel_token: Arc<Mutex<bool>>,
+) -> Result<(), String> {
+    // Find matching patch config
+    let patch = launcher_info
+        .patch_configs
+        .iter()
+        .find(|p| p.version == local_version)
+        .ok_or_else(|| {
+            format!(
+                "No patch config found for version {}",
+                local_version
+            )
+        })?;
+
+    if patch.ext.is_empty() {
+        return Err("Patch has no ext data, incremental update not supported for this version".to_string());
+    }
+
+    info!(
+        "Starting incremental patch from {} to latest",
+        local_version
+    );
+
+    let client = Client::new();
+
+    // Fetch patch resource index
+    let patch_index_url = cdn::join_url(&launcher_info.cdn_url, &patch.index_file);
+    let patch_index: crate::downloader::cdn::ResourceIndex = {
+        let resp_text = client
+            .get(&patch_index_url)
+            .header("User-Agent", "Mozilla/5.0")
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch patch index: {}", e))?
+            .text()
+            .await
+            .map_err(|e| format!("Failed to read patch index: {}", e))?;
+
+        let data: serde_json::Value = serde_json::from_str(&resp_text)
+            .map_err(|e| format!("Failed to parse patch index: {}", e))?;
+
+        let resources = data
+            .get("resource")
+            .and_then(|v| v.as_array())
+            .ok_or("Missing resource in patch index")?;
+
+        let resource_list = resources
+            .iter()
+            .filter_map(|r| {
+                Some(cdn::ResourceFile {
+                    dest: r.get("dest")?.as_str()?.to_string(),
+                    md5: r.get("md5").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    size: r.get("size")?.as_u64().or_else(|| r.get("size")?.as_str()?.parse().ok())?,
+                })
+            })
+            .collect();
+
+        cdn::ResourceIndex {
+            resource: resource_list,
+        }
+    };
+
+    // Create temp folder
+    let temp_folder = game_folder.parent().unwrap_or(game_folder).join("temp_folder");
+    tokio::fs::create_dir_all(&temp_folder)
+        .await
+        .map_err(|e| format!("Failed to create temp folder: {}", e))?;
+
+    // Download patch files
+    let mut krdiff_path: Option<PathBuf> = None;
+
+    for file in &patch_index.resource {
+        if *cancel_token.lock().await {
+            cleanup_temp(&temp_folder).await;
+            return Err("Patch update cancelled".to_string());
+        }
+
+        // Files with fromFolder go to temp_folder, krdiff files go to base_dir
+        let download_url = cdn::join_url(
+            &launcher_info.cdn_url,
+            &format!("{}/{}", patch.base_url, file.dest),
+        );
+
+        if file.dest.ends_with(".krdiff") || file.dest.ends_with(".hdiff") {
+            let dest_path = game_folder.parent().unwrap_or(game_folder).join(&file.dest);
+            fetcher::download_with_resume(&client, &download_url, &dest_path, false, None).await?;
+            krdiff_path = Some(dest_path);
+        } else {
+            let dest_path = temp_folder.join(&file.dest);
+            fetcher::download_with_resume(&client, &download_url, &dest_path, false, None).await?;
+        }
+
+        app.emit(
+            "game-update-progress",
+            &DownloadProgress {
+                phase: "patch".to_string(),
+                current_file: file.dest.clone(),
+                ..Default::default()
+            },
+        )
+        .ok();
+    }
+
+    // Run hpatchz if needed
+    if let Some(diff_path) = &krdiff_path {
+        run_hpatchz(diff_path, game_folder, &temp_folder).await?;
+    }
+
+    // Merge temp files into game folder
+    merge_temp_to_game(&temp_folder, game_folder).await?;
+
+    // Cleanup
+    cleanup_temp(&temp_folder).await;
+    if let Some(diff_path) = &krdiff_path {
+        tokio::fs::remove_file(diff_path).await.ok();
+    }
+
+    info!("Incremental patch update complete");
+    Ok(())
+}
+
+async fn run_hpatchz(
+    patch_path: &Path,
+    original_path: &Path,
+    output_path: &Path,
+) -> Result<(), String> {
+    let hpatchz = ensure_hpatchz().await?;
+
+    info!(
+        "Running hpatchz: {} {} {} -f",
+        original_path.display(),
+        patch_path.display(),
+        output_path.display()
+    );
+
+    let output = tokio::process::Command::new(&hpatchz)
+        .arg(original_path)
+        .arg(patch_path)
+        .arg(output_path)
+        .arg("-f")
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run hpatchz: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("hpatchz failed: {}", stderr));
+    }
+
+    Ok(())
+}
+
+async fn ensure_hpatchz() -> Result<PathBuf, String> {
+    let tools_dir = crate::utils::file_manager::get_tools_dir();
+    let hpatchz_path = tools_dir.join("hpatchz");
+
+    if hpatchz_path.exists() {
+        return Ok(hpatchz_path);
+    }
+
+    crate::utils::file_manager::ensure_dir(&tools_dir)?;
+
+    // Primary: GitHub
+    let github_url = "https://github.com/AXiX-official/hpatchz-release/releases/latest/download/hpatchz-linux-x64";
+    // Fallback: Gitee
+    let gitee_url = "https://gitee.com/tiz/LutheringLaves/raw/main/tools/hpatchz";
+
+    let client = Client::new();
+
+    info!("Downloading hpatchz from GitHub...");
+    let result = fetcher::download_simple(&client, github_url, &hpatchz_path).await;
+
+    if result.is_err() {
+        warn!("GitHub download failed, trying gitee...");
+        fetcher::download_simple(&client, gitee_url, &hpatchz_path).await?;
+    }
+
+    // chmod +x
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&hpatchz_path)
+            .map_err(|e| format!("Failed to get hpatchz metadata: {}", e))?
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&hpatchz_path, perms)
+            .map_err(|e| format!("Failed to chmod hpatchz: {}", e))?;
+    }
+
+    info!("hpatchz downloaded and ready at {}", hpatchz_path.display());
+    Ok(hpatchz_path)
+}
+
+async fn merge_temp_to_game(temp_folder: &Path, game_folder: &Path) -> Result<(), String> {
+    let walker = walkdir::WalkDir::new(temp_folder);
+    for entry in walker.into_iter().filter_map(|e| e.ok()) {
+        if entry.file_type().is_file() {
+            let relative = entry
+                .path()
+                .strip_prefix(temp_folder)
+                .map_err(|e| format!("Path strip error: {}", e))?;
+            let dest = game_folder.join(relative);
+
+            if let Some(parent) = dest.parent() {
+                tokio::fs::create_dir_all(parent).await.ok();
+            }
+
+            // Remove existing file
+            if dest.exists() {
+                tokio::fs::remove_file(&dest).await.ok();
+            }
+
+            tokio::fs::rename(entry.path(), &dest)
+                .await
+                .or_else(|_| {
+                    // rename may fail across filesystems, fallback to copy+delete
+                    std::fs::copy(entry.path(), &dest)
+                        .and_then(|_| std::fs::remove_file(entry.path()))
+                        .map_err(|e| format!("Failed to move file: {}", e))
+                })?;
+        }
+    }
+    Ok(())
+}
+
+async fn cleanup_temp(temp_folder: &Path) {
+    if temp_folder.exists() {
+        tokio::fs::remove_dir_all(temp_folder).await.ok();
+    }
+}
+
+fn build_resource_url(cdn_url: &str, resources_base_path: &str, dest: &str) -> String {
+    let base = cdn_url.trim_end_matches('/');
+    let mid = resources_base_path.trim_matches('/');
+    let file = dest.trim_start_matches('/');
+    format!("{}/{}/{}", base, mid, file)
+}
