@@ -18,20 +18,42 @@ pub fn clear_custom_data_dir() {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 pub struct AppConfig {
-    pub background_type: String,
+    #[serde(alias = "background_type", alias = "backgroundType", alias = "bg_type")]
+    pub bg_type: String,
+    pub bg_image: String,
+    pub bg_video: String,
+    pub content_opacity: f64,
+    pub content_blur: f64,
+    #[serde(alias = "cache_dir")]
     pub cache_dir: String,
-    pub window_width: f64,
-    pub window_height: f64,
-    pub window_x: Option<f64>,
-    pub window_y: Option<f64>,
-    pub language: String,
-    pub theme: String,
-    pub custom_search_paths: Vec<String>,
-    #[serde(default, rename = "dataDir")]
+    #[serde(alias = "current_config_name")]
+    pub current_config_name: String,
+    #[serde(alias = "github_token")]
+    pub github_token: String,
+    #[serde(alias = "show_mods")]
+    pub show_mods: bool,
+    #[serde(alias = "show_websites")]
+    pub show_websites: bool,
+    #[serde(alias = "show_documents")]
+    pub show_documents: bool,
+    #[serde(alias = "language")]
+    pub locale: String,
+    #[serde(alias = "data_dir")]
     pub data_dir: String,
-    #[serde(default)]
     pub initialized: bool,
+    #[serde(alias = "window_width")]
+    pub window_width: f64,
+    #[serde(alias = "window_height")]
+    pub window_height: f64,
+    #[serde(alias = "window_x")]
+    pub window_x: Option<f64>,
+    #[serde(alias = "window_y")]
+    pub window_y: Option<f64>,
+    pub theme: String,
+    #[serde(alias = "custom_search_paths")]
+    pub custom_search_paths: Vec<String>,
 }
 
 impl Default for AppConfig {
@@ -41,17 +63,26 @@ impl Default for AppConfig {
             .to_string_lossy()
             .to_string();
         Self {
-            background_type: "image".to_string(),
+            bg_type: "Image".to_string(),
+            bg_image: String::new(),
+            bg_video: String::new(),
+            content_opacity: 0.0,
+            content_blur: 0.0,
             cache_dir,
+            current_config_name: "Default".to_string(),
+            github_token: String::new(),
+            show_mods: true,
+            show_websites: false,
+            show_documents: false,
+            locale: "zhs".to_string(),
+            data_dir: String::new(),
+            initialized: false,
             window_width: 1280.0,
             window_height: 720.0,
             window_x: None,
             window_y: None,
-            language: "zh-CN".to_string(),
             theme: "dark".to_string(),
             custom_search_paths: Vec::new(),
-            data_dir: String::new(),
-            initialized: false,
         }
     }
 }

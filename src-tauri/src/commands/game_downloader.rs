@@ -1,6 +1,7 @@
 use crate::downloader::cdn::{self, LauncherInfo};
+use crate::downloader::hoyoverse;
 use crate::downloader::progress::LauncherState;
-use crate::downloader::{full_download, incremental, verifier};
+use crate::downloader::{full_download, hoyoverse_download, incremental, verifier};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -32,7 +33,12 @@ pub async fn get_game_state(
 ) -> Result<GameState, String> {
     let game_path = PathBuf::from(&game_folder);
 
-    // Fetch remote info
+    // HoYoverse 分支
+    if hoyoverse::is_hoyoverse_api(&launcher_api) {
+        return get_game_state_hoyoverse(&launcher_api, &game_path).await;
+    }
+
+    // Kuro Games 分支
     let launcher_info = match cdn::fetch_launcher_info(&launcher_api).await {
         Ok(info) => info,
         Err(e) => {
@@ -49,9 +55,7 @@ pub async fn get_game_state(
     let local_version = get_local_version_internal(&game_path);
     let remote_version = Some(launcher_info.version.clone());
 
-    // Determine state
     let state = if local_version.is_none() {
-        // Check if any resource files exist
         LauncherState::NeedInstall
     } else if local_version.as_deref() != Some(&launcher_info.version) {
         LauncherState::NeedUpdate
@@ -59,7 +63,6 @@ pub async fn get_game_state(
         LauncherState::StartGame
     };
 
-    // Check incremental support
     let supports_incremental = if let Some(ref lv) = local_version {
         launcher_info
             .patch_configs
@@ -83,13 +86,22 @@ pub async fn download_game(
     launcher_api: String,
     game_folder: String,
 ) -> Result<(), String> {
-    // Reset cancel token
     *CANCEL_TOKEN.lock().await = false;
 
     let game_path = PathBuf::from(&game_folder);
     std::fs::create_dir_all(&game_path)
         .map_err(|e| format!("Failed to create game folder: {}", e))?;
 
+    // HoYoverse 分支
+    if hoyoverse::is_hoyoverse_api(&launcher_api) {
+        let biz = detect_biz_prefix(&launcher_api);
+        let game_pkg = hoyoverse::fetch_game_packages(&launcher_api, biz).await?;
+        hoyoverse_download::download_game(app, &game_pkg, &game_path, CANCEL_TOKEN.clone()).await?;
+        info!("HoYoverse full download completed for {}", game_folder);
+        return Ok(());
+    }
+
+    // Kuro Games 分支
     let launcher_info = cdn::fetch_launcher_info(&launcher_api).await?;
     let resource_index =
         cdn::fetch_resource_index(&launcher_info.cdn_url, &launcher_info.index_file_url).await?;
@@ -103,9 +115,7 @@ pub async fn download_game(
     )
     .await?;
 
-    // Write local version after successful download
     write_local_version(&game_path, &launcher_info.version)?;
-
     info!("Full download completed for {}", game_folder);
     Ok(())
 }
@@ -119,6 +129,21 @@ pub async fn update_game(
     *CANCEL_TOKEN.lock().await = false;
 
     let game_path = PathBuf::from(&game_folder);
+
+    // HoYoverse 分支
+    if hoyoverse::is_hoyoverse_api(&launcher_api) {
+        let biz = detect_biz_prefix(&launcher_api);
+        let game_pkg = hoyoverse::fetch_game_packages(&launcher_api, biz).await?;
+        let local_version = get_local_version_internal(&game_path)
+            .ok_or("未找到本地版本，请使用全量下载".to_string())?;
+        hoyoverse_download::update_game(
+            app, &game_pkg, &local_version, &game_path, CANCEL_TOKEN.clone()
+        ).await?;
+        info!("HoYoverse update completed for {}", game_folder);
+        return Ok(());
+    }
+
+    // Kuro Games 分支
     let launcher_info = cdn::fetch_launcher_info(&launcher_api).await?;
     let resource_index =
         cdn::fetch_resource_index(&launcher_info.cdn_url, &launcher_info.index_file_url).await?;
@@ -174,6 +199,17 @@ pub async fn verify_game_files(
     *CANCEL_TOKEN.lock().await = false;
 
     let game_path = PathBuf::from(&game_folder);
+
+    // HoYoverse 分支
+    if hoyoverse::is_hoyoverse_api(&launcher_api) {
+        let biz = detect_biz_prefix(&launcher_api);
+        let game_pkg = hoyoverse::fetch_game_packages(&launcher_api, biz).await?;
+        return hoyoverse_download::verify_game(
+            app, &game_pkg, &game_path, CANCEL_TOKEN.clone()
+        ).await;
+    }
+
+    // Kuro Games 分支
     let launcher_info = cdn::fetch_launcher_info(&launcher_api).await?;
     let resource_index =
         cdn::fetch_resource_index(&launcher_info.cdn_url, &launcher_info.index_file_url).await?;
@@ -204,6 +240,17 @@ pub fn get_local_version(game_folder: String) -> Result<Option<String>, String> 
 }
 
 fn get_local_version_internal(game_folder: &PathBuf) -> Option<String> {
+    // 优先读取 .version (HoYoverse)
+    let version_file = game_folder.join(".version");
+    if version_file.exists() {
+        if let Ok(content) = std::fs::read_to_string(&version_file) {
+            let ver = content.trim().to_string();
+            if !ver.is_empty() {
+                return Some(ver);
+            }
+        }
+    }
+    // 回退到 launcherDownloadConfig.json (Kuro Games)
     let config_path = game_folder.join("launcherDownloadConfig.json");
     if !config_path.exists() {
         return None;
@@ -213,7 +260,7 @@ fn get_local_version_internal(game_folder: &PathBuf) -> Option<String> {
     data.get("version").and_then(|v| v.as_str()).map(|s| s.to_string())
 }
 
-/// 根据游戏预设返回对应的 launcher API URL（目前仅支持鸣潮）
+/// 根据游戏预设返回对应的 launcher API URL
 #[tauri::command]
 pub fn get_game_launcher_api(game_preset: String) -> Result<serde_json::Value, String> {
     match game_preset.as_str() {
@@ -222,6 +269,12 @@ pub fn get_game_launcher_api(game_preset: String) -> Result<serde_json::Value, S
             "launcherApi": "https://prod-cn-alicdn-gamestarter.kurogame.com/launcher/game/G152/10003_Y8xXrXk65DqFHEDgApn3cpK5lfczpFx5/index.json",
             "launcherDownloadApi": "https://prod-cn-alicdn-gamestarter.kurogame.com/launcher/launcher/10003_Y8xXrXk65DqFHEDgApn3cpK5lfczpFx5/G152/index.json",
             "defaultFolder": "Wuthering Waves Game",
+            "supported": true
+        })),
+        // 崩坏：星穹铁道（国服）
+        "SRMI" => Ok(serde_json::json!({
+            "launcherApi": "https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1",
+            "defaultFolder": "StarRail",
             "supported": true
         })),
         _ => Ok(serde_json::json!({
@@ -236,6 +289,64 @@ pub fn get_default_game_folder(game_name: String) -> Result<String, String> {
     let data_dir = crate::configs::app_config::get_app_data_dir();
     let game_dir = data_dir.join("games").join(&game_name);
     Ok(game_dir.to_string_lossy().to_string())
+}
+
+/// HoYoverse 游戏状态检测
+async fn get_game_state_hoyoverse(
+    launcher_api: &str,
+    game_path: &PathBuf,
+) -> Result<GameState, String> {
+    let biz = detect_biz_prefix(launcher_api);
+    let game_pkg = match hoyoverse::fetch_game_packages(launcher_api, biz).await {
+        Ok(pkg) => pkg,
+        Err(e) => {
+            tracing::error!("HoYoverse API 失败: {}", e);
+            return Ok(GameState {
+                state: LauncherState::NetworkError,
+                local_version: get_local_version_internal(game_path),
+                remote_version: None,
+                supports_incremental: false,
+            });
+        }
+    };
+
+    let remote_version = game_pkg.main.major.version.clone();
+    let local_version = get_local_version_internal(game_path);
+
+    let state = if local_version.is_none() {
+        LauncherState::NeedInstall
+    } else if local_version.as_deref() != Some(&remote_version) {
+        LauncherState::NeedUpdate
+    } else {
+        LauncherState::StartGame
+    };
+
+    // 检查是否有匹配当前版本的增量补丁
+    let supports_incremental = if let Some(ref lv) = local_version {
+        game_pkg.main.patches.iter().any(|p| p.version == *lv)
+    } else {
+        false
+    };
+
+    Ok(GameState {
+        state,
+        local_version,
+        remote_version: Some(remote_version),
+        supports_incremental,
+    })
+}
+
+/// 根据 API URL 推断 biz_prefix
+fn detect_biz_prefix(launcher_api: &str) -> &str {
+    // 目前所有 HoYoverse API 共用同一个 launcher_id，需要靠 biz 前缀区分游戏
+    // 但实际上 getGamePackages 会返回所有游戏，我们通过 biz 前缀筛选
+    // 默认使用 hkrpg_ (星穹铁道)，未来可根据 URL 参数扩展
+    if launcher_api.contains("getGamePackages") {
+        // 通用 API，默认 Star Rail
+        "hkrpg_"
+    } else {
+        ""
+    }
 }
 
 fn write_local_version(game_folder: &PathBuf, version: &str) -> Result<(), String> {

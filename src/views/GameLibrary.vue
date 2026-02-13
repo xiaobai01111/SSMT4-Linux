@@ -57,8 +57,8 @@ const deleteGame = async () => {
   const gameName = targetGame.value.name;
   const displayName = te(`games.${gameName}`) ? t(`games.${gameName}`) : gameName;
   const yes = await askConfirm(
-    t('gamelibrary.deleteConfirm', { name: displayName }),
-    { title: t('gamelibrary.deleteTitle'), kind: 'warning', okLabel: t('gamelibrary.deleteOk'), cancelLabel: t('gamelibrary.deleteCancel') }
+    t('gamelibrary.deleteConfirmMsg', { name: displayName }),
+    { title: t('gamelibrary.deleteConfirmTitle'), kind: 'warning' }
   );
   if (!yes) { closeMenu(); return; }
   try {
@@ -109,8 +109,8 @@ const openImportDialog = async () => {
 const handleImport = async (tmpl: GameTemplateInfo) => {
   if (tmpl.alreadyExists) {
     const yes = await askConfirm(
-      t('gamelibrary.overwriteConfirm', { name: tmpl.name }),
-      { title: t('gamelibrary.importTitle'), kind: 'warning', okLabel: t('gamelibrary.overwriteOk'), cancelLabel: t('gamelibrary.deleteCancel') }
+      t('gamelibrary.importOverwriteMsg', { name: tmpl.name }),
+      { title: t('gamelibrary.importOverwriteTitle'), kind: 'warning' }
     );
     if (!yes) return;
   }
@@ -532,7 +532,7 @@ const spawnLoveExplosion = (e: MouseEvent) => {
                         @load="(e) => (e.target as HTMLImageElement).style.opacity = '1'"
                         @error="(e) => (e.target as HTMLImageElement).style.opacity = '0'"
                     />
-                    <div class="game-label">{{ game.name }}</div>
+                    <div class="game-label">{{ te(`games.${game.name}`) ? t(`games.${game.name}`) : (game.displayName || game.name) }}</div>
                 </div>
             </div>
         </div>
@@ -545,7 +545,7 @@ const spawnLoveExplosion = (e: MouseEvent) => {
           @click.stop
         >
           <div class="menu-item" @click="addToFavorites">
-            {{ t('gamelibrary.addToFavorites') }}
+            {{ t('gamelibrary.addToSidebar') }}
           </div>
           <div class="menu-item menu-item-danger" @click="deleteGame">
             {{ t('gamelibrary.deleteGame') }}
@@ -560,7 +560,7 @@ const spawnLoveExplosion = (e: MouseEvent) => {
           @click.stop
         >
           <div class="menu-item" @click="openImportDialog">
-            {{ t('gamelibrary.importGameConfig') }}
+            {{ t('gamelibrary.importConfig') }}
           </div>
           <div class="menu-item" @click="openTemplatesFolder">
             {{ t('gamelibrary.openTemplatesFolder') }}
@@ -571,7 +571,7 @@ const spawnLoveExplosion = (e: MouseEvent) => {
         <div v-if="showImportDialog" class="import-overlay" @click.self="showImportDialog = false">
           <div class="import-dialog">
             <div class="import-header">
-              <span>{{ t('gamelibrary.importTitle') }}</span>
+              <span>{{ t('gamelibrary.importConfig') }}</span>
               <button class="import-close" @click="showImportDialog = false">✕</button>
             </div>
             <div class="import-body">

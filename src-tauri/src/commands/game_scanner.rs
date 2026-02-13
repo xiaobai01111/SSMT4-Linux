@@ -288,7 +288,7 @@ pub fn list_game_templates(app: tauri::AppHandle) -> Result<Vec<GameTemplateInfo
             .unwrap_or_else(|| get_chinese_display_name(&game_id).to_string());
 
         // 用 gameId 检查 Games 目录下是否已存在
-        let already_exists = games_dir.join(&game_id).exists();
+        let already_exists = find_game_dir_by_logic_name(&games_dir, &game_id).is_some();
 
         templates.push(GameTemplateInfo {
             name,
@@ -309,6 +309,34 @@ pub fn list_game_templates(app: tauri::AppHandle) -> Result<Vec<GameTemplateInfo
     Ok(templates)
 }
 
+/// 根据 LogicName 在 Games 目录中查找匹配的游戏文件夹
+fn find_game_dir_by_logic_name(games_dir: &std::path::Path, target_id: &str) -> Option<std::path::PathBuf> {
+    // 1. 直接匹配文件夹名
+    let direct = games_dir.join(target_id);
+    if direct.exists() {
+        return Some(direct);
+    }
+    // 2. 扫描所有子文件夹的 Config.json
+    if let Ok(entries) = std::fs::read_dir(games_dir) {
+        for entry in entries.flatten() {
+            if !entry.path().is_dir() { continue; }
+            let config = entry.path().join("Config.json");
+            if !config.exists() { continue; }
+            if let Ok(content) = std::fs::read_to_string(&config) {
+                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&content) {
+                    let ln = data.get("LogicName")
+                        .or_else(|| data.get("GamePreset"))
+                        .and_then(|v| v.as_str());
+                    if ln == Some(target_id) {
+                        return Some(entry.path());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// 导入游戏配置模板到 Games 目录
 #[tauri::command]
 pub fn import_game_template(
@@ -322,7 +350,7 @@ pub fn import_game_template(
         return Err(format!("模板不存在: {}", template_name));
     }
 
-    // 从 Config.json 读取 LogicName 作为 Games 目录下的实际文件夹名
+    // 从 Config.json 读取 LogicName
     let config_path = template_dir.join("Config.json");
     let game_id = std::fs::read_to_string(&config_path)
         .ok()
@@ -331,16 +359,22 @@ pub fn import_game_template(
         .unwrap_or_else(|| template_name.clone());
 
     let games_dir = get_games_dir(&app)?;
-    let target_dir = games_dir.join(&game_id);
 
-    if target_dir.exists() && !overwrite {
+    // 查找已存在的同 LogicName 游戏文件夹（可能是英文名或旧代码名）
+    let existing_dir = find_game_dir_by_logic_name(&games_dir, &game_id);
+
+    if existing_dir.is_some() && !overwrite {
         return Err(format!("游戏已存在: {}", game_id));
     }
 
-    if target_dir.exists() {
-        std::fs::remove_dir_all(&target_dir)
+    // 覆盖时删除旧目录
+    if let Some(ref old_dir) = existing_dir {
+        std::fs::remove_dir_all(old_dir)
             .map_err(|e| format!("删除旧游戏目录失败: {}", e))?;
     }
+
+    // 目标目录：使用模板的英文文件夹名
+    let target_dir = games_dir.join(&template_name);
 
     // 递归复制模板目录
     copy_dir_recursive(&template_dir, &target_dir)?;
