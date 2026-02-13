@@ -30,9 +30,7 @@ pub fn get_game_wine_config(game_id: &str) -> Result<GameWineConfig, String> {
         } else {
             None
         },
-        proton_settings: prefix_config
-            .map(|c| c.proton_settings)
-            .unwrap_or_default(),
+        proton_settings: prefix_config.map(|c| c.proton_settings).unwrap_or_default(),
         launcher_api_config: None,
     })
 }
@@ -109,21 +107,25 @@ pub fn check_vulkan() -> Result<graphics::VulkanInfo, String> {
 }
 
 #[tauri::command]
-pub async fn install_runtime(
-    game_id: &str,
-    component: &str,
-) -> Result<String, String> {
+pub async fn install_runtime(game_id: &str, component: &str) -> Result<String, String> {
     let pfx_dir = prefix::get_prefix_pfx_dir(game_id);
 
     // Find wine executable from prefix config
-    let config = prefix::load_prefix_config(game_id)?;
+    let mut config = prefix::load_prefix_config(game_id)?;
     let versions = detector::scan_all_versions(&[]);
     let wine_version = versions
         .iter()
         .find(|v| v.id == config.wine_version_id)
         .ok_or("Wine version not found for this prefix")?;
 
-    runtime::install_runtime(&pfx_dir, &wine_version.path, component).await
+    let result = runtime::install_runtime(&pfx_dir, &wine_version.path, component).await?;
+
+    if !config.installed_runtimes.iter().any(|r| r == component) {
+        config.installed_runtimes.push(component.to_string());
+        prefix::save_prefix_config(game_id, &config)?;
+    }
+
+    Ok(result)
 }
 
 #[tauri::command]
@@ -151,14 +153,11 @@ pub fn get_recent_logs(lines: Option<usize>) -> Result<Vec<String>, String> {
     let mut log_files: Vec<_> = std::fs::read_dir(&log_dir)
         .map_err(|e| format!("Failed to read log dir: {}", e))?
         .flatten()
-        .filter(|e| {
-            e.path()
-                .extension()
-                .map_or(false, |ext| ext == "log")
-        })
+        .filter(|e| e.path().extension().map_or(false, |ext| ext == "log"))
         .collect();
 
-    log_files.sort_by_key(|e| std::cmp::Reverse(e.metadata().ok().map(|m| m.modified().ok()).flatten()));
+    log_files
+        .sort_by_key(|e| std::cmp::Reverse(e.metadata().ok().map(|m| m.modified().ok()).flatten()));
 
     if let Some(latest) = log_files.first() {
         let content = std::fs::read_to_string(latest.path())

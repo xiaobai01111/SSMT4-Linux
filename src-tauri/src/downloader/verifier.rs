@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VerifyResult {
@@ -66,14 +66,8 @@ pub async fn verify_game_files(
                 &file.dest,
             );
 
-            if let Err(e) = fetcher::download_with_resume(
-                &client,
-                &download_url,
-                &file_path,
-                true,
-                None,
-            )
-            .await
+            if let Err(e) =
+                fetcher::download_with_resume(&client, &download_url, &file_path, true, None).await
             {
                 error!("Failed to re-download {}: {}", file.dest, e);
                 failed.push(file.dest.clone());

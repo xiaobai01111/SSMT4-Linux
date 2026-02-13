@@ -1,13 +1,14 @@
-use crate::downloader::fetcher;
-use crate::downloader::hoyoverse::{self, GamePackage, ResourceEntry, Segment};
+use crate::downloader::hoyoverse::{self, GamePackage, Segment};
 use crate::downloader::progress::{DownloadProgress, SpeedTracker};
 use crate::utils::hash_verify;
+use futures_util::StreamExt;
 use reqwest::Client;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 // ============================================================
 // 全量下载：下载 zip 分段 → 解压到游戏目录
@@ -17,6 +18,7 @@ pub async fn download_game(
     app: AppHandle,
     game_pkg: &GamePackage,
     game_folder: &Path,
+    languages: &[String],
     cancel_token: Arc<Mutex<bool>>,
 ) -> Result<(), String> {
     let segments = &game_pkg.main.major.game_pkgs;
@@ -24,71 +26,80 @@ pub async fn download_game(
         return Err("没有可用的游戏下载包".to_string());
     }
 
-    std::fs::create_dir_all(game_folder)
-        .map_err(|e| format!("创建游戏目录失败: {}", e))?;
+    std::fs::create_dir_all(game_folder).map_err(|e| format!("创建游戏目录失败: {}", e))?;
 
-    let total_size: u64 = segments
+    // 收集所有需要下载的包：游戏本体 + 语言包
+    let audio_segments = collect_audio_segments(&game_pkg.main.major.audio_pkgs, languages);
+    let all_segments: Vec<DownloadTask> = segments
+        .iter()
+        .enumerate()
+        .map(|(i, s)| DownloadTask {
+            url: s.url.clone(),
+            md5: s.md5.clone(),
+            size: s.size.clone(),
+            label: format!("游戏本体 {}/{}", i + 1, segments.len()),
+        })
+        .chain(audio_segments.iter().map(|(lang, seg)| DownloadTask {
+            url: seg.url.clone(),
+            md5: seg.md5.clone(),
+            size: seg.size.clone(),
+            label: format!("语言包 ({})", lang),
+        }))
+        .collect();
+
+    let total_size: u64 = all_segments
         .iter()
         .filter_map(|s| s.size.parse::<u64>().ok())
         .sum();
+    let total_count = all_segments.len();
 
     info!(
-        "开始全量下载: {} 个分段, 总大小 {} 字节",
-        segments.len(),
+        "开始全量下载: {} 个包 (含 {} 个语言包), 总大小 {} 字节",
+        total_count,
+        audio_segments.len(),
         total_size
     );
 
     let mut finished_size: u64 = 0;
     let mut speed_tracker = SpeedTracker::new();
 
-    for (i, segment) in segments.iter().enumerate() {
+    for (i, task) in all_segments.iter().enumerate() {
         if *cancel_token.lock().await {
             info!("下载被用户取消");
             return Err("Download cancelled".to_string());
         }
 
-        let seg_size: u64 = segment.size.parse().unwrap_or(0);
-        info!(
-            "下载分段 {}/{}: {} ({} 字节)",
-            i + 1,
-            segments.len(),
-            segment.url,
-            seg_size
-        );
+        info!("下载 {}/{}: {}", i + 1, total_count, task.label);
 
-        // 下载 zip 到临时文件
-        let temp_zip = game_folder.join(format!("_download_seg_{}.zip", i));
+        let temp_zip = game_folder.join(format!("_download_{}.zip", i));
         download_segment_with_progress(
             &app,
-            &segment.url,
+            &task.url,
             &temp_zip,
-            &segment.md5,
+            &task.md5,
             &mut finished_size,
             total_size,
             &mut speed_tracker,
-            segments.len(),
+            total_count,
             i,
             cancel_token.clone(),
         )
         .await?;
 
-        // 解压到游戏目录
-        info!("解压分段 {}/{}...", i + 1, segments.len());
+        info!("解压 {}/{}...", i + 1, total_count);
         emit_progress(
             &app,
             "extract",
             finished_size,
             total_size,
-            segments.len(),
+            total_count,
             i + 1,
-            &format!("解压分段 {}", i + 1),
+            &format!("解压 {}", task.label),
             0,
             0,
         );
 
         extract_zip(&temp_zip, game_folder).await?;
-
-        // 删除临时 zip
         tokio::fs::remove_file(&temp_zip).await.ok();
     }
 
@@ -108,6 +119,7 @@ pub async fn update_game(
     game_pkg: &GamePackage,
     local_version: &str,
     game_folder: &Path,
+    languages: &[String],
     cancel_token: Arc<Mutex<bool>>,
 ) -> Result<(), String> {
     // 查找匹配当前版本的补丁
@@ -123,56 +135,77 @@ pub async fn update_game(
             )
         })?;
 
-    let segments = &patch.game_pkgs;
-    if segments.is_empty() {
+    // 收集所有需要下载的包：游戏补丁 + 语言包补丁
+    let audio_segments = collect_audio_segments(&patch.audio_pkgs, languages);
+    let all_segments: Vec<DownloadTask> = patch
+        .game_pkgs
+        .iter()
+        .enumerate()
+        .map(|(i, s)| DownloadTask {
+            url: s.url.clone(),
+            md5: s.md5.clone(),
+            size: s.size.clone(),
+            label: format!("游戏补丁 {}/{}", i + 1, patch.game_pkgs.len()),
+        })
+        .chain(audio_segments.iter().map(|(lang, seg)| DownloadTask {
+            url: seg.url.clone(),
+            md5: seg.md5.clone(),
+            size: seg.size.clone(),
+            label: format!("语言包补丁 ({})", lang),
+        }))
+        .collect();
+
+    if all_segments.is_empty() {
         return Err("补丁包为空".to_string());
     }
 
-    let total_size: u64 = segments
+    let total_size: u64 = all_segments
         .iter()
         .filter_map(|s| s.size.parse::<u64>().ok())
         .sum();
+    let total_count = all_segments.len();
 
     info!(
-        "开始增量更新 {} → {}: {} 个分段, {} 字节",
+        "开始增量更新 {} → {}: {} 个包 (含 {} 个语言包补丁), {} 字节",
         local_version,
         game_pkg.main.major.version,
-        segments.len(),
+        total_count,
+        audio_segments.len(),
         total_size
     );
 
     let mut finished_size: u64 = 0;
     let mut speed_tracker = SpeedTracker::new();
 
-    for (i, segment) in segments.iter().enumerate() {
+    for (i, task) in all_segments.iter().enumerate() {
         if *cancel_token.lock().await {
             return Err("Download cancelled".to_string());
         }
 
-        let temp_zip = game_folder.join(format!("_patch_seg_{}.zip", i));
+        let temp_zip = game_folder.join(format!("_patch_{}.zip", i));
         download_segment_with_progress(
             &app,
-            &segment.url,
+            &task.url,
             &temp_zip,
-            &segment.md5,
+            &task.md5,
             &mut finished_size,
             total_size,
             &mut speed_tracker,
-            segments.len(),
+            total_count,
             i,
             cancel_token.clone(),
         )
         .await?;
 
-        info!("解压补丁分段 {}/{}...", i + 1, segments.len());
+        info!("解压 {}/{}...", i + 1, total_count);
         emit_progress(
             &app,
             "extract",
             finished_size,
             total_size,
-            segments.len(),
+            total_count,
             i + 1,
-            &format!("解压补丁 {}", i + 1),
+            &format!("解压 {}", task.label),
             0,
             0,
         );
@@ -215,7 +248,10 @@ pub async fn verify_game(
     let total_files = resource_list.len();
     let total_size: u64 = resource_list.iter().map(|r| r.file_size).sum();
 
-    info!("开始校验 {} 个文件, 总大小 {} 字节", total_files, total_size);
+    info!(
+        "开始校验 {} 个文件, 总大小 {} 字节",
+        total_files, total_size
+    );
 
     let mut verified_ok: usize = 0;
     let mut redownloaded: usize = 0;
@@ -312,9 +348,7 @@ async fn download_segment_with_progress(
     }
 
     // 构建请求
-    let mut req = client
-        .get(url)
-        .header("User-Agent", "Mozilla/5.0");
+    let mut req = client.get(url).header("User-Agent", "Mozilla/5.0");
 
     if downloaded_bytes > 0 {
         req = req.header("Range", format!("bytes={}-", downloaded_bytes));
@@ -350,9 +384,6 @@ async fn download_segment_with_progress(
     }
 
     // 流式下载
-    use futures_util::StreamExt;
-    use tokio::io::AsyncWriteExt;
-
     let mut file = if downloaded_bytes > 0 {
         tokio::fs::OpenOptions::new()
             .append(true)
@@ -373,7 +404,7 @@ async fn download_segment_with_progress(
             return Err("Download cancelled".to_string());
         }
 
-        let chunk = chunk_result.map_err(|e| format!("流读取错误: {}", e))?;
+        let chunk = chunk_result.map_err(|e: reqwest::Error| format!("流读取错误: {}", e))?;
         file.write_all(&chunk)
             .await
             .map_err(|e| format!("写入错误: {}", e))?;
@@ -406,9 +437,7 @@ async fn download_segment_with_progress(
 
     // 校验 MD5
     if !expected_md5.is_empty() {
-        let actual_md5 = hash_verify::md5_file(&temp_path)
-            .await
-            .unwrap_or_default();
+        let actual_md5 = hash_verify::md5_file(&temp_path).await.unwrap_or_default();
         if actual_md5.to_lowercase() != expected_md5.to_lowercase() {
             warn!(
                 "分段 MD5 不匹配 (期望: {}, 实际: {}), 将继续使用",
@@ -433,10 +462,10 @@ async fn extract_zip(zip_path: &Path, dest_folder: &Path) -> Result<(), String> 
 
     // zip 解压需要在阻塞线程中执行
     tokio::task::spawn_blocking(move || {
-        let file = std::fs::File::open(&zip_path)
-            .map_err(|e| format!("打开 zip 文件失败: {}", e))?;
-        let mut archive = zip::ZipArchive::new(file)
-            .map_err(|e| format!("读取 zip 归档失败: {}", e))?;
+        let file =
+            std::fs::File::open(&zip_path).map_err(|e| format!("打开 zip 文件失败: {}", e))?;
+        let mut archive =
+            zip::ZipArchive::new(file).map_err(|e| format!("读取 zip 归档失败: {}", e))?;
 
         for i in 0..archive.len() {
             let mut zip_file = archive
@@ -488,7 +517,10 @@ async fn apply_hdiff_patches(game_folder: &Path) -> Result<(), String> {
             .unwrap_or("")
             .replace(".hdiff", "");
 
-        let original_path = hdiff_path.parent().unwrap_or(game_folder).join(&original_name);
+        let original_path = hdiff_path
+            .parent()
+            .unwrap_or(game_folder)
+            .join(&original_name);
 
         if !original_path.exists() {
             warn!("hdiff 原文件不存在: {}", original_path.display());
@@ -571,6 +603,44 @@ async fn cleanup_deleted_files(game_folder: &Path) {
     }
 
     tokio::fs::remove_file(&delete_list).await.ok();
+}
+
+// ============================================================
+// 辅助结构体和函数
+// ============================================================
+
+/// 下载任务描述
+struct DownloadTask {
+    url: String,
+    md5: String,
+    size: String,
+    label: String,
+}
+
+/// 从 audio_pkgs 中筛选用户选中的语言包
+fn collect_audio_segments(
+    audio_pkgs: &[crate::downloader::hoyoverse::AudioPkg],
+    languages: &[String],
+) -> Vec<(String, Segment)> {
+    if languages.is_empty() {
+        return Vec::new();
+    }
+
+    audio_pkgs
+        .iter()
+        .filter(|pkg| languages.iter().any(|lang| pkg.language == *lang))
+        .map(|pkg| {
+            (
+                pkg.language.clone(),
+                Segment {
+                    url: pkg.url.clone(),
+                    md5: pkg.md5.clone(),
+                    size: pkg.size.clone(),
+                    decompressed_size: pkg.decompressed_size.clone(),
+                },
+            )
+        })
+        .collect()
 }
 
 fn emit_progress(

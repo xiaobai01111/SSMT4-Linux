@@ -24,7 +24,11 @@ pub fn create_prefix(game_id: &str, config: &PrefixConfig) -> Result<PathBuf, St
 
     save_prefix_config(game_id, config)?;
 
-    info!("Created prefix for game {} at {}", game_id, prefix_dir.display());
+    info!(
+        "Created prefix for game {} at {}",
+        game_id,
+        prefix_dir.display()
+    );
     Ok(prefix_dir)
 }
 
@@ -63,8 +67,7 @@ pub fn load_prefix_config(game_id: &str) -> Result<PrefixConfig, String> {
     }
     let content = std::fs::read_to_string(&config_path)
         .map_err(|e| format!("Failed to read prefix config: {}", e))?;
-    serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse prefix config: {}", e))
+    serde_json::from_str(&content).map_err(|e| format!("Failed to parse prefix config: {}", e))
 }
 
 pub fn save_prefix_config(game_id: &str, config: &PrefixConfig) -> Result<(), String> {
@@ -101,7 +104,10 @@ pub fn get_prefix_info(game_id: &str) -> Result<PrefixInfo, String> {
 
 fn dir_size(path: &Path) -> Result<u64, std::io::Error> {
     let mut total = 0;
-    for entry in walkdir::WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(path)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         if entry.file_type().is_file() {
             total += entry.metadata()?.len();
         }
@@ -141,11 +147,14 @@ pub fn save_template(template: &PrefixTemplate) -> Result<(), String> {
     let path = templates_dir.join(format!("{}.json", template.id));
     let content = serde_json::to_string_pretty(template)
         .map_err(|e| format!("Failed to serialize template: {}", e))?;
-    std::fs::write(&path, content)
-        .map_err(|e| format!("Failed to write template: {}", e))
+    std::fs::write(&path, content).map_err(|e| format!("Failed to write template: {}", e))
 }
 
-pub fn export_template_from_prefix(game_id: &str, template_id: &str, template_name: &str) -> Result<PrefixTemplate, String> {
+pub fn export_template_from_prefix(
+    game_id: &str,
+    template_id: &str,
+    template_name: &str,
+) -> Result<PrefixTemplate, String> {
     let config = load_prefix_config(game_id)?;
     let template = PrefixTemplate {
         id: template_id.to_string(),

@@ -15,8 +15,7 @@ pub struct GameConfig {
 pub fn load_game_config(app: tauri::AppHandle, game_name: &str) -> Result<Value, String> {
     // 优先从 SQLite 读取
     if let Some(json_str) = db::get_game_config(game_name) {
-        return serde_json::from_str(&json_str)
-            .map_err(|e| format!("解析游戏配置失败: {}", e));
+        return serde_json::from_str(&json_str).map_err(|e| format!("解析游戏配置失败: {}", e));
     }
 
     // 回退到文件系统（兼容资源目录中的 Config.json）
@@ -26,8 +25,8 @@ pub fn load_game_config(app: tauri::AppHandle, game_name: &str) -> Result<Value,
     }
     let content = std::fs::read_to_string(&config_path)
         .map_err(|e| format!("Failed to read config: {}", e))?;
-    let val: Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse config: {}", e))?;
+    let val: Value =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
 
     // 迁移到 SQLite
     db::set_game_config(game_name, &content);
@@ -54,22 +53,23 @@ pub fn create_new_config(
     new_name: &str,
     config: Option<Value>,
 ) -> Result<(), String> {
-    let game_dir = get_game_dir(&app, new_name)?;
+    let game_dir = get_writable_game_dir(&app, new_name)?;
     crate::utils::file_manager::ensure_dir(&game_dir)?;
 
     let config_path = game_dir.join("Config.json");
-    let final_config = config.unwrap_or_else(|| serde_json::json!({
-        "name": new_name,
-        "gamePath": "",
-        "d3dxPath": "",
-        "launcherEnabled": false,
-        "launcherPath": "",
-    }));
+    let final_config = config.unwrap_or_else(|| {
+        serde_json::json!({
+            "name": new_name,
+            "gamePath": "",
+            "d3dxPath": "",
+            "launcherEnabled": false,
+            "launcherPath": "",
+        })
+    });
 
     let content = serde_json::to_string_pretty(&final_config)
         .map_err(|e| format!("Failed to serialize: {}", e))?;
-    std::fs::write(&config_path, content)
-        .map_err(|e| format!("Failed to create config: {}", e))?;
+    std::fs::write(&config_path, content).map_err(|e| format!("Failed to create config: {}", e))?;
 
     info!("Created new config for game: {}", new_name);
     Ok(())
@@ -77,11 +77,13 @@ pub fn create_new_config(
 
 #[tauri::command]
 pub fn delete_game_config_folder(app: tauri::AppHandle, game_name: &str) -> Result<(), String> {
-    let game_dir = get_game_dir(&app, game_name)?;
-    if game_dir.exists() {
-        std::fs::remove_dir_all(&game_dir)
-            .map_err(|e| format!("Failed to delete game folder: {}", e))?;
-        info!("Deleted config folder for game: {}", game_name);
+    let user_games_dir = get_user_games_dir()?;
+    if let Some(game_dir) = find_game_dir_by_logic_name(&user_games_dir, game_name) {
+        if game_dir.exists() {
+            std::fs::remove_dir_all(&game_dir)
+                .map_err(|e| format!("Failed to delete game folder: {}", e))?;
+            info!("Deleted config folder for game: {}", game_name);
+        }
     }
     // 同时清理 SQLite 中的游戏配置
     crate::configs::database::delete_game_config(game_name);
@@ -91,11 +93,8 @@ pub fn delete_game_config_folder(app: tauri::AppHandle, game_name: &str) -> Resu
 }
 
 #[tauri::command]
-pub fn reset_game_background(
-    app: tauri::AppHandle,
-    game_name: &str,
-) -> Result<(), String> {
-    let game_dir = get_game_dir(&app, game_name)?;
+pub fn reset_game_background(app: tauri::AppHandle, game_name: &str) -> Result<(), String> {
+    let game_dir = get_writable_game_dir(&app, game_name)?;
     let bg_extensions = ["png", "jpg", "jpeg", "webp", "mp4", "webm", "ogg", "mov"];
     for ext in &bg_extensions {
         let path = game_dir.join(format!("Background.{}", ext));
@@ -113,10 +112,9 @@ pub fn set_game_icon(
     game_name: &str,
     file_path: &str,
 ) -> Result<String, String> {
-    let game_dir = get_game_dir(&app, game_name)?;
+    let game_dir = get_writable_game_dir(&app, game_name)?;
     let dest = game_dir.join("Icon.png");
-    std::fs::copy(file_path, &dest)
-        .map_err(|e| format!("Failed to copy icon: {}", e))?;
+    std::fs::copy(file_path, &dest).map_err(|e| format!("Failed to copy icon: {}", e))?;
     Ok(dest.to_string_lossy().to_string())
 }
 
@@ -127,23 +125,29 @@ pub fn set_game_background(
     file_path: &str,
     bg_type: Option<String>,
 ) -> Result<String, String> {
-    let game_dir = get_game_dir(&app, game_name)?;
+    let game_dir = get_writable_game_dir(&app, game_name)?;
     let ext = std::path::Path::new(file_path)
         .extension()
         .unwrap_or_default()
         .to_string_lossy()
         .to_string();
     let dest = game_dir.join(format!("Background.{}", ext));
-    std::fs::copy(file_path, &dest)
-        .map_err(|e| format!("Failed to copy background: {}", e))?;
+    std::fs::copy(file_path, &dest).map_err(|e| format!("Failed to copy background: {}", e))?;
 
     // 同步更新 Config.json 中的 backgroundType
     if let Some(bt) = &bg_type {
         let mut config = load_game_config(app.clone(), game_name).unwrap_or(serde_json::json!({}));
         if let Some(basic) = config.get_mut("basic") {
-            basic.as_object_mut().map(|obj| obj.insert("backgroundType".to_string(), serde_json::json!(bt)));
+            basic
+                .as_object_mut()
+                .map(|obj| obj.insert("backgroundType".to_string(), serde_json::json!(bt)));
         } else {
-            config.as_object_mut().map(|obj| obj.insert("basic".to_string(), serde_json::json!({"backgroundType": bt})));
+            config.as_object_mut().map(|obj| {
+                obj.insert(
+                    "basic".to_string(),
+                    serde_json::json!({"backgroundType": bt}),
+                )
+            });
         }
         let content = serde_json::to_string_pretty(&config).unwrap_or_default();
         db::set_game_config(game_name, &content);
@@ -167,14 +171,16 @@ pub fn update_game_background(
     for ext in &bg_extensions {
         let src = preset_dir.join(format!("Background.{}", ext));
         if src.exists() {
-            let dest_dir = get_game_dir(&app, game_name)?;
+            let dest_dir = get_writable_game_dir(&app, game_name)?;
             let dest = dest_dir.join(format!("Background.{}", ext));
-            std::fs::copy(&src, &dest)
-                .map_err(|e| format!("Failed to copy background: {}", e))?;
+            std::fs::copy(&src, &dest).map_err(|e| format!("Failed to copy background: {}", e))?;
             return Ok(dest.to_string_lossy().to_string());
         }
     }
-    Err(format!("No default background found for preset: {}", game_preset))
+    Err(format!(
+        "No default background found for preset: {}",
+        game_preset
+    ))
 }
 
 #[tauri::command]
@@ -199,22 +205,26 @@ pub async fn get_3dmigoto_latest_release(game_preset: String) -> Result<Value, S
         return Err(format!("GitHub API returned {}", resp.status()));
     }
 
-    let data: Value = resp.json()
+    let data: Value = resp
+        .json()
         .await
         .map_err(|e| format!("Failed to parse GitHub response: {}", e))?;
 
     // 从 GitHub Release API 响应中提取字段，构造前端期望的 UpdateInfo
-    let version = data.get("tag_name")
+    let version = data
+        .get("tag_name")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown")
         .to_string();
 
-    let description = data.get("body")
+    let description = data
+        .get("body")
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
 
-    let download_url = data.get("assets")
+    let download_url = data
+        .get("assets")
         .and_then(|a| a.as_array())
         .and_then(|arr| arr.first())
         .and_then(|asset| asset.get("browser_download_url"))
@@ -235,7 +245,7 @@ pub async fn install_3dmigoto_update(
     download_url: String,
     game_name: String,
 ) -> Result<String, String> {
-    let game_dir = get_game_dir(&app, &game_name)?;
+    let game_dir = get_writable_game_dir(&app, &game_name)?;
     let cache_dir = crate::configs::app_config::get_app_cache_dir();
     crate::utils::file_manager::ensure_dir(&cache_dir)?;
 
@@ -255,14 +265,12 @@ pub async fn install_3dmigoto_update(
         .await
         .map_err(|e| format!("Failed to read download: {}", e))?;
 
-    std::fs::write(&zip_path, &bytes)
-        .map_err(|e| format!("Failed to save zip: {}", e))?;
+    std::fs::write(&zip_path, &bytes).map_err(|e| format!("Failed to save zip: {}", e))?;
 
     // Extract
-    let file = std::fs::File::open(&zip_path)
-        .map_err(|e| format!("Failed to open zip: {}", e))?;
-    let mut archive = zip::ZipArchive::new(file)
-        .map_err(|e| format!("Failed to read zip: {}", e))?;
+    let file = std::fs::File::open(&zip_path).map_err(|e| format!("Failed to open zip: {}", e))?;
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|e| format!("Failed to read zip: {}", e))?;
 
     for i in 0..archive.len() {
         let mut file = archive
@@ -291,52 +299,120 @@ pub async fn install_3dmigoto_update(
     Ok("Update installed".to_string())
 }
 
-fn get_game_dir(app: &tauri::AppHandle, game_name: &str) -> Result<PathBuf, String> {
+fn get_user_games_dir() -> Result<PathBuf, String> {
+    let games_dir = crate::utils::file_manager::get_global_games_dir();
+    crate::utils::file_manager::ensure_dir(&games_dir)?;
+    Ok(games_dir)
+}
+
+fn get_resource_games_dirs(app: &tauri::AppHandle) -> Result<Vec<PathBuf>, String> {
     let resource_dir = app
         .path()
         .resource_dir()
         .map_err(|e| format!("Failed to get resource dir: {}", e))?;
 
-    // 搜索候选的 Games 目录列表
-    let candidates = vec![
-        resource_dir.join("resources").join("Games"),
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("resources")
-            .join("Games"),
-    ];
+    let mut candidates = Vec::new();
+    let prod = resource_dir.join("resources").join("Games");
+    if prod.exists() {
+        candidates.push(prod);
+    }
 
-    for games_dir in &candidates {
-        if !games_dir.exists() { continue; }
+    let dev = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("resources")
+        .join("Games");
+    if dev.exists() {
+        candidates.push(dev);
+    }
 
-        // 1. 直接匹配文件夹名（兼容旧结构）
-        let direct = games_dir.join(game_name);
-        if direct.exists() {
-            return Ok(direct);
-        }
+    Ok(candidates)
+}
 
-        // 2. 扫描所有子文件夹，通过 Config.json 的 LogicName/GamePreset 匹配
-        if let Ok(entries) = std::fs::read_dir(games_dir) {
-            for entry in entries.flatten() {
-                if !entry.path().is_dir() { continue; }
-                let config_path = entry.path().join("Config.json");
-                if !config_path.exists() { continue; }
+fn find_game_dir_by_logic_name(games_dir: &std::path::Path, game_name: &str) -> Option<PathBuf> {
+    let direct = games_dir.join(game_name);
+    if direct.exists() {
+        return Some(direct);
+    }
 
-                if let Ok(content) = std::fs::read_to_string(&config_path) {
-                    if let Ok(data) = serde_json::from_str::<serde_json::Value>(&content) {
-                        let logic_name = data.get("LogicName")
-                            .or_else(|| data.get("GamePreset"))
-                            .and_then(|v| v.as_str());
-                        if logic_name == Some(game_name) {
-                            return Ok(entry.path());
-                        }
+    if let Ok(entries) = std::fs::read_dir(games_dir) {
+        for entry in entries.flatten() {
+            if !entry.path().is_dir() {
+                continue;
+            }
+            let config_path = entry.path().join("Config.json");
+            if !config_path.exists() {
+                continue;
+            }
+
+            if let Ok(content) = std::fs::read_to_string(&config_path) {
+                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&content) {
+                    let logic_name = data
+                        .get("LogicName")
+                        .or_else(|| data.get("GamePreset"))
+                        .and_then(|v| v.as_str());
+                    if logic_name == Some(game_name) {
+                        return Some(entry.path());
                     }
                 }
             }
         }
     }
 
-    // 回退：返回默认路径（用于新建游戏等场景）
-    Ok(candidates[0].join(game_name))
+    None
+}
+
+fn find_game_dir_in_candidates(candidates: &[PathBuf], game_name: &str) -> Option<PathBuf> {
+    for games_dir in candidates {
+        if let Some(found) = find_game_dir_by_logic_name(games_dir, game_name) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn get_game_dir(app: &tauri::AppHandle, game_name: &str) -> Result<PathBuf, String> {
+    let user_games_dir = get_user_games_dir()?;
+    if let Some(found) = find_game_dir_by_logic_name(&user_games_dir, game_name) {
+        return Ok(found);
+    }
+
+    let resource_dirs = get_resource_games_dirs(app)?;
+    if let Some(found) = find_game_dir_in_candidates(&resource_dirs, game_name) {
+        return Ok(found);
+    }
+
+    Ok(user_games_dir.join(game_name))
+}
+
+fn get_writable_game_dir(app: &tauri::AppHandle, game_name: &str) -> Result<PathBuf, String> {
+    let user_games_dir = get_user_games_dir()?;
+
+    if let Some(found) = find_game_dir_by_logic_name(&user_games_dir, game_name) {
+        return Ok(found);
+    }
+
+    let resource_dirs = get_resource_games_dirs(app)?;
+    if let Some(src_dir) = find_game_dir_in_candidates(&resource_dirs, game_name) {
+        let folder_name = src_dir
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| game_name.to_string());
+        let dst_dir = user_games_dir.join(folder_name);
+
+        if !dst_dir.exists() {
+            crate::utils::file_manager::copy_dir_recursive(&src_dir, &dst_dir)?;
+            info!(
+                "Copied game resources to writable dir: {} -> {}",
+                src_dir.display(),
+                dst_dir.display()
+            );
+        }
+
+        return Ok(dst_dir);
+    }
+
+    let dst_dir = user_games_dir.join(game_name);
+    crate::utils::file_manager::ensure_dir(&dst_dir)?;
+    Ok(dst_dir)
 }
 
 fn get_game_config_path(app: &tauri::AppHandle, game_name: &str) -> Result<PathBuf, String> {

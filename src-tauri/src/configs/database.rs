@@ -1,4 +1,4 @@
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -31,8 +31,9 @@ fn init_tables(conn: &Connection) {
             game_name TEXT PRIMARY KEY,
             config    TEXT NOT NULL
         );
-        "
-    ).expect("创建数据库表失败");
+        ",
+    )
+    .expect("创建数据库表失败");
 }
 
 // ============================
@@ -45,7 +46,8 @@ pub fn get_setting(key: &str) -> Option<String> {
         "SELECT value FROM settings WHERE key = ?1",
         params![key],
         |row| row.get(0),
-    ).ok()
+    )
+    .ok()
 }
 
 pub fn set_setting(key: &str, value: &str) {
@@ -53,7 +55,8 @@ pub fn set_setting(key: &str, value: &str) {
     conn.execute(
         "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
         params![key, value],
-    ).unwrap_or_else(|e| {
+    )
+    .unwrap_or_else(|e| {
         tracing::error!("写入 settings 失败: key={}, err={}", key, e);
         0
     });
@@ -62,9 +65,11 @@ pub fn set_setting(key: &str, value: &str) {
 pub fn get_all_settings() -> Vec<(String, String)> {
     let conn = DB.lock().unwrap();
     let mut stmt = conn.prepare("SELECT key, value FROM settings").unwrap();
-    let rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-    }).unwrap();
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .unwrap();
     rows.filter_map(|r| r.ok()).collect()
 }
 
@@ -78,7 +83,8 @@ pub fn get_game_config(game_name: &str) -> Option<String> {
         "SELECT config FROM game_configs WHERE game_name = ?1",
         params![game_name],
         |row| row.get(0),
-    ).ok()
+    )
+    .ok()
 }
 
 pub fn set_game_config(game_name: &str, config_json: &str) {
@@ -86,7 +92,8 @@ pub fn set_game_config(game_name: &str, config_json: &str) {
     conn.execute(
         "INSERT OR REPLACE INTO game_configs (game_name, config) VALUES (?1, ?2)",
         params![game_name, config_json],
-    ).unwrap_or_else(|e| {
+    )
+    .unwrap_or_else(|e| {
         tracing::error!("写入 game_configs 失败: game={}, err={}", game_name, e);
         0
     });
@@ -97,7 +104,8 @@ pub fn delete_game_config(game_name: &str) {
     conn.execute(
         "DELETE FROM game_configs WHERE game_name = ?1",
         params![game_name],
-    ).unwrap_or_else(|e| {
+    )
+    .unwrap_or_else(|e| {
         tracing::error!("删除 game_configs 失败: game={}, err={}", game_name, e);
         0
     });

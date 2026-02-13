@@ -38,8 +38,8 @@ const addToFavorites = async () => {
   const gameName = targetGame.value.name;
   
   try {
-    // True = Show in Sidebar
-    await setGameVisibility(gameName, true);
+    // hidden=false → remove from hidden list → show in sidebar
+    await setGameVisibility(gameName, false);
     await loadGames();
     
     // Switch to home page

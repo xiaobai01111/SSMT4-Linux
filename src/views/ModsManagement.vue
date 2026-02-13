@@ -737,8 +737,7 @@ onMounted(async () => {
         }
     });
 
-    // Start listening for file changes (no-op in web mode)
-    unlistenFileChange = await listenEvent('mod-filesystem-changed', () => {
+    const handleModsFilesystemChange = () => {
         // Debounce the refresh
         if (debounceTimer) clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => {
@@ -746,7 +745,15 @@ onMounted(async () => {
             // Silent refresh (no loading spinner to avoid flickering)
             silentRefresh();
         }, 500); // 500ms debounce
-    });
+    };
+
+    // Start listening for file changes (no-op in web mode)
+    const unlistenModsChanged = await listenEvent('mods-changed', handleModsFilesystemChange);
+    const unlistenLegacyModsChanged = await listenEvent('mod-filesystem-changed', handleModsFilesystemChange);
+    unlistenFileChange = () => {
+        unlistenModsChanged();
+        unlistenLegacyModsChanged();
+    };
     
     if (selectedGame.value) {
         // Initial load

@@ -13,14 +13,26 @@ pub fn scan_all_versions(custom_paths: &[String]) -> Vec<WineVersion> {
     versions.extend(scan_steam_proton());
 
     // GE-Proton
-    versions.extend(scan_compatibility_tools("GE-Proton", ProtonVariant::GEProton));
+    versions.extend(scan_compatibility_tools(
+        "GE-Proton",
+        ProtonVariant::GEProton,
+    ));
 
     // DW-Proton
-    versions.extend(scan_compatibility_tools("DW-Proton", ProtonVariant::DWProton));
+    versions.extend(scan_compatibility_tools(
+        "DW-Proton",
+        ProtonVariant::DWProton,
+    ));
 
     // Proton-TKG
-    versions.extend(scan_compatibility_tools("Proton-tkg", ProtonVariant::ProtonTKG));
-    versions.extend(scan_compatibility_tools("proton-tkg", ProtonVariant::ProtonTKG));
+    versions.extend(scan_compatibility_tools(
+        "Proton-tkg",
+        ProtonVariant::ProtonTKG,
+    ));
+    versions.extend(scan_compatibility_tools(
+        "proton-tkg",
+        ProtonVariant::ProtonTKG,
+    ));
 
     // Any other Proton variants in compatibilitytools.d
     versions.extend(scan_other_compat_tools(&versions));
@@ -48,8 +60,16 @@ fn get_steam_root() -> Option<PathBuf> {
     let home = std::env::var("HOME").ok()?;
     let candidates = [
         PathBuf::from(&home).join(".steam").join("steam"),
-        PathBuf::from(&home).join(".local").join("share").join("Steam"),
-        PathBuf::from(&home).join(".var").join("app").join("com.valvesoftware.Steam").join(".steam").join("steam"),
+        PathBuf::from(&home)
+            .join(".local")
+            .join("share")
+            .join("Steam"),
+        PathBuf::from(&home)
+            .join(".var")
+            .join("app")
+            .join("com.valvesoftware.Steam")
+            .join(".steam")
+            .join("steam"),
     ];
     candidates.into_iter().find(|p| p.exists())
 }
@@ -60,7 +80,11 @@ fn get_compat_tools_dirs() -> Vec<PathBuf> {
         dirs.push(steam.join("compatibilitytools.d"));
     }
     if let Ok(home) = std::env::var("HOME") {
-        let xdg = PathBuf::from(&home).join(".local").join("share").join("Steam").join("compatibilitytools.d");
+        let xdg = PathBuf::from(&home)
+            .join(".local")
+            .join("share")
+            .join("Steam")
+            .join("compatibilitytools.d");
         if xdg.exists() && !dirs.contains(&xdg) {
             dirs.push(xdg);
         }
@@ -185,7 +209,11 @@ fn scan_compatibility_tools(prefix: &str, variant: ProtonVariant) -> Vec<WineVer
             let (version, timestamp) = read_proton_version(&dir);
             let id = format!(
                 "{}-{}",
-                variant.to_string().to_lowercase().replace(' ', "-").replace('-', "_"),
+                variant
+                    .to_string()
+                    .to_lowercase()
+                    .replace(' ', "-")
+                    .replace('-', "_"),
                 version
             );
 
@@ -341,7 +369,11 @@ fn scan_custom_path(path: &Path) -> Vec<WineVersion> {
     let wine_bin_alt = path.join("bin").join("wine");
 
     if proton_bin.exists() {
-        let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
         let (version, timestamp) = read_proton_version(path);
         let variant = classify_proton_variant(&name);
         let id = format!("custom-{}", name.to_lowercase().replace(' ', "-"));
@@ -357,8 +389,16 @@ fn scan_custom_path(path: &Path) -> Vec<WineVersion> {
             timestamp,
         });
     } else if wine_bin.exists() || wine_bin_alt.exists() {
-        let actual = if wine_bin.exists() { wine_bin } else { wine_bin_alt };
-        let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let actual = if wine_bin.exists() {
+            wine_bin
+        } else {
+            wine_bin_alt
+        };
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
         let version = get_wine_version(&actual).unwrap_or_else(|| "unknown".to_string());
         let id = format!("custom-wine-{}", name.to_lowercase().replace(' ', "-"));
 
@@ -415,10 +455,7 @@ pub fn find_steam_linux_runtime() -> Option<PathBuf> {
         .join("SteamLinuxRuntime_sniper");
     let entry_point = sniper.join("_v2-entry-point");
     if entry_point.exists() {
-        info!(
-            "Found SteamLinuxRuntime_sniper at {}",
-            sniper.display()
-        );
+        info!("Found SteamLinuxRuntime_sniper at {}", sniper.display());
         Some(sniper)
     } else {
         // Also check soldier as fallback
@@ -428,7 +465,10 @@ pub fn find_steam_linux_runtime() -> Option<PathBuf> {
             .join("SteamLinuxRuntime_soldier");
         let entry_point_soldier = soldier.join("_v2-entry-point");
         if entry_point_soldier.exists() {
-            warn!("sniper not found, falling back to soldier at {}", soldier.display());
+            warn!(
+                "sniper not found, falling back to soldier at {}",
+                soldier.display()
+            );
             Some(soldier)
         } else {
             warn!("No SteamLinuxRuntime found");

@@ -11,8 +11,7 @@ pub fn init_logger(log_dir: &Path) {
     // Leak the guard so it lives for the entire program
     Box::leak(Box::new(_guard));
 
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     tracing_subscriber::registry()
         .with(env_filter)

@@ -18,7 +18,9 @@ pub fn get_tools_dir() -> PathBuf {
 }
 
 pub fn get_templates_dir() -> PathBuf {
-    app_config::get_app_config_dir().join("prefixes").join("_templates")
+    app_config::get_app_config_dir()
+        .join("prefixes")
+        .join("_templates")
 }
 
 pub fn ensure_dir(path: &Path) -> Result<(), String> {
@@ -34,7 +36,10 @@ pub fn get_default_xdg_data_dir() -> PathBuf {
     if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
         PathBuf::from(xdg).join("ssmt4")
     } else if let Ok(home) = std::env::var("HOME") {
-        PathBuf::from(home).join(".local").join("share").join("ssmt4")
+        PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("ssmt4")
     } else {
         PathBuf::from("/tmp/ssmt4/data")
     }
@@ -52,31 +57,27 @@ pub fn setup_data_dir_symlink(custom_dir: &Path) -> Result<(), String> {
     if default_dir.is_symlink() {
         if let Ok(target) = std::fs::read_link(&default_dir) {
             if target == custom_dir {
-                tracing::info!("符号链接已存在: {} -> {}", default_dir.display(), custom_dir.display());
+                tracing::info!(
+                    "符号链接已存在: {} -> {}",
+                    default_dir.display(),
+                    custom_dir.display()
+                );
                 return Ok(());
             }
         }
         // 符号链接指向错误位置，删除
-        std::fs::remove_file(&default_dir)
-            .map_err(|e| format!("删除旧符号链接失败: {}", e))?;
+        std::fs::remove_file(&default_dir).map_err(|e| format!("删除旧符号链接失败: {}", e))?;
     } else if default_dir.exists() {
+        if !default_dir.is_dir() {
+            return Err(format!(
+                "默认数据路径不是目录，无法迁移: {}",
+                default_dir.display()
+            ));
+        }
         // 默认路径是真实目录，迁移内容后删除
         tracing::info!("迁移 {} -> {}", default_dir.display(), custom_dir.display());
-        if let Ok(entries) = std::fs::read_dir(&default_dir) {
-            for entry in entries.flatten() {
-                let src = entry.path();
-                let dst = custom_dir.join(entry.file_name());
-                if !dst.exists() {
-                    if src.is_dir() {
-                        copy_dir_recursive(&src, &dst).ok();
-                    } else {
-                        std::fs::copy(&src, &dst).ok();
-                    }
-                }
-            }
-        }
-        std::fs::remove_dir_all(&default_dir)
-            .map_err(|e| format!("删除旧数据目录失败: {}", e))?;
+        migrate_dir_contents(&default_dir, custom_dir)?;
+        std::fs::remove_dir_all(&default_dir).map_err(|e| format!("删除旧数据目录失败: {}", e))?;
     }
 
     // 确保父目录存在
@@ -87,11 +88,21 @@ pub fn setup_data_dir_symlink(custom_dir: &Path) -> Result<(), String> {
     // 创建符号链接
     #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(custom_dir, &default_dir)
-            .map_err(|e| format!("创建符号链接失败: {} -> {}: {}", default_dir.display(), custom_dir.display(), e))?;
+        std::os::unix::fs::symlink(custom_dir, &default_dir).map_err(|e| {
+            format!(
+                "创建符号链接失败: {} -> {}: {}",
+                default_dir.display(),
+                custom_dir.display(),
+                e
+            )
+        })?;
     }
 
-    tracing::info!("符号链接已创建: {} -> {}", default_dir.display(), custom_dir.display());
+    tracing::info!(
+        "符号链接已创建: {} -> {}",
+        default_dir.display(),
+        custom_dir.display()
+    );
     Ok(())
 }
 
@@ -104,14 +115,38 @@ pub fn remove_data_dir_symlink() {
     }
 }
 
+fn migrate_dir_contents(src_root: &Path, dst_root: &Path) -> Result<(), String> {
+    let entries = std::fs::read_dir(src_root)
+        .map_err(|e| format!("读取旧数据目录失败 {}: {}", src_root.display(), e))?;
+
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("读取旧数据目录条目失败: {}", e))?;
+        let src = entry.path();
+        let dst = dst_root.join(entry.file_name());
+
+        if dst.exists() {
+            continue;
+        }
+
+        if src.is_dir() {
+            copy_dir_recursive(&src, &dst)?;
+        } else {
+            std::fs::copy(&src, &dst).map_err(|e| {
+                format!("迁移文件失败 {} -> {}: {}", src.display(), dst.display(), e)
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
 pub fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
     ensure_dir(dst)?;
     let entries = std::fs::read_dir(src)
         .map_err(|e| format!("Failed to read directory {}: {}", src.display(), e))?;
 
     for entry in entries {
-        let entry =
-            entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
+        let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
         let file_type = entry
             .file_type()
             .map_err(|e| format!("Failed to get file type: {}", e))?;

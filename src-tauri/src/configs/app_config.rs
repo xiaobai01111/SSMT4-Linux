@@ -118,7 +118,10 @@ pub fn get_app_data_dir() -> PathBuf {
     if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
         PathBuf::from(xdg).join("ssmt4")
     } else if let Ok(home) = std::env::var("HOME") {
-        PathBuf::from(home).join(".local").join("share").join("ssmt4")
+        PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("ssmt4")
     } else {
         PathBuf::from("/tmp/ssmt4/data")
     }

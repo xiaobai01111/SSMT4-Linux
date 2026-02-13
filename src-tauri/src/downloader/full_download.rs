@@ -50,14 +50,7 @@ pub async fn download_game(
             file.dest
         );
 
-        fetcher::download_with_resume(
-            &client,
-            &download_url,
-            &file_path,
-            false,
-            None,
-        )
-        .await?;
+        fetcher::download_with_resume(&client, &download_url, &file_path, false, None).await?;
 
         // Update progress after each file
         finished_size += file.size;

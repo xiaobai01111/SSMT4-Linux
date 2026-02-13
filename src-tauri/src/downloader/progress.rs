@@ -57,7 +57,8 @@ impl SpeedTracker {
     pub fn record(&mut self, bytes: u64) {
         let now = std::time::Instant::now();
         self.samples.push((now, bytes));
-        self.samples.retain(|&(t, _)| now.duration_since(t) < self.window);
+        self.samples
+            .retain(|&(t, _)| now.duration_since(t) < self.window);
     }
 
     pub fn speed_bps(&self) -> u64 {

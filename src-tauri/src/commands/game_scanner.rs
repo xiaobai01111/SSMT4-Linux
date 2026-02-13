@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use tauri::Manager;
 use tracing::info;
@@ -29,65 +30,134 @@ fn get_chinese_display_name(folder_name: &str) -> &str {
 
 #[tauri::command]
 pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
-    let games_dir = get_games_dir(&app)?;
+    let user_games_dir = get_user_games_dir()?;
+    let hidden_games = load_hidden_games(&user_games_dir);
 
-    if !games_dir.exists() {
-        return Ok(Vec::new());
+    let mut scan_dirs = vec![user_games_dir.clone()];
+    if let Some(resource_games_dir) = get_resource_games_dir(&app)? {
+        if resource_games_dir != user_games_dir {
+            scan_dirs.push(resource_games_dir);
+        }
     }
 
-    let hidden_games = load_hidden_games(&games_dir);
+    // game_id -> (用户目录路径, 资源目录路径)
+    let mut game_user_paths: HashMap<String, PathBuf> = HashMap::new();
+    let mut game_resource_paths: HashMap<String, PathBuf> = HashMap::new();
+    let mut all_dir_names: HashSet<String> = HashSet::new();
 
-    let mut games = Vec::new();
-    let mut all_dir_names: Vec<String> = Vec::new();
-    let entries = std::fs::read_dir(&games_dir)
-        .map_err(|e| format!("Failed to read games dir: {}", e))?;
-
-    for entry in entries.flatten() {
-        if !entry.path().is_dir() {
+    for (dir_idx, games_dir) in scan_dirs.iter().enumerate() {
+        if !games_dir.exists() {
             continue;
         }
 
-        let folder_name = entry.file_name().to_string_lossy().to_string();
-        let game_path = entry.path();
-        let icon_path = game_path.join("Icon.png");
-        let config_path = game_path.join("Config.json");
+        let entries =
+            std::fs::read_dir(games_dir).map_err(|e| format!("Failed to read games dir: {}", e))?;
 
-        // 从文件系统 Config.json 读取 LogicName 作为游戏标识
+        for entry in entries.flatten() {
+            if !entry.path().is_dir() {
+                continue;
+            }
+
+            let folder_name = entry.file_name().to_string_lossy().to_string();
+            let game_path = entry.path();
+            let config_path = game_path.join("Config.json");
+
+            // 从文件系统 Config.json 读取 LogicName 作为游戏标识
+            let fs_config: Option<serde_json::Value> = if config_path.exists() {
+                std::fs::read_to_string(&config_path)
+                    .ok()
+                    .and_then(|s| serde_json::from_str(&s).ok())
+            } else {
+                None
+            };
+
+            // game_id = LogicName || GamePreset || 文件夹名
+            let game_id = fs_config
+                .as_ref()
+                .and_then(|v| v.get("LogicName").or_else(|| v.get("GamePreset")))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| folder_name.clone());
+
+            all_dir_names.insert(game_id.clone());
+
+            if dir_idx == 0 {
+                // 用户目录
+                game_user_paths.entry(game_id).or_insert(game_path);
+            } else {
+                // 资源目录
+                game_resource_paths.entry(game_id).or_insert(game_path);
+            }
+        }
+    }
+
+    // 合并：用户目录优先，资源目录回退
+    let mut game_paths: HashMap<String, PathBuf> = HashMap::new();
+    for game_id in &all_dir_names {
+        if let Some(path) = game_user_paths.get(game_id) {
+            game_paths.insert(game_id.clone(), path.clone());
+        } else if let Some(path) = game_resource_paths.get(game_id) {
+            game_paths.insert(game_id.clone(), path.clone());
+        }
+    }
+
+    let mut games = Vec::new();
+    for (game_id, game_path) in game_paths {
+        let is_hidden = hidden_games.contains(&game_id);
+        let resource_path = game_resource_paths.get(&game_id);
+
+        // Icon: 用户目录优先，资源目录回退
+        let icon_path = {
+            let user_icon = game_path.join("Icon.png");
+            if user_icon.exists() {
+                user_icon
+            } else if let Some(rp) = resource_path {
+                let res_icon = rp.join("Icon.png");
+                if res_icon.exists() { res_icon } else { user_icon }
+            } else {
+                user_icon
+            }
+        };
+
+        // Config: 用户目录优先，资源目录回退
+        let config_path = {
+            let user_cfg = game_path.join("Config.json");
+            if user_cfg.exists() {
+                user_cfg
+            } else if let Some(rp) = resource_path {
+                let res_cfg = rp.join("Config.json");
+                if res_cfg.exists() { res_cfg } else { user_cfg }
+            } else {
+                user_cfg
+            }
+        };
+
+        // 从文件系统读取用于回退和首轮迁移
         let fs_config: Option<serde_json::Value> = if config_path.exists() {
-            std::fs::read_to_string(&config_path).ok()
+            std::fs::read_to_string(&config_path)
+                .ok()
                 .and_then(|s| serde_json::from_str(&s).ok())
         } else {
             None
         };
 
-        // game_id = LogicName || GamePreset || 文件夹名
-        let game_id = fs_config.as_ref()
-            .and_then(|v| v.get("LogicName").or_else(|| v.get("GamePreset")))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| folder_name.clone());
-
-        all_dir_names.push(game_id.clone());
-        let is_hidden = hidden_games.contains(&game_id);
-
         // 优先从 SQLite 读取（用户修改保存在此），回退到文件系统 Config.json
         let mut bg_type = "Image".to_string();
         let mut display_name = String::new();
-
-        let config_data: Option<serde_json::Value> = crate::configs::database::get_game_config(&game_id)
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .or_else(|| fs_config.clone());
+        let config_data: Option<serde_json::Value> =
+            crate::configs::database::get_game_config(&game_id)
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .or_else(|| fs_config.clone());
 
         if let Some(data) = &config_data {
-            if let Some(bt) = data.get("basic")
+            if let Some(bt) = data
+                .get("basic")
                 .and_then(|b| b.get("backgroundType"))
                 .and_then(|v| v.as_str())
             {
                 bg_type = bt.to_string();
             }
-            if let Some(dn) = data.get("DisplayName")
-                .and_then(|v| v.as_str())
-            {
+            if let Some(dn) = data.get("DisplayName").and_then(|v| v.as_str()) {
                 display_name = dn.to_string();
             }
         }
@@ -106,8 +176,7 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
         }
 
         // Find background image (png, jpg, webp)
-        let bg_path = find_background_image(&game_path)
-            .unwrap_or_default();
+        let bg_path = find_background_image(&game_path).unwrap_or_default();
 
         // Find background video (mp4, webm)
         let bg_video_path = find_background_video(&game_path);
@@ -132,7 +201,7 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
     // 同步 SQLite：仅清理已不存在的游戏配置
     let db_names = crate::configs::database::list_game_names();
     for db_name in &db_names {
-        if !all_dir_names.contains(db_name) {
+        if !all_dir_names.contains(db_name.as_str()) {
             crate::configs::database::delete_game_config(db_name);
             info!("已清理过期游戏配置: {}", db_name);
         }
@@ -168,7 +237,8 @@ pub fn set_game_visibility(
     game_name: String,
     hidden: bool,
 ) -> Result<(), String> {
-    let games_dir = get_games_dir(&app)?;
+    let _ = app;
+    let games_dir = get_user_games_dir()?;
     let hidden_path = games_dir.join("hidden_games.json");
 
     let mut hidden_games = load_hidden_games(&games_dir);
@@ -189,14 +259,20 @@ pub fn set_game_visibility(
     Ok(())
 }
 
-fn get_games_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+fn get_user_games_dir() -> Result<PathBuf, String> {
+    let games_dir = crate::utils::file_manager::get_global_games_dir();
+    crate::utils::file_manager::ensure_dir(&games_dir)?;
+    Ok(games_dir)
+}
+
+fn get_resource_games_dir(app: &tauri::AppHandle) -> Result<Option<PathBuf>, String> {
     let resource_dir = app
         .path()
         .resource_dir()
         .map_err(|e| format!("Failed to get resource dir: {}", e))?;
     let prod_path = resource_dir.join("resources").join("Games");
     if prod_path.exists() {
-        return Ok(prod_path);
+        return Ok(Some(prod_path));
     }
 
     // 开发模式回退
@@ -204,10 +280,10 @@ fn get_games_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .join("resources")
         .join("Games");
     if dev_path.exists() {
-        return Ok(dev_path);
+        return Ok(Some(dev_path));
     }
 
-    Ok(prod_path)
+    Ok(None)
 }
 
 // ============================================================
@@ -252,10 +328,11 @@ pub fn list_game_templates(app: tauri::AppHandle) -> Result<Vec<GameTemplateInfo
         return Ok(Vec::new());
     }
 
-    let games_dir = get_games_dir(&app)?;
+    let _ = app;
+    let games_dir = get_user_games_dir()?;
 
-    let entries = std::fs::read_dir(&templates_dir)
-        .map_err(|e| format!("读取模板目录失败: {}", e))?;
+    let entries =
+        std::fs::read_dir(&templates_dir).map_err(|e| format!("读取模板目录失败: {}", e))?;
 
     let mut templates = Vec::new();
     for entry in entries.flatten() {
@@ -277,14 +354,20 @@ pub fn list_game_templates(app: tauri::AppHandle) -> Result<Vec<GameTemplateInfo
             .and_then(|s| serde_json::from_str(&s).ok());
 
         // gameId = LogicName || GamePreset || 文件夹名
-        let game_id = config_data.as_ref()
+        let game_id = config_data
+            .as_ref()
             .and_then(|v| v.get("LogicName").or_else(|| v.get("GamePreset")))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| name.clone());
 
-        let display_name = config_data.as_ref()
-            .and_then(|v| v.get("DisplayName").and_then(|d| d.as_str()).map(|s| s.to_string()))
+        let display_name = config_data
+            .as_ref()
+            .and_then(|v| {
+                v.get("DisplayName")
+                    .and_then(|d| d.as_str())
+                    .map(|s| s.to_string())
+            })
             .unwrap_or_else(|| get_chinese_display_name(&game_id).to_string());
 
         // 用 gameId 检查 Games 目录下是否已存在
@@ -310,7 +393,10 @@ pub fn list_game_templates(app: tauri::AppHandle) -> Result<Vec<GameTemplateInfo
 }
 
 /// 根据 LogicName 在 Games 目录中查找匹配的游戏文件夹
-fn find_game_dir_by_logic_name(games_dir: &std::path::Path, target_id: &str) -> Option<std::path::PathBuf> {
+fn find_game_dir_by_logic_name(
+    games_dir: &std::path::Path,
+    target_id: &str,
+) -> Option<std::path::PathBuf> {
     // 1. 直接匹配文件夹名
     let direct = games_dir.join(target_id);
     if direct.exists() {
@@ -319,12 +405,17 @@ fn find_game_dir_by_logic_name(games_dir: &std::path::Path, target_id: &str) -> 
     // 2. 扫描所有子文件夹的 Config.json
     if let Ok(entries) = std::fs::read_dir(games_dir) {
         for entry in entries.flatten() {
-            if !entry.path().is_dir() { continue; }
+            if !entry.path().is_dir() {
+                continue;
+            }
             let config = entry.path().join("Config.json");
-            if !config.exists() { continue; }
+            if !config.exists() {
+                continue;
+            }
             if let Ok(content) = std::fs::read_to_string(&config) {
                 if let Ok(data) = serde_json::from_str::<serde_json::Value>(&content) {
-                    let ln = data.get("LogicName")
+                    let ln = data
+                        .get("LogicName")
                         .or_else(|| data.get("GamePreset"))
                         .and_then(|v| v.as_str());
                     if ln == Some(target_id) {
@@ -355,10 +446,16 @@ pub fn import_game_template(
     let game_id = std::fs::read_to_string(&config_path)
         .ok()
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|v| v.get("LogicName").or_else(|| v.get("GamePreset")).and_then(|x| x.as_str()).map(|s| s.to_string()))
+        .and_then(|v| {
+            v.get("LogicName")
+                .or_else(|| v.get("GamePreset"))
+                .and_then(|x| x.as_str())
+                .map(|s| s.to_string())
+        })
         .unwrap_or_else(|| template_name.clone());
 
-    let games_dir = get_games_dir(&app)?;
+    let _ = app;
+    let games_dir = get_user_games_dir()?;
 
     // 查找已存在的同 LogicName 游戏文件夹（可能是英文名或旧代码名）
     let existing_dir = find_game_dir_by_logic_name(&games_dir, &game_id);
@@ -369,8 +466,7 @@ pub fn import_game_template(
 
     // 覆盖时删除旧目录
     if let Some(ref old_dir) = existing_dir {
-        std::fs::remove_dir_all(old_dir)
-            .map_err(|e| format!("删除旧游戏目录失败: {}", e))?;
+        std::fs::remove_dir_all(old_dir).map_err(|e| format!("删除旧游戏目录失败: {}", e))?;
     }
 
     // 目标目录：使用模板的英文文件夹名
@@ -379,24 +475,30 @@ pub fn import_game_template(
     // 递归复制模板目录
     copy_dir_recursive(&template_dir, &target_dir)?;
 
-    info!("已导入游戏配置模板: {} ({}) -> {}", template_name, game_id, target_dir.display());
+    info!(
+        "已导入游戏配置模板: {} ({}) -> {}",
+        template_name,
+        game_id,
+        target_dir.display()
+    );
     Ok(())
 }
 
 /// 递归复制目录
 fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
-    std::fs::create_dir_all(dst)
-        .map_err(|e| format!("创建目录失败: {}", e))?;
+    std::fs::create_dir_all(dst).map_err(|e| format!("创建目录失败: {}", e))?;
 
-    for entry in std::fs::read_dir(src).map_err(|e| format!("读取目录失败: {}", e))?.flatten() {
+    for entry in std::fs::read_dir(src)
+        .map_err(|e| format!("读取目录失败: {}", e))?
+        .flatten()
+    {
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
 
         if src_path.is_dir() {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else {
-            std::fs::copy(&src_path, &dst_path)
-                .map_err(|e| format!("复制文件失败: {}", e))?;
+            std::fs::copy(&src_path, &dst_path).map_err(|e| format!("复制文件失败: {}", e))?;
         }
     }
     Ok(())

@@ -39,12 +39,9 @@ pub async fn download_with_resume(
     let temp_path = file_path.with_extension(
         format!(
             "{}.temp",
-            file_path
-                .extension()
-                .unwrap_or_default()
-                .to_string_lossy()
+            file_path.extension().unwrap_or_default().to_string_lossy()
         )
-        .trim_start_matches('.')
+        .trim_start_matches('.'),
     );
 
     // Check how much we already have in temp file
@@ -56,9 +53,7 @@ pub async fn download_with_resume(
     }
 
     // Build request with Range header for resume
-    let mut req = client
-        .get(url)
-        .header("User-Agent", "Mozilla/5.0");
+    let mut req = client.get(url).header("User-Agent", "Mozilla/5.0");
 
     if downloaded_bytes > 0 {
         req = req.header("Range", format!("bytes={}-", downloaded_bytes));
@@ -140,11 +135,7 @@ pub async fn download_with_resume(
 }
 
 /// Simple non-resumable download for small files (tools, etc.)
-pub async fn download_simple(
-    client: &Client,
-    url: &str,
-    dest: &Path,
-) -> Result<(), String> {
+pub async fn download_simple(client: &Client, url: &str, dest: &Path) -> Result<(), String> {
     info!("Downloading {} -> {}", url, dest.display());
 
     if let Some(parent) = dest.parent() {

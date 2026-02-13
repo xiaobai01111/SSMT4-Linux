@@ -39,19 +39,85 @@ const gamePreset = ref('');
 const isSupported = ref(false);
 const statusMsg = ref('');
 
-// 已知游戏的 launcher API 配置（前端硬编码，无需后端命令）
-const KNOWN_LAUNCHER_APIS: Record<string, { launcherApi: string; defaultFolder: string }> = {
+// 语言包选择
+interface AudioLangOption {
+  code: string;
+  label: string;
+}
+const availableLanguages = ref<AudioLangOption[]>([]);
+const selectedLanguages = ref<string[]>([]);
+
+// 服务器选择
+interface ServerOption {
+  id: string;
+  label: string;
+  launcherApi: string;
+  bizPrefix: string;
+}
+const availableServers = ref<ServerOption[]>([]);
+const selectedServer = ref<ServerOption | null>(null);
+
+// HoYoverse 四语言包
+const HOYO_AUDIO_LANGS: AudioLangOption[] = [
+  { code: 'zh-cn', label: '中文' },
+  { code: 'en-us', label: 'English' },
+  { code: 'ja-jp', label: '日本語' },
+  { code: 'ko-kr', label: '한국어' },
+];
+
+// 已知游戏的 launcher API 配置
+interface LauncherApiConfig {
+  defaultFolder: string;
+  servers: ServerOption[];
+  audioLanguages?: AudioLangOption[];
+}
+const KNOWN_LAUNCHER_APIS: Record<string, LauncherApiConfig> = {
   'WWMI': {
-    launcherApi: 'https://prod-cn-alicdn-gamestarter.kurogame.com/launcher/game/G152/10003_Y8xXrXk65DqFHEDgApn3cpK5lfczpFx5/index.json',
     defaultFolder: 'Wuthering Waves Game',
+    servers: [
+      { id: 'cn', label: '国服', launcherApi: 'https://prod-cn-alicdn-gamestarter.kurogame.com/launcher/game/G152/10003_Y8xXrXk65DqFHEDgApn3cpK5lfczpFx5/index.json', bizPrefix: '' },
+      { id: 'global', label: '国际服', launcherApi: 'https://prod-alicdn-gamestarter.kurogame.com/launcher/game/G153/50004_obOHXFrFanqsaIEOmuKroCcbZkQRBC7c/index.json', bizPrefix: '' },
+    ],
   },
   'WuWa': {
-    launcherApi: 'https://prod-cn-alicdn-gamestarter.kurogame.com/launcher/game/G152/10003_Y8xXrXk65DqFHEDgApn3cpK5lfczpFx5/index.json',
     defaultFolder: 'Wuthering Waves Game',
+    servers: [
+      { id: 'cn', label: '国服', launcherApi: 'https://prod-cn-alicdn-gamestarter.kurogame.com/launcher/game/G152/10003_Y8xXrXk65DqFHEDgApn3cpK5lfczpFx5/index.json', bizPrefix: '' },
+      { id: 'global', label: '国际服', launcherApi: 'https://prod-alicdn-gamestarter.kurogame.com/launcher/game/G153/50004_obOHXFrFanqsaIEOmuKroCcbZkQRBC7c/index.json', bizPrefix: '' },
+    ],
   },
   'SRMI': {
-    launcherApi: 'https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1',
     defaultFolder: 'StarRail',
+    servers: [
+      { id: 'cn', label: '国服', launcherApi: 'https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1', bizPrefix: 'hkrpg_' },
+      { id: 'global', label: '国际服', launcherApi: 'https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8', bizPrefix: 'hkrpg_' },
+    ],
+    audioLanguages: HOYO_AUDIO_LANGS,
+  },
+  'ZZMI': {
+    defaultFolder: 'ZenlessZoneZero',
+    servers: [
+      { id: 'cn', label: '国服', launcherApi: 'https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1', bizPrefix: 'nap_' },
+      { id: 'global', label: '国际服', launcherApi: 'https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8', bizPrefix: 'nap_' },
+    ],
+    audioLanguages: HOYO_AUDIO_LANGS,
+  },
+  'GIMI': {
+    defaultFolder: 'GenshinImpact',
+    servers: [
+      { id: 'cn', label: '国服', launcherApi: 'https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1', bizPrefix: 'hk4e_' },
+      { id: 'global', label: '国际服', launcherApi: 'https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8', bizPrefix: 'hk4e_' },
+    ],
+    audioLanguages: HOYO_AUDIO_LANGS,
+  },
+  'HIMI': {
+    defaultFolder: 'HonkaiImpact3rd',
+    servers: [
+      { id: 'cn', label: '国服', launcherApi: 'https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1', bizPrefix: 'bh3_' },
+      { id: 'global', label: '国际服', launcherApi: 'https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8', bizPrefix: 'bh3_' },
+      { id: 'sea', label: '东南亚服', launcherApi: 'https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8', bizPrefix: 'bh3_' },
+      { id: 'tw', label: '台服', launcherApi: 'https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8', bizPrefix: 'bh3_' },
+    ],
   },
 };
 
@@ -82,19 +148,31 @@ const loadState = async () => {
   gamePreset.value = preset;
   console.log('[GameDownload] gameName =', props.gameName, ', preset =', preset);
 
-  // 2. 检测是否支持自动下载：先用 preset 匹配，再用 gameName 匹配
+  // 2. 检测是否支持自动下载
   const knownApi = KNOWN_LAUNCHER_APIS[preset] || KNOWN_LAUNCHER_APIS[props.gameName];
   isSupported.value = !!knownApi;
-  console.log('[GameDownload] isSupported =', isSupported.value, ', knownApi =', knownApi);
+
+  // 设置可用服务器列表
+  availableServers.value = knownApi?.servers || [];
+  if (availableServers.value.length > 0 && !selectedServer.value) {
+    selectedServer.value = availableServers.value[0]; // 默认选择第一个（国服）
+  }
+
+  // 设置可用语言包
+  availableLanguages.value = knownApi?.audioLanguages || [];
+  if (availableLanguages.value.length > 0 && selectedLanguages.value.length === 0) {
+    selectedLanguages.value = ['zh-cn']; // 国服默认中文
+  }
+  console.log('[GameDownload] isSupported =', isSupported.value, ', servers =', availableServers.value.length);
 
   if (!knownApi) {
     statusMsg.value = '';
     return;
   }
 
-  // 3. 自动填充 launcher API（不覆盖已保存的值）
-  if (!launcherApi.value) {
-    launcherApi.value = knownApi.launcherApi;
+  // 3. 自动填充 launcher API（从当前选中的服务器获取）
+  if (!launcherApi.value && selectedServer.value) {
+    launcherApi.value = selectedServer.value.launcherApi;
   }
 
   // 4. 始终从后端获取最新默认目录（跟随 dataDir 变化）
@@ -125,6 +203,13 @@ const loadState = async () => {
   }
 };
 
+const onServerChange = async (server: ServerOption) => {
+  selectedServer.value = server;
+  launcherApi.value = server.launcherApi;
+  gameState.value = null;
+  await checkState();
+};
+
 const checkState = async () => {
   if (!launcherApi.value || !gameFolder.value) {
     error.value = '请先配置启动器 API 和游戏安装目录';
@@ -134,7 +219,8 @@ const checkState = async () => {
   error.value = '';
   statusMsg.value = '正在检查游戏状态...';
   try {
-    gameState.value = await getGameState(launcherApi.value, gameFolder.value);
+    const biz = selectedServer.value?.bizPrefix || undefined;
+    gameState.value = await getGameState(launcherApi.value, gameFolder.value, biz);
     statusMsg.value = '';
   } catch (e: any) {
     error.value = `检查状态失败: ${e}`;
@@ -150,16 +236,22 @@ const startDownload = async () => {
   error.value = '';
   progress.value = null;
 
-  // 监听下载进度事件
-  const unlisten = await listenEvent('game-download-progress', (event: any) => {
+  // 兼容旧/新事件名：下载与更新都走同一进度条。
+  const onProgress = (event: any) => {
     progress.value = event.payload;
-  });
+  };
+  const progressEvent = gameState.value?.state === 'needupdate'
+    ? 'game-update-progress'
+    : 'game-download-progress';
+  const unlistenProgress = await listenEvent(progressEvent, onProgress);
 
   try {
+    const langs = selectedLanguages.value.length > 0 ? selectedLanguages.value : undefined;
+    const biz = selectedServer.value?.bizPrefix || undefined;
     if (gameState.value?.state === 'needupdate') {
-      await apiUpdateGame(launcherApi.value, gameFolder.value);
+      await apiUpdateGame(launcherApi.value, gameFolder.value, langs, biz);
     } else {
-      await apiDownloadGame(launcherApi.value, gameFolder.value);
+      await apiDownloadGame(launcherApi.value, gameFolder.value, langs, biz);
     }
     // 下载完成后保存配置
     await saveDownloadConfig();
@@ -174,7 +266,7 @@ const startDownload = async () => {
     }
   } finally {
     isDownloading.value = false;
-    unlisten();
+    unlistenProgress();
   }
 };
 
@@ -188,7 +280,8 @@ const startVerify = async () => {
   });
 
   try {
-    const result = await apiVerifyGameFiles(launcherApi.value, gameFolder.value);
+    const biz = selectedServer.value?.bizPrefix || undefined;
+    const result = await apiVerifyGameFiles(launcherApi.value, gameFolder.value, biz);
     if (result.failed.length > 0) {
       error.value = `校验完成，但有 ${result.failed.length} 个文件仍然异常`;
     } else {
@@ -349,6 +442,22 @@ watch(() => props.modelValue, (val) => {
 
           <!-- ========== 支持自动下载的游戏 (鸣潮) ========== -->
           <template v-if="isSupported">
+            <!-- 服务器选择 -->
+            <div v-if="availableServers.length > 1 && !isWorking" class="server-section">
+              <label class="server-label">服务器</label>
+              <div class="server-options">
+                <button
+                  v-for="srv in availableServers"
+                  :key="srv.id"
+                  class="server-btn"
+                  :class="{ active: selectedServer?.id === srv.id }"
+                  @click="onServerChange(srv)"
+                >
+                  {{ srv.label }}
+                </button>
+              </div>
+            </div>
+
             <!-- 游戏状态卡片 -->
             <div v-if="gameState" class="state-card" :class="stateClass">
               <div class="state-label">{{ stateLabel }}</div>
@@ -371,6 +480,28 @@ watch(() => props.modelValue, (val) => {
                 </button>
               </div>
               <p class="install-dir-hint">游戏文件将下载到此目录，请确保有足够磁盘空间（约 30GB+）</p>
+            </div>
+
+            <!-- 语言包选择 -->
+            <div v-if="availableLanguages.length > 0 && !isWorking" class="lang-section">
+              <label class="lang-label">语音包（可多选）</label>
+              <div class="lang-options">
+                <label
+                  v-for="lang in availableLanguages"
+                  :key="lang.code"
+                  class="lang-checkbox"
+                >
+                  <input
+                    type="checkbox"
+                    :value="lang.code"
+                    v-model="selectedLanguages"
+                  />
+                  <span class="lang-name">{{ lang.label }}</span>
+                </label>
+              </div>
+              <p class="lang-hint" v-if="selectedLanguages.length === 0">
+                ⚠ 未选择任何语音包，游戏将没有角色语音
+              </p>
             </div>
 
             <!-- 下载/更新按钮 -->
@@ -496,6 +627,24 @@ watch(() => props.modelValue, (val) => {
 }
 @keyframes pulse { 0%,100% { opacity:0.5; } 50% { opacity:1; } }
 
+/* 服务器选择 */
+.server-section { margin-bottom:16px; }
+.server-label {
+  display:block; font-size:13px; font-weight:500;
+  color:rgba(255,255,255,0.7); margin-bottom:8px;
+}
+.server-options { display:flex; gap:8px; }
+.server-btn {
+  padding:6px 16px; border:1px solid rgba(255,255,255,0.12); border-radius:6px;
+  background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.7);
+  font-size:13px; cursor:pointer; transition:all 0.2s;
+}
+.server-btn:hover { background:rgba(255,255,255,0.1); border-color:rgba(255,255,255,0.2); }
+.server-btn.active {
+  background:rgba(247,206,70,0.15); color:#F7CE46;
+  border-color:rgba(247,206,70,0.4);
+}
+
 /* 状态卡片 */
 .state-card {
   background:rgba(0,0,0,0.25); border:1px solid rgba(255,255,255,0.06);
@@ -526,6 +675,30 @@ watch(() => props.modelValue, (val) => {
 .install-dir-row .icon-btn:hover { color:#fff; }
 .install-dir-hint {
   font-size:11px; color:rgba(255,255,255,0.35); margin-top:6px; line-height:1.4;
+}
+
+/* 语言包选择 */
+.lang-section { margin-bottom:16px; }
+.lang-label {
+  display:block; font-size:13px; font-weight:500;
+  color:rgba(255,255,255,0.7); margin-bottom:8px;
+}
+.lang-options {
+  display:flex; flex-wrap:wrap; gap:8px;
+}
+.lang-checkbox {
+  display:flex; align-items:center; gap:6px;
+  padding:6px 12px; border-radius:6px;
+  background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.08);
+  cursor:pointer; transition:all 0.2s; user-select:none;
+}
+.lang-checkbox:hover { background:rgba(255,255,255,0.1); border-color:rgba(255,255,255,0.15); }
+.lang-checkbox input[type="checkbox"] {
+  accent-color:#F7CE46; width:14px; height:14px; cursor:pointer;
+}
+.lang-name { font-size:13px; color:rgba(255,255,255,0.85); }
+.lang-hint {
+  font-size:11px; color:#f0a030; margin-top:6px; line-height:1.4;
 }
 
 /* 主要操作按钮 */
