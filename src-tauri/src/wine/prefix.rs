@@ -3,7 +3,22 @@ use crate::utils::file_manager;
 use std::path::{Path, PathBuf};
 use tracing::info;
 
+/// 从数据库的游戏配置中解析游戏根目录（gameFolder 的父目录）
+fn resolve_game_root_from_db(game_id: &str) -> Option<PathBuf> {
+    let config_json = crate::configs::database::get_game_config(game_id)?;
+    let data: serde_json::Value = serde_json::from_str(&config_json).ok()?;
+    let game_folder = data.pointer("/other/gameFolder")?.as_str()?;
+    let game_folder_path = PathBuf::from(game_folder);
+    // gameFolder 是游戏文件目录（如 .../SRMI/StarRail），取其父目录作为游戏根目录
+    game_folder_path.parent().map(|p| p.to_path_buf())
+}
+
 pub fn get_prefix_dir(game_id: &str) -> PathBuf {
+    // 优先使用游戏安装目录下的 prefix/
+    if let Some(game_root) = resolve_game_root_from_db(game_id) {
+        return game_root.join("prefix");
+    }
+    // 回退到旧位置 (~/.config/ssmt4/prefixes/{game_id})
     file_manager::get_prefixes_dir().join(game_id)
 }
 

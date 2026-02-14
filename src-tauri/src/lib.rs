@@ -371,6 +371,13 @@ pub fn run() {
             commands::game_downloader::get_local_version,
             commands::game_downloader::get_game_launcher_api,
             commands::game_downloader::get_default_game_folder,
+            // Jadeite 反作弊补丁
+            commands::jadeite::get_jadeite_status,
+            commands::jadeite::install_jadeite,
+            // 日志查看器
+            commands::log_viewer::get_log_dir,
+            commands::log_viewer::read_log_file,
+            commands::log_viewer::open_log_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

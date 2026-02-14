@@ -66,8 +66,20 @@ pub async fn start_game(
         ));
     }
 
-    // Load prefix config
-    let prefix_config = prefix::load_prefix_config(&game_name)?;
+    // Load prefix config（不存在则自动创建）
+    let prefix_config = match prefix::load_prefix_config(&game_name) {
+        Ok(cfg) => cfg,
+        Err(_) => {
+            use crate::configs::wine_config::PrefixConfig;
+            let cfg = PrefixConfig {
+                wine_version_id: wine_version_id.clone(),
+                ..Default::default()
+            };
+            prefix::create_prefix(&game_name, &cfg)?;
+            info!("自动创建了 prefix: {}", prefix::get_prefix_dir(&game_name).display());
+            cfg
+        }
+    };
     let prefix_dir = prefix::get_prefix_dir(&game_name);
     let pfx_dir = prefix::get_prefix_pfx_dir(&game_name);
 
@@ -101,11 +113,14 @@ pub async fn start_game(
         );
     }
 
-    // Steam App ID
-    if settings.steam_app_id != "0" && !settings.steam_app_id.is_empty() {
-        env.insert("SteamAppId".to_string(), settings.steam_app_id.clone());
-        env.insert("SteamGameId".to_string(), settings.steam_app_id.clone());
-    }
+    // Steam App ID（始终设置，避免 ProtonFixes 解析路径时 IndexError）
+    let app_id = if settings.steam_app_id.is_empty() || settings.steam_app_id == "0" {
+        "0".to_string()
+    } else {
+        settings.steam_app_id.clone()
+    };
+    env.insert("SteamAppId".to_string(), app_id.clone());
+    env.insert("SteamGameId".to_string(), app_id);
 
     // Proton feature flags
     if settings.proton_media_use_gst {
@@ -134,6 +149,28 @@ pub async fn start_game(
         env.insert(key.clone(), value.clone());
     }
 
+    // 检测 jadeite 补丁（HoYoverse 游戏反作弊包装器）
+    let is_hoyoverse = matches!(game_preset.as_str(), "GIMI" | "SRMI" | "ZZMI" | "HIMI");
+    let jadeite_exe = if is_hoyoverse {
+        let game_root = game_exe.parent().and_then(|p| p.parent());
+        game_root.map(|r| r.join("patch").join("jadeite.exe")).filter(|p| p.exists())
+    } else {
+        None
+    };
+
+    // 实际要运行的可执行文件（有 jadeite 则用 jadeite 包装）
+    // 参考 the-honkers-railway-launcher：jadeite.exe 需要 Windows 路径格式（Z:\...）
+    let (run_exe, extra_args) = if let Some(ref jade) = jadeite_exe {
+        info!("使用 jadeite 反作弊补丁: {}", jade.display());
+        let win_game_path = format!("Z:{}", game_exe.to_string_lossy().replace('/', "\\"));
+        (jade.clone(), vec![win_game_path, "--".to_string()])
+    } else {
+        if is_hoyoverse {
+            warn!("未找到 jadeite.exe，HoYoverse 游戏可能因反作弊而无法启动");
+        }
+        (game_exe.clone(), vec![])
+    };
+
     // Build command based on pressure-vessel support
     let (base_program, base_args) = if settings.use_pressure_vessel {
         if let Some(runtime_dir) = detector::find_steam_linux_runtime() {
@@ -142,24 +179,23 @@ pub async fn start_game(
                 "Launching with pressure-vessel: {} -> {} -> {}",
                 entry_point.display(),
                 proton_path.display(),
-                game_exe.display()
+                run_exe.display()
             );
-            (
-                entry_point,
-                vec![
-                    "--verb=waitforexitandrun".to_string(),
-                    "--".to_string(),
-                    proton_path.to_string_lossy().to_string(),
-                    "waitforexitandrun".to_string(),
-                    game_exe.to_string_lossy().to_string(),
-                ],
-            )
+            let mut args = vec![
+                "--verb=waitforexitandrun".to_string(),
+                "--".to_string(),
+                proton_path.to_string_lossy().to_string(),
+                "waitforexitandrun".to_string(),
+                run_exe.to_string_lossy().to_string(),
+            ];
+            args.extend(extra_args);
+            (entry_point, args)
         } else {
             warn!("SteamLinuxRuntime not found, falling back to direct proton launch");
-            build_direct_proton_command_spec(proton_path, &game_exe)
+            build_direct_proton_command_spec_with_args(proton_path, &run_exe, &extra_args)
         }
     } else {
-        build_direct_proton_command_spec(proton_path, &game_exe)
+        build_direct_proton_command_spec_with_args(proton_path, &run_exe, &extra_args)
     };
 
     let mut cmd = if settings.sandbox_enabled {
@@ -222,19 +258,19 @@ pub async fn start_game(
     Ok(format!("Game launched (PID: {})", pid))
 }
 
-fn build_direct_proton_command_spec(proton_path: &Path, game_exe: &Path) -> (PathBuf, Vec<String>) {
+fn build_direct_proton_command_spec_with_args(proton_path: &Path, run_exe: &Path, extra_args: &[String]) -> (PathBuf, Vec<String>) {
     info!(
-        "Launching with direct proton: {} waitforexitandrun {}",
+        "Launching with direct proton: {} waitforexitandrun {} {:?}",
         proton_path.display(),
-        game_exe.display()
+        run_exe.display(),
+        extra_args
     );
-    (
-        proton_path.to_path_buf(),
-        vec![
-            "waitforexitandrun".to_string(),
-            game_exe.to_string_lossy().to_string(),
-        ],
-    )
+    let mut args = vec![
+        "waitforexitandrun".to_string(),
+        run_exe.to_string_lossy().to_string(),
+    ];
+    args.extend_from_slice(extra_args);
+    (proton_path.to_path_buf(), args)
 }
 
 fn build_bwrap_command(

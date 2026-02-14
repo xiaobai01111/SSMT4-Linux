@@ -697,3 +697,37 @@ export async function listenEvent(
 ): Promise<() => void> {
   return listen(event, callback);
 }
+
+// ============================================================
+// Jadeite 反作弊补丁
+// ============================================================
+
+export interface JadeiteStatus {
+  installed: boolean;
+  localVersion: string | null;
+  patchDir: string;
+}
+
+export async function getJadeiteStatus(gameName: string): Promise<JadeiteStatus> {
+  return invoke<JadeiteStatus>('get_jadeite_status', { gameName });
+}
+
+export async function installJadeite(gameName: string): Promise<string> {
+  return invoke<string>('install_jadeite', { gameName });
+}
+
+// ============================================================
+// 日志查看器
+// ============================================================
+
+export async function getLogDir(): Promise<string> {
+  return invoke<string>('get_log_dir');
+}
+
+export async function readLogFile(maxLines?: number): Promise<string> {
+  return invoke<string>('read_log_file', { maxLines: maxLines ?? null });
+}
+
+export async function openLogWindow(): Promise<void> {
+  return invoke('open_log_window');
+}

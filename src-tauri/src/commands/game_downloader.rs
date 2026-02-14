@@ -130,6 +130,7 @@ pub async fn download_game(
         let game_pkg = hoyoverse::fetch_game_packages(&launcher_api, biz).await?;
         hoyoverse_download::download_game(app, &game_pkg, &game_path, &langs, CANCEL_TOKEN.clone())
             .await?;
+        write_local_version(&game_path, &game_pkg.main.major.version)?;
         info!("HoYoverse full download completed for {}", game_folder);
         return Ok(());
     }
@@ -196,6 +197,7 @@ pub async fn update_game(
             CANCEL_TOKEN.clone(),
         )
         .await?;
+        write_local_version(&game_path, &game_pkg.main.major.version)?;
         info!("HoYoverse update completed for {}", game_folder);
         return Ok(());
     }

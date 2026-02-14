@@ -1,0 +1,9 @@
+[Desktop Entry]
+Categories=Game;
+Comment=SSMT4 - 3Dmigoto Toolbox for Linux
+Exec=SSMT4-linux
+StartupWMClass=SSMT4-linux
+Icon=SSMT4-linux
+Name=SSMT4
+Terminal=false
+Type=Application

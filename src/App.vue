@@ -104,58 +104,66 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <!-- Custom Title Bar -->
-  <TitleBar>
-  </TitleBar>
+  <!-- 日志查看器独立窗口：无 TitleBar、无背景层 -->
+  <template v-if="route.path === '/log-viewer'">
+    <router-view />
+  </template>
 
-  <!-- Background Layer -->
-  <div class="bg-layer">
-    <transition-group name="bg-trans">
-      <!-- Image Background -->
-      <div 
-        v-if="appSettings.bgType === BGType.Image && appSettings.bgImage"
-        :key="appSettings.bgImage"
-        class="bg-item"
-        :style="{ backgroundImage: `url(${appSettings.bgImage})` }"
-      ></div>
+  <!-- 主应用布局 -->
+  <template v-else>
+    <!-- Custom Title Bar -->
+    <TitleBar>
+    </TitleBar>
 
-      <!-- Video Background -->
-      <video 
-        v-if="appSettings.bgType === BGType.Video && appSettings.bgVideo" 
-        :key="appSettings.bgVideo"
-        :src="appSettings.bgVideo"
-        autoplay loop muted playsinline 
-        class="bg-item"
-        @error="(e: Event) => console.error('[BG] Video error:', (e.target as HTMLVideoElement)?.error)"
-        @loadeddata="(e: Event) => { console.log('[BG] Video loaded OK'); const v = e.target as HTMLVideoElement; v.play().catch(err => console.error('[BG] Play failed:', err)); }"
-      ></video>
-    </transition-group>
-  </div>
-  
-  <!-- Home & Websites & Settings Ambient Shadow Layer -->
-  <div class="home-shadow-layer" v-if="route.path === '/' || route.path === '/websites'"></div>
+    <!-- Background Layer -->
+    <div class="bg-layer">
+      <transition-group name="bg-trans">
+        <!-- Image Background -->
+        <div 
+          v-if="appSettings.bgType === BGType.Image && appSettings.bgImage"
+          :key="appSettings.bgImage"
+          class="bg-item"
+          :style="{ backgroundImage: `url(${appSettings.bgImage})` }"
+        ></div>
 
-  <!-- Global Mask Layer for Game Library Page -->
-  <transition name="fade">
-    <div v-if="route.path === '/games' || route.path === '/settings' || route.path === '/mods'" class="global-dim-layer"></div>
-  </transition>
-
-  <el-config-provider>
-    <div class="app-container">
-      <main class="app-main" :style="{
-        '--content-bg-opacity': appSettings.contentOpacity,
-        '--content-blur': `${appSettings.contentBlur}px`
-      }">
-        <div class="content-scroll-wrapper" :class="{ 'no-scroll': route.path === '/' }">
-          <router-view v-slot="{ Component }">
-            <transition name="page-blur" mode="out-in">
-              <component :is="Component" />
-            </transition>
-          </router-view>
-        </div>
-      </main>
+        <!-- Video Background -->
+        <video 
+          v-if="appSettings.bgType === BGType.Video && appSettings.bgVideo" 
+          :key="appSettings.bgVideo"
+          :src="appSettings.bgVideo"
+          autoplay loop muted playsinline 
+          class="bg-item"
+          @error="(e: Event) => console.error('[BG] Video error:', (e.target as HTMLVideoElement)?.error)"
+          @loadeddata="(e: Event) => { console.log('[BG] Video loaded OK'); const v = e.target as HTMLVideoElement; v.play().catch(err => console.error('[BG] Play failed:', err)); }"
+        ></video>
+      </transition-group>
     </div>
-  </el-config-provider>
+    
+    <!-- Home & Websites & Settings Ambient Shadow Layer -->
+    <div class="home-shadow-layer" v-if="route.path === '/' || route.path === '/websites'"></div>
+
+    <!-- Global Mask Layer for Game Library Page -->
+    <transition name="fade">
+      <div v-if="route.path === '/games' || route.path === '/settings' || route.path === '/mods'" class="global-dim-layer"></div>
+    </transition>
+
+    <el-config-provider>
+      <div class="app-container">
+        <main class="app-main" :style="{
+          '--content-bg-opacity': appSettings.contentOpacity,
+          '--content-blur': `${appSettings.contentBlur}px`
+        }">
+          <div class="content-scroll-wrapper" :class="{ 'no-scroll': route.path === '/' }">
+            <router-view v-slot="{ Component }">
+              <transition name="page-blur" mode="out-in">
+                <component :is="Component" />
+              </transition>
+            </router-view>
+          </div>
+        </main>
+      </div>
+    </el-config-provider>
+  </template>
 </template>
 
 <style>
