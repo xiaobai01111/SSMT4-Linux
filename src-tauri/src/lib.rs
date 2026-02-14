@@ -352,6 +352,14 @@ pub fn run() {
             commands::wine_manager::open_log_folder,
             commands::wine_manager::list_prefix_templates,
             commands::wine_manager::save_prefix_template,
+            // 遥测防护
+            commands::telemetry::check_telemetry_status,
+            commands::telemetry::check_game_protection_status,
+            commands::telemetry::disable_telemetry,
+            commands::telemetry::restore_telemetry,
+            commands::telemetry::remove_telemetry_files,
+            commands::telemetry::apply_game_protection,
+            commands::telemetry::get_game_protection_info,
             // Game downloader
             commands::game_downloader::get_launcher_info,
             commands::game_downloader::get_game_state,

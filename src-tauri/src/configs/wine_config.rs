@@ -80,6 +80,7 @@ impl Default for Vkd3dConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PrefixConfig {
     pub wine_version_id: String,
     pub arch: WineArch,
@@ -93,6 +94,7 @@ pub struct PrefixConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ProtonSettings {
     pub steam_app_id: String,
     pub use_pressure_vessel: bool,
@@ -101,6 +103,8 @@ pub struct ProtonSettings {
     pub proton_no_d3d12: bool,
     pub mangohud: bool,
     pub steam_deck_compat: bool,
+    pub sandbox_enabled: bool,
+    pub sandbox_isolate_home: bool,
     pub custom_env: HashMap<String, String>,
 }
 
@@ -114,6 +118,8 @@ impl Default for ProtonSettings {
             proton_no_d3d12: false,
             mangohud: false,
             steam_deck_compat: false,
+            sandbox_enabled: false,
+            sandbox_isolate_home: false,
             custom_env: HashMap::new(),
         }
     }

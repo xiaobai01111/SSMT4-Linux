@@ -43,6 +43,10 @@ pub struct AppConfig {
     #[serde(alias = "data_dir")]
     pub data_dir: String,
     pub initialized: bool,
+    #[serde(alias = "tos_risk_acknowledged")]
+    pub tos_risk_acknowledged: bool,
+    #[serde(alias = "snowbreak_source_policy")]
+    pub snowbreak_source_policy: String,
     #[serde(alias = "window_width")]
     pub window_width: f64,
     #[serde(alias = "window_height")]
@@ -77,6 +81,8 @@ impl Default for AppConfig {
             locale: "zhs".to_string(),
             data_dir: String::new(),
             initialized: false,
+            tos_risk_acknowledged: false,
+            snowbreak_source_policy: "official_first".to_string(),
             window_width: 1280.0,
             window_height: 720.0,
             window_x: None,

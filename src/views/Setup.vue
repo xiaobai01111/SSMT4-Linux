@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { appSettings } from '../store';
 import { openFileDialog } from '../api';
 
 const router = useRouter();
-const step = ref(1);
-const selectedDir = ref('');
+const step = ref(appSettings.initialized ? 3 : 1);
+const selectedDir = ref(appSettings.dataDir || '');
+const confirmUnofficial = ref(appSettings.tosRiskAcknowledged);
+const confirmRisk = ref(appSettings.tosRiskAcknowledged);
+
+const canFinish = computed(() => confirmUnofficial.value && confirmRisk.value);
 
 const selectDir = async () => {
   const selected = await openFileDialog({
@@ -21,11 +25,13 @@ const selectDir = async () => {
 
 const useDefault = () => {
   selectedDir.value = '';
-  finish();
+  step.value = 3;
 };
 
 const finish = () => {
+  if (!canFinish.value) return;
   appSettings.dataDir = selectedDir.value;
+  appSettings.tosRiskAcknowledged = true;
   appSettings.initialized = true;
   router.replace('/');
 };
@@ -46,7 +52,7 @@ const finish = () => {
         </div>
         <h1 class="setup-title">欢迎使用 SSMT4</h1>
         <p class="setup-desc">3DMigoto Toolbox for Linux</p>
-        <p class="setup-hint">首次使用需要进行简单配置，只需一步即可完成。</p>
+        <p class="setup-hint">首次使用需要进行简单配置，共两步即可完成。</p>
         <button class="setup-btn primary" @click="step = 2">
           开始配置
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
@@ -92,17 +98,60 @@ const finish = () => {
           </p>
         </div>
 
-        <button
-          class="setup-btn primary finish-btn"
-          @click="finish"
-          v-if="selectedDir"
-        >
-          完成配置，进入 SSMT4
+        <button class="setup-btn primary finish-btn" @click="step = 3">
+          下一步：风险确认
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="20 6 9 17 4 12"/>
+            <polyline points="9 18 15 12 9 6"/>
           </svg>
         </button>
+      </template>
+
+      <!-- Step 3: 风险确认 -->
+      <template v-if="step === 3">
+        <h2 class="setup-title">使用条款与风险确认</h2>
+        <p class="setup-desc">
+          本工具为非官方 Linux 启动器。继续使用前，请阅读并确认以下内容：
+        </p>
+
+        <div class="risk-box">
+          <ul class="setup-list">
+            <li>本工具与游戏厂商无关联，不提供官方担保。</li>
+            <li>在 Wine/Proton 环境运行游戏，可能被反作弊误判。</li>
+            <li>你需要自行承担包括账号处罚在内的潜在风险。</li>
+            <li>请仅在你理解风险且愿意承担后继续。</li>
+          </ul>
+
+          <label class="risk-check">
+            <input v-model="confirmUnofficial" type="checkbox" />
+            我已知晓这是非官方工具
+          </label>
+          <label class="risk-check">
+            <input v-model="confirmRisk" type="checkbox" />
+            我已知晓并愿意自行承担账号风险
+          </label>
+        </div>
+
+        <div class="risk-actions">
+          <button
+            v-if="!appSettings.initialized"
+            class="setup-btn secondary"
+            @click="step = 2"
+          >
+            返回上一步
+          </button>
+          <button
+            class="setup-btn primary"
+            :disabled="!canFinish"
+            @click="finish"
+          >
+            完成配置，进入 SSMT4
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+          </button>
+        </div>
       </template>
     </div>
   </div>
@@ -195,6 +244,31 @@ const finish = () => {
   font-size: 11px;
   margin: 12px 0 0 0;
 }
+.risk-box {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 16px;
+  text-align: left;
+}
+.risk-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 13px;
+  margin-top: 10px;
+}
+.risk-check input {
+  width: 16px;
+  height: 16px;
+}
+.risk-actions {
+  margin-top: 18px;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
 .setup-btn {
   padding: 10px 24px;
   border: none;
@@ -214,6 +288,10 @@ const finish = () => {
 }
 .setup-btn.primary:hover {
   background: rgba(247, 206, 70, 0.3);
+}
+.setup-btn.primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 .setup-btn.secondary {
   background: rgba(255, 255, 255, 0.08);

@@ -54,6 +54,8 @@ export interface AppSettings {
   locale: Locale;  // 我新增
   dataDir: string;
   initialized: boolean;
+  tosRiskAcknowledged: boolean;
+  snowbreakSourcePolicy: 'official_first' | 'community_first';
 }
 
 export interface GameInfo {
@@ -82,6 +84,8 @@ const defaultSettings: AppSettings = {
   locale: 'zhs', // 新增
   dataDir: '',
   initialized: false,
+  tosRiskAcknowledged: false,
+  snowbreakSourcePolicy: 'official_first',
 }
 
 export const appSettings = reactive<AppSettings>({ ...defaultSettings })

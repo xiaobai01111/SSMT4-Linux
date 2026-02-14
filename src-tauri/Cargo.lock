@@ -3,6 +3,43 @@
 version = 4
 
 [[package]]
+name = "SSMT4-linux"
+version = "0.0.1-beta"
+dependencies = [
+ "chrono",
+ "encoding_rs",
+ "flate2",
+ "futures-util",
+ "http",
+ "md-5",
+ "notify",
+ "once_cell",
+ "percent-encoding",
+ "reqwest 0.12.28",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sevenz-rust",
+ "sha2",
+ "tar",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tauri-plugin-opener",
+ "tauri-plugin-shell",
+ "tauri-plugin-single-instance",
+ "tokio",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "trash",
+ "walkdir",
+ "which",
+ "zip",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4239,43 +4276,6 @@ dependencies = [
  "gobject-sys",
  "libc",
  "system-deps",
-]
-
-[[package]]
-name = "ssmt4"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "encoding_rs",
- "flate2",
- "futures-util",
- "http",
- "md-5",
- "notify",
- "once_cell",
- "percent-encoding",
- "reqwest 0.12.28",
- "rusqlite",
- "serde",
- "serde_json",
- "sevenz-rust",
- "sha2",
- "tar",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-fs",
- "tauri-plugin-opener",
- "tauri-plugin-shell",
- "tauri-plugin-single-instance",
- "tokio",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "trash",
- "walkdir",
- "which",
- "zip",
 ]
 
 [[package]]

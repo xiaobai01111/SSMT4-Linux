@@ -22,6 +22,21 @@ SSMT测试与BUG反馈QQ群:1007813216
 
 ---
 
+## Arch Linux (AUR)
+
+Tauri `bundle.targets` 当前不支持 `pacman`，仓库提供了 AUR 打包资产：
+
+- `packaging/aur/ssmt4-git/PKGBUILD`
+- `packaging/aur/ssmt4-git/.SRCINFO`
+
+将以上文件同步到 AUR 仓库（例如 `ssmt4-git`）后，用户可通过：
+
+```bash
+yay -S ssmt4-git
+```
+
+安装。
+
 ## 📈 Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=StarBobis/SSMT4&type=Date)](https://star-history.com/#StarBobis/SSMT4&Date)
@@ -43,4 +58,3 @@ SSMT测试与BUG反馈QQ群:1007813216
 
 感谢以上各位大力赞助的 AI Token 米支持！  
 他们的支持让此项目的开发进度大大加快，特别感谢！
-
