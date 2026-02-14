@@ -12,6 +12,8 @@ import {
   toggleSymlink as apiToggleSymlink,
   check3dmigotoIntegrity,
   startGame as apiStartGame,
+  checkGameProtectionStatus,
+  getGameProtectionInfo,
   joinPath,
 } from '../api'
 import GameSettingsModal from '../components/GameSettingsModal.vue'
@@ -189,6 +191,70 @@ const checkGameExe = async () => {
 // Start Game Logic
 const isLaunching = ref(false);
 
+const ensureRiskAcknowledged = async () => {
+  if (appSettings.tosRiskAcknowledged) return true;
+
+  const accepted = await askConfirm(
+    '本启动器为非官方工具，与游戏厂商无关。\n\n在 Linux/Wine/Proton 环境运行游戏，可能被反作弊误判，存在账号处罚（包括封禁）风险。\n\n是否确认你已理解并愿意自行承担风险？',
+    {
+      title: 'ToS / 封禁风险提示',
+      kind: 'warning',
+      okLabel: '我已理解风险',
+      cancelLabel: '取消',
+    }
+  );
+  if (!accepted) return false;
+
+  const second = await askConfirm(
+    '请再次确认：继续使用即表示你了解这是非官方方案，且可能导致账号风险。',
+    {
+      title: '二次确认',
+      kind: 'warning',
+      okLabel: '确认继续',
+      cancelLabel: '返回',
+    }
+  );
+  if (!second) return false;
+
+  appSettings.tosRiskAcknowledged = true;
+  return true;
+};
+
+const ensureProtectionEnabled = async (gameName: string, gameConfig: any) => {
+  try {
+    const preset = gameConfig?.basic?.gamePreset || gameConfig?.GamePreset || gameName;
+    const info = await getGameProtectionInfo(preset);
+    if (!info?.hasProtections) return true;
+
+    const exePath = String(gameConfig?.other?.gamePath || '').trim();
+    const gameRoot = (() => {
+      if (!exePath) return undefined;
+      const normalized = exePath.replace(/\\/g, '/');
+      const idx = normalized.lastIndexOf('/');
+      return idx > 0 ? normalized.slice(0, idx) : undefined;
+    })();
+
+    const status = await checkGameProtectionStatus(preset, gameRoot);
+    const enabled = !!status?.enabled;
+    if (enabled) return true;
+
+    const missing = Array.isArray(status?.missing) && status.missing.length > 0
+      ? `\n\n未满足项：\n- ${status.missing.join('\n- ')}`
+      : '';
+
+    await showMessage(
+      `未启用应用防护，当前禁止启动游戏。\n请先打开“下载/安装游戏”，点击“应用安全防护”。${missing}`,
+      { title: '需要应用防护', kind: 'warning' }
+    );
+    showDownload.value = true;
+    return false;
+  } catch (e: any) {
+    await showMessage(`无法确认防护状态，已阻止启动：${e}`, { title: '防护检查失败', kind: 'error' });
+    showDownload.value = true;
+    return false;
+  }
+};
+
 const launchGame = async () => {
   if (isLaunching.value) return;
 
@@ -197,10 +263,18 @@ const launchGame = async () => {
     await showMessage('请先选择一个游戏配置', { title: '提示', kind: 'info' });
     return;
   }
+
+  if (!(await ensureRiskAcknowledged())) {
+    return;
+  }
   
   try {
       // Load game config to resolve paths
       const data = await loadGameConfig(gameName);
+      if (!(await ensureProtectionEnabled(gameName, data))) {
+        return;
+      }
+
       let gamePath = data.threeDMigoto?.installDir;
       if (!gamePath && appSettings.cacheDir) {
         gamePath = await joinPath(appSettings.cacheDir, '3Dmigoto', gameName);

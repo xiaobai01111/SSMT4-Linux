@@ -98,6 +98,8 @@ const protonSettings = reactive<ProtonSettings>({
   proton_no_d3d12: false,
   mangohud: false,
   steam_deck_compat: false,
+  sandbox_enabled: false,
+  sandbox_isolate_home: false,
   custom_env: {},
 });
 const vulkanInfo = ref<VulkanInfo | null>(null);
@@ -899,6 +901,18 @@ defineExpose({
                   <label class="checkbox-label">
                     <input type="checkbox" v-model="protonSettings.steam_deck_compat" />
                     {{ t('gamesettingsmodal.steamdeck') }}
+                  </label>
+                </div>
+                <div class="setting-checkbox-row">
+                  <label class="checkbox-label">
+                    <input type="checkbox" v-model="protonSettings.sandbox_enabled" />
+                    启用 bwrap 沙盒
+                  </label>
+                </div>
+                <div class="setting-checkbox-row">
+                  <label class="checkbox-label">
+                    <input type="checkbox" v-model="protonSettings.sandbox_isolate_home" :disabled="!protonSettings.sandbox_enabled" />
+                    隔离 HOME（更严格，兼容性更低）
                   </label>
                 </div>
               </div>

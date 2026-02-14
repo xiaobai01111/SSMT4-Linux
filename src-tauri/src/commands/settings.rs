@@ -108,6 +108,15 @@ fn settings_to_kv(cfg: &AppConfig) {
         "initialized",
         if cfg.initialized { "true" } else { "false" },
     );
+    db::set_setting(
+        "tos_risk_acknowledged",
+        if cfg.tos_risk_acknowledged {
+            "true"
+        } else {
+            "false"
+        },
+    );
+    db::set_setting("snowbreak_source_policy", &cfg.snowbreak_source_policy);
 }
 
 /// SQLite KV → AppConfig 读取
@@ -236,6 +245,14 @@ fn settings_from_kv(pairs: &[(String, String)]) -> AppConfig {
             }
         },
         initialized: parse_bool_or_default(&get("initialized"), defaults.initialized),
+        tos_risk_acknowledged: {
+            let v = get_any(&["tos_risk_acknowledged", "tosRiskAcknowledged"]);
+            parse_bool_or_default(&v, defaults.tos_risk_acknowledged)
+        },
+        snowbreak_source_policy: normalize_snowbreak_source_policy(
+            &get_any(&["snowbreak_source_policy", "snowbreakSourcePolicy"]),
+            &defaults.snowbreak_source_policy,
+        ),
     }
 }
 
@@ -279,6 +296,8 @@ fn normalize_locale(value: &str) -> String {
 fn normalize_settings(cfg: &mut AppConfig) {
     cfg.bg_type = normalize_bg_type(&cfg.bg_type);
     cfg.locale = normalize_locale(&cfg.locale);
+    cfg.snowbreak_source_policy =
+        normalize_snowbreak_source_policy(&cfg.snowbreak_source_policy, "official_first");
 
     if cfg.content_opacity.is_nan() {
         cfg.content_opacity = 0.0;
@@ -287,6 +306,15 @@ fn normalize_settings(cfg: &mut AppConfig) {
 
     if cfg.content_blur.is_nan() || cfg.content_blur < 0.0 {
         cfg.content_blur = 0.0;
+    }
+}
+
+fn normalize_snowbreak_source_policy(value: &str, default: &str) -> String {
+    let normalized = value.trim().to_ascii_lowercase().replace('-', "_");
+    match normalized.as_str() {
+        "official_first" | "community_first" => normalized,
+        "" => default.to_string(),
+        _ => default.to_string(),
     }
 }
 

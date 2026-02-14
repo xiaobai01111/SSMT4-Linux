@@ -6,4 +6,5 @@ pub mod game_scanner;
 pub mod mod_manager;
 pub mod process;
 pub mod settings;
+pub mod telemetry;
 pub mod wine_manager;

@@ -30,6 +30,8 @@ export interface AppSettings {
   locale: string;
   dataDir: string;
   initialized: boolean;
+  tosRiskAcknowledged: boolean;
+  snowbreakSourcePolicy: 'official_first' | 'community_first';
 }
 
 export interface GameInfo {
@@ -103,6 +105,8 @@ export interface ProtonSettings {
   proton_no_d3d12: boolean;
   mangohud: boolean;
   steam_deck_compat: boolean;
+  sandbox_enabled: boolean;
+  sandbox_isolate_home: boolean;
   custom_env: Record<string, string>;
 }
 
@@ -542,6 +546,38 @@ export async function listPrefixTemplates(): Promise<PrefixTemplate[]> {
 
 export async function savePrefixTemplate(template: PrefixTemplate): Promise<void> {
   return invoke('save_prefix_template', { template });
+}
+
+// ============================================================
+// 遥测防护 Commands
+// ============================================================
+
+export async function checkTelemetryStatus(gamePreset: string): Promise<any> {
+  return invoke('check_telemetry_status', { gamePreset });
+}
+
+export async function checkGameProtectionStatus(gamePreset: string, gamePath?: string): Promise<any> {
+  return invoke('check_game_protection_status', { gamePreset, gamePath: gamePath || null });
+}
+
+export async function disableTelemetry(gamePreset: string): Promise<any> {
+  return invoke('disable_telemetry', { gamePreset });
+}
+
+export async function restoreTelemetry(gamePreset: string): Promise<any> {
+  return invoke('restore_telemetry', { gamePreset });
+}
+
+export async function removeTelemetryFiles(gamePreset: string, gamePath: string): Promise<any> {
+  return invoke('remove_telemetry_files', { gamePreset, gamePath });
+}
+
+export async function applyGameProtection(gamePreset: string, gamePath: string): Promise<any> {
+  return invoke('apply_game_protection', { gamePreset, gamePath });
+}
+
+export async function getGameProtectionInfo(gamePreset: string): Promise<any> {
+  return invoke('get_game_protection_info', { gamePreset });
 }
 
 // ============================================================

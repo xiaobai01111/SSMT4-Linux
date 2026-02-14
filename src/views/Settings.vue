@@ -66,6 +66,15 @@ const selectDataDir = async () => {
           <el-input v-model="appSettings.githubToken" :placeholder="t('settings.github_token_placeholder')" type="password"
             show-password />
         </el-form-item>
+        <el-form-item label="尘白下载源策略">
+          <el-select v-model="appSettings.snowbreakSourcePolicy" style="width: 260px">
+            <el-option label="官方优先（失败后回退社区）" value="official_first" />
+            <el-option label="社区优先（失败后回退官方）" value="community_first" />
+          </el-select>
+          <div style="font-size: 12px; color: rgba(255,255,255,0.4); margin-top: 4px; line-height: 1.5;">
+            推荐保持“官方优先”，网络异常时会自动回退到另一来源。
+          </div>
+        </el-form-item>
       </el-form>
     </el-card>
 

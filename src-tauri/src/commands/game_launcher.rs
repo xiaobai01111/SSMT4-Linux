@@ -1,6 +1,8 @@
+use crate::configs::database as db;
 use crate::utils::ini_manager;
 use crate::wine::{detector, prefix};
-use std::collections::HashMap;
+use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tracing::{error, info, warn};
 
@@ -14,6 +16,54 @@ pub async fn start_game(
     let game_exe = PathBuf::from(&game_exe_path);
     if !game_exe.exists() {
         return Err(format!("Game executable not found: {}", game_exe_path));
+    }
+
+    if !is_tos_risk_acknowledged() {
+        return Err(
+            "未完成风险确认，禁止启动。请先在首次向导完成风险确认后再启动游戏。".to_string(),
+        );
+    }
+
+    let game_preset = resolve_game_preset(&game_name);
+    let game_root = infer_game_root_from_exe(&game_exe)
+        .ok_or_else(|| format!("无法从可执行文件推断游戏目录: {}", game_exe_path))?;
+    let game_root_str = game_root.to_string_lossy().to_string();
+
+    let protection_status = crate::commands::telemetry::check_game_protection_status_internal(
+        &game_preset,
+        Some(&game_root_str),
+    )?;
+    let protection_required = protection_status
+        .get("supported")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let protection_enabled = protection_status
+        .get("enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    if protection_required && !protection_enabled {
+        let missing_items = protection_status
+            .get("missing")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join("；")
+            })
+            .unwrap_or_default();
+
+        let detail = if missing_items.is_empty() {
+            String::new()
+        } else {
+            format!(" 详情：{}", missing_items)
+        };
+
+        return Err(format!(
+            "未启用应用防护，已阻止启动。请先在“下载/安装游戏”中应用安全防护。{}",
+            detail
+        ));
     }
 
     // Load prefix config
@@ -85,9 +135,7 @@ pub async fn start_game(
     }
 
     // Build command based on pressure-vessel support
-    let mut cmd: tokio::process::Command;
-
-    if settings.use_pressure_vessel {
+    let (base_program, base_args) = if settings.use_pressure_vessel {
         if let Some(runtime_dir) = detector::find_steam_linux_runtime() {
             let entry_point = runtime_dir.join("_v2-entry-point");
             info!(
@@ -96,19 +144,42 @@ pub async fn start_game(
                 proton_path.display(),
                 game_exe.display()
             );
-            cmd = tokio::process::Command::new(&entry_point);
-            cmd.arg("--verb=waitforexitandrun")
-                .arg("--")
-                .arg(proton_path)
-                .arg("waitforexitandrun")
-                .arg(&game_exe);
+            (
+                entry_point,
+                vec![
+                    "--verb=waitforexitandrun".to_string(),
+                    "--".to_string(),
+                    proton_path.to_string_lossy().to_string(),
+                    "waitforexitandrun".to_string(),
+                    game_exe.to_string_lossy().to_string(),
+                ],
+            )
         } else {
             warn!("SteamLinuxRuntime not found, falling back to direct proton launch");
-            cmd = build_direct_proton_command(proton_path, &game_exe);
+            build_direct_proton_command_spec(proton_path, &game_exe)
         }
     } else {
-        cmd = build_direct_proton_command(proton_path, &game_exe);
-    }
+        build_direct_proton_command_spec(proton_path, &game_exe)
+    };
+
+    let mut cmd = if settings.sandbox_enabled {
+        info!(
+            "Launching with bwrap sandbox (isolate_home={})",
+            settings.sandbox_isolate_home
+        );
+        build_bwrap_command(
+            &base_program,
+            &base_args,
+            &game_exe,
+            &prefix_dir,
+            settings.sandbox_isolate_home,
+            &env,
+        )?
+    } else {
+        let mut command = tokio::process::Command::new(&base_program);
+        command.args(&base_args);
+        command
+    };
 
     // Set environment
     cmd.envs(&env);
@@ -151,15 +222,171 @@ pub async fn start_game(
     Ok(format!("Game launched (PID: {})", pid))
 }
 
-fn build_direct_proton_command(proton_path: &Path, game_exe: &Path) -> tokio::process::Command {
+fn build_direct_proton_command_spec(proton_path: &Path, game_exe: &Path) -> (PathBuf, Vec<String>) {
     info!(
         "Launching with direct proton: {} waitforexitandrun {}",
         proton_path.display(),
         game_exe.display()
     );
-    let mut cmd = tokio::process::Command::new(proton_path);
-    cmd.arg("waitforexitandrun").arg(game_exe);
-    cmd
+    (
+        proton_path.to_path_buf(),
+        vec![
+            "waitforexitandrun".to_string(),
+            game_exe.to_string_lossy().to_string(),
+        ],
+    )
+}
+
+fn build_bwrap_command(
+    base_program: &Path,
+    base_args: &[String],
+    game_exe: &Path,
+    prefix_dir: &Path,
+    isolate_home: bool,
+    env: &HashMap<String, String>,
+) -> Result<tokio::process::Command, String> {
+    let bwrap_path = which::which("bwrap")
+        .map_err(|_| "Sandbox enabled but 'bwrap' command is not available".to_string())?;
+
+    let mut cmd = tokio::process::Command::new(bwrap_path);
+    cmd.arg("--die-with-parent")
+        .arg("--new-session")
+        .arg("--ro-bind")
+        .arg("/")
+        .arg("/")
+        .arg("--dev")
+        .arg("/dev")
+        .arg("--proc")
+        .arg("/proc")
+        .arg("--tmpfs")
+        .arg("/tmp")
+        .arg("--tmpfs")
+        .arg("/var/tmp");
+
+    let mut rw_bound = HashSet::new();
+    let mut ro_bound = HashSet::new();
+    bind_rw_path(&mut cmd, prefix_dir, &mut rw_bound)?;
+
+    if let Some(game_dir) = game_exe.parent() {
+        bind_rw_path(&mut cmd, game_dir, &mut rw_bound)?;
+    }
+
+    if isolate_home {
+        let sandbox_home = prefix_dir.join("sandbox-home");
+        std::fs::create_dir_all(&sandbox_home)
+            .map_err(|e| format!("Failed to create sandbox home: {}", e))?;
+        bind_rw_path(&mut cmd, &sandbox_home, &mut rw_bound)?;
+        cmd.arg("--setenv")
+            .arg("HOME")
+            .arg(sandbox_home.to_string_lossy().to_string());
+    } else if let Ok(home) = std::env::var("HOME") {
+        bind_rw_path(&mut cmd, Path::new(&home), &mut rw_bound)?;
+    }
+
+    if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+        bind_rw_path(&mut cmd, Path::new(&runtime_dir), &mut rw_bound)?;
+    }
+
+    if let Ok(xauthority) = std::env::var("XAUTHORITY") {
+        bind_ro_path(&mut cmd, Path::new(&xauthority), &mut ro_bound)?;
+    }
+
+    if let Some(steam_root) = env.get("STEAM_COMPAT_CLIENT_INSTALL_PATH") {
+        bind_ro_path(&mut cmd, Path::new(steam_root), &mut ro_bound)?;
+    }
+
+    bind_ro_path(&mut cmd, Path::new("/tmp/.X11-unix"), &mut ro_bound)?;
+
+    for key in [
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "XAUTHORITY",
+        "XDG_RUNTIME_DIR",
+        "PULSE_SERVER",
+        "DBUS_SESSION_BUS_ADDRESS",
+        "LANG",
+        "LC_ALL",
+    ] {
+        if let Ok(value) = std::env::var(key) {
+            cmd.arg("--setenv").arg(key).arg(value);
+        }
+    }
+
+    cmd.arg("--")
+        .arg(base_program.to_string_lossy().to_string())
+        .args(base_args);
+
+    Ok(cmd)
+}
+
+fn bind_rw_path(
+    cmd: &mut tokio::process::Command,
+    path: &Path,
+    seen: &mut HashSet<PathBuf>,
+) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if !seen.insert(canonical.clone()) {
+        return Ok(());
+    }
+    let p = canonical.to_string_lossy().to_string();
+    cmd.arg("--bind").arg(&p).arg(&p);
+    Ok(())
+}
+
+fn bind_ro_path(
+    cmd: &mut tokio::process::Command,
+    path: &Path,
+    seen: &mut HashSet<PathBuf>,
+) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if !seen.insert(canonical.clone()) {
+        return Ok(());
+    }
+    let p = canonical.to_string_lossy().to_string();
+    cmd.arg("--ro-bind").arg(&p).arg(&p);
+    Ok(())
+}
+
+fn is_tos_risk_acknowledged() -> bool {
+    db::get_setting("tos_risk_acknowledged")
+        .map(|v| {
+            let normalized = v.trim().to_ascii_lowercase();
+            normalized == "true" || normalized == "1" || normalized == "yes"
+        })
+        .unwrap_or(false)
+}
+
+fn resolve_game_preset(game_name: &str) -> String {
+    let Some(content) = db::get_game_config(game_name) else {
+        return game_name.to_string();
+    };
+
+    let Ok(data) = serde_json::from_str::<Value>(&content) else {
+        return game_name.to_string();
+    };
+
+    extract_game_preset_from_config(&data).unwrap_or_else(|| game_name.to_string())
+}
+
+fn extract_game_preset_from_config(data: &Value) -> Option<String> {
+    data.pointer("/basic/gamePreset")
+        .or_else(|| data.pointer("/basic/GamePreset"))
+        .or_else(|| data.get("GamePreset"))
+        .or_else(|| data.get("LogicName"))
+        .or_else(|| data.get("gamePreset"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn infer_game_root_from_exe(game_exe: &Path) -> Option<PathBuf> {
+    game_exe.parent().map(|p| p.to_path_buf())
 }
 
 #[tauri::command]

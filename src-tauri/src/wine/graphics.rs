@@ -185,9 +185,7 @@ pub async fn install_vkd3d(prefix_path: &Path, vkd3d_version: &str) -> Result<St
     if let Some(x86_dir) = x86_dir {
         copied += copy_vkd3d_dlls(&x86_dir, &syswow64)?;
     } else {
-        warn!(
-            "VKD3D archive has no x86/x32 directory, only 64-bit DLLs were installed"
-        );
+        warn!("VKD3D archive has no x86/x32 directory, only 64-bit DLLs were installed");
     }
 
     if copied == 0 {
@@ -225,10 +223,15 @@ fn find_arch_dir(root: &Path, names: &[&str]) -> Option<PathBuf> {
 }
 
 fn copy_vkd3d_dlls(src_dir: &Path, dst_dir: &Path) -> Result<usize, String> {
-    let mut available: std::collections::HashMap<String, PathBuf> = std::collections::HashMap::new();
-    for entry in std::fs::read_dir(src_dir)
-        .map_err(|e| format!("Failed to read VKD3D directory {}: {}", src_dir.display(), e))?
-    {
+    let mut available: std::collections::HashMap<String, PathBuf> =
+        std::collections::HashMap::new();
+    for entry in std::fs::read_dir(src_dir).map_err(|e| {
+        format!(
+            "Failed to read VKD3D directory {}: {}",
+            src_dir.display(),
+            e
+        )
+    })? {
         let entry = entry.map_err(|e| format!("Failed to read VKD3D directory entry: {}", e))?;
         let path = entry.path();
         if !path.is_file() {

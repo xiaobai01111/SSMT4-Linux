@@ -113,7 +113,11 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
                 user_icon
             } else if let Some(rp) = resource_path {
                 let res_icon = rp.join("Icon.png");
-                if res_icon.exists() { res_icon } else { user_icon }
+                if res_icon.exists() {
+                    res_icon
+                } else {
+                    user_icon
+                }
             } else {
                 user_icon
             }
@@ -126,7 +130,11 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
                 user_cfg
             } else if let Some(rp) = resource_path {
                 let res_cfg = rp.join("Config.json");
-                if res_cfg.exists() { res_cfg } else { user_cfg }
+                if res_cfg.exists() {
+                    res_cfg
+                } else {
+                    user_cfg
+                }
             } else {
                 user_cfg
             }

@@ -7,6 +7,11 @@ import {
   verifyGameFiles as apiVerifyGameFiles,
   cancelDownload as apiCancelDownload,
   getDefaultGameFolder,
+  getGameProtectionInfo,
+  applyGameProtection,
+  checkGameProtectionStatus,
+  restoreTelemetry,
+  askConfirm,
   listenEvent,
   openFileDialog,
   showMessage,
@@ -15,6 +20,7 @@ import {
   type GameState,
   type DownloadProgress,
 } from '../api';
+import { appSettings } from '../store';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -38,6 +44,9 @@ const error = ref('');
 const gamePreset = ref('');
 const isSupported = ref(false);
 const statusMsg = ref('');
+const protectionInfo = ref<any>(null);
+const protectionApplied = ref(false);
+const isProtectionBusy = ref(false);
 
 // 语言包选择
 interface AudioLangOption {
@@ -56,6 +65,18 @@ interface ServerOption {
 }
 const availableServers = ref<ServerOption[]>([]);
 const selectedServer = ref<ServerOption | null>(null);
+
+const protectionStatusLabel = computed(() => {
+  if (!protectionInfo.value?.hasProtections) return '该游戏暂无可用防护';
+  return protectionApplied.value ? '防护状态：已启用' : '防护状态：未启用（将阻止启动）';
+});
+
+const protectionStatusClass = computed(() => {
+  if (!protectionInfo.value?.hasProtections) return 'neutral';
+  return protectionApplied.value ? 'enabled' : 'disabled';
+});
+
+const getProtectionPreset = () => gamePreset.value || props.gameName;
 
 // HoYoverse 四语言包
 const HOYO_AUDIO_LANGS: AudioLangOption[] = [
@@ -119,11 +140,66 @@ const KNOWN_LAUNCHER_APIS: Record<string, LauncherApiConfig> = {
       { id: 'tw', label: '台服', launcherApi: 'https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8', bizPrefix: 'bh3_' },
     ],
   },
+  'EFMI': {
+    defaultFolder: 'SnowbreakContainmentZone',
+    servers: [
+      { id: 'global', label: '国际服', launcherApi: 'snowbreak://manifest', bizPrefix: '' },
+    ],
+  },
 };
 
 const close = () => {
   if (isDownloading.value) return; // 下载中不可关闭
   emit('update:modelValue', false);
+};
+
+const ensureRiskAcknowledged = async () => {
+  if (appSettings.tosRiskAcknowledged) return true;
+
+  const accepted = await askConfirm(
+    '本启动器为非官方工具，与游戏厂商无关。\n\n在 Linux/Wine/Proton 环境运行游戏，可能被反作弊误判，存在账号处罚（包括封禁）风险。\n\n是否确认你已理解并愿意自行承担风险？',
+    {
+      title: 'ToS / 封禁风险提示',
+      kind: 'warning',
+      okLabel: '我已理解风险',
+      cancelLabel: '取消',
+    }
+  );
+  if (!accepted) return false;
+
+  const second = await askConfirm(
+    '请再次确认：继续使用即表示你了解这是非官方方案，且可能导致账号风险。',
+    {
+      title: '二次确认',
+      kind: 'warning',
+      okLabel: '确认继续',
+      cancelLabel: '返回',
+    }
+  );
+  if (!second) return false;
+
+  appSettings.tosRiskAcknowledged = true;
+  return true;
+};
+
+const refreshProtectionStatus = async () => {
+  try {
+    const preset = getProtectionPreset();
+    const info = await getGameProtectionInfo(preset);
+    protectionInfo.value = info;
+
+    if (!info?.hasProtections) {
+      protectionApplied.value = true;
+      return;
+    }
+
+    const status = await checkGameProtectionStatus(preset, gameFolder.value || undefined);
+    protectionApplied.value = !!status?.enabled;
+  } catch (e) {
+    console.warn('[防护] 刷新状态失败:', e);
+    protectionInfo.value = null;
+    protectionApplied.value = false;
+  }
 };
 
 // 打开时自动加载：检测是否支持自动下载 + 读取配置
@@ -147,6 +223,7 @@ const loadState = async () => {
   }
   gamePreset.value = preset;
   console.log('[GameDownload] gameName =', props.gameName, ', preset =', preset);
+  await refreshProtectionStatus();
 
   // 2. 检测是否支持自动下载
   const knownApi = KNOWN_LAUNCHER_APIS[preset] || KNOWN_LAUNCHER_APIS[props.gameName];
@@ -201,6 +278,7 @@ const loadState = async () => {
   } catch (e) {
     console.warn('[GameDownload] checkState 失败:', e);
   }
+
 };
 
 const onServerChange = async (server: ServerOption) => {
@@ -221,6 +299,7 @@ const checkState = async () => {
   try {
     const biz = selectedServer.value?.bizPrefix || undefined;
     gameState.value = await getGameState(launcherApi.value, gameFolder.value, biz);
+    await refreshProtectionStatus();
     statusMsg.value = '';
   } catch (e: any) {
     error.value = `检查状态失败: ${e}`;
@@ -232,6 +311,7 @@ const checkState = async () => {
 
 const startDownload = async () => {
   if (!launcherApi.value || !gameFolder.value) return;
+  if (!(await ensureRiskAcknowledged())) return;
   isDownloading.value = true;
   error.value = '';
   progress.value = null;
@@ -297,6 +377,69 @@ const startVerify = async () => {
   } finally {
     isVerifying.value = false;
     unlisten();
+  }
+};
+
+// 手动应用游戏防护（遥测屏蔽 + 删除遥测 DLL）
+const applyProtectionAfterDownload = async () => {
+  if (isProtectionBusy.value) return;
+  try {
+    isProtectionBusy.value = true;
+    if (!(await ensureRiskAcknowledged())) return;
+    const preset = getProtectionPreset();
+    const info = await getGameProtectionInfo(preset);
+    protectionInfo.value = info;
+    if (!info?.hasProtections) return;
+
+    const protNames = (info.protections as any[]).map((p: any) => p.name).join('、');
+    const confirmed = await askConfirm(
+      `检测到该游戏支持以下安全防护：\n\n${protNames}\n\n是否立即应用？（遥测屏蔽需要管理员权限）`,
+      { title: '游戏安全防护', kind: 'warning', okLabel: '应用防护', cancelLabel: '跳过' }
+    );
+    if (confirmed) {
+      const result = await applyGameProtection(preset, gameFolder.value);
+      console.log('[防护] 应用结果:', result);
+      await refreshProtectionStatus();
+      if (protectionApplied.value) {
+        await showMessage('游戏安全防护已成功应用！', { title: '防护完成', kind: 'info' });
+      } else {
+        const status = await checkGameProtectionStatus(preset, gameFolder.value || undefined);
+        const missing = Array.isArray(status?.missing) && status.missing.length > 0
+          ? status.missing.join('\n')
+          : (status?.telemetry?.unblocked?.join('\n') || '未知');
+        await showMessage(
+          `防护未完全生效，仍有以下问题：\n${missing}`,
+          { title: '防护部分完成', kind: 'warning' }
+        );
+      }
+    }
+  } catch (e) {
+    console.warn('[防护] 应用失败:', e);
+    await showMessage(`应用防护失败: ${e}`, { title: '错误', kind: 'error' });
+  } finally {
+    isProtectionBusy.value = false;
+  }
+};
+
+const disableProtection = async () => {
+  if (isProtectionBusy.value) return;
+  try {
+    isProtectionBusy.value = true;
+    const preset = getProtectionPreset();
+    const yes = await askConfirm(
+      '禁用防护会恢复遥测服务器访问并增加账号风险，确认继续？',
+      { title: '禁用防护', kind: 'warning', okLabel: '确认禁用', cancelLabel: '取消' }
+    );
+    if (!yes) return;
+
+    await restoreTelemetry(preset);
+    await refreshProtectionStatus();
+    await showMessage('已禁用防护（已恢复 hosts 屏蔽项）', { title: '已禁用', kind: 'info' });
+  } catch (e) {
+    console.warn('[防护] 禁用失败:', e);
+    await showMessage(`禁用防护失败: ${e}`, { title: '错误', kind: 'error' });
+  } finally {
+    isProtectionBusy.value = false;
   }
 };
 
@@ -506,6 +649,13 @@ watch(() => props.modelValue, (val) => {
 
             <!-- 下载/更新按钮 -->
             <div v-if="!isWorking" class="main-actions">
+              <div
+                v-if="protectionInfo?.hasProtections"
+                class="protection-status"
+                :class="protectionStatusClass"
+              >
+                {{ protectionStatusLabel }}
+              </div>
               <button
                 v-if="canDownload"
                 class="action-btn primary large"
@@ -522,6 +672,22 @@ watch(() => props.modelValue, (val) => {
               </button>
               <button class="action-btn" @click="startVerify" v-if="gameState?.state === 'startgame'">
                 校验游戏文件
+              </button>
+              <button
+                class="action-btn"
+                v-if="protectionInfo?.hasProtections && !protectionApplied"
+                @click="applyProtectionAfterDownload"
+                :disabled="isProtectionBusy"
+              >
+                {{ isProtectionBusy ? '处理中...' : '应用安全防护' }}
+              </button>
+              <button
+                class="action-btn danger-soft"
+                v-if="protectionInfo?.hasProtections && protectionApplied"
+                @click="disableProtection"
+                :disabled="isProtectionBusy"
+              >
+                {{ isProtectionBusy ? '处理中...' : '删除/禁用防护' }}
               </button>
               <button class="action-btn" @click="checkState" :disabled="isChecking">
                 {{ isChecking ? '检查中...' : '刷新状态' }}
@@ -703,6 +869,27 @@ watch(() => props.modelValue, (val) => {
 
 /* 主要操作按钮 */
 .main-actions { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
+.protection-status {
+  width: 100%;
+  font-size: 12px;
+  border-radius: 6px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.06);
+}
+.protection-status.enabled {
+  color: #67c23a;
+  border-color: rgba(103,194,58,0.35);
+  background: rgba(103,194,58,0.12);
+}
+.protection-status.disabled {
+  color: #f0a030;
+  border-color: rgba(240,160,48,0.4);
+  background: rgba(240,160,48,0.12);
+}
+.protection-status.neutral {
+  color: rgba(255,255,255,0.5);
+}
 .action-btn {
   padding:8px 16px; border:none; border-radius:6px; font-size:13px; cursor:pointer;
   color:#fff; background:rgba(255,255,255,0.1); transition:all 0.2s;
@@ -717,6 +904,14 @@ watch(() => props.modelValue, (val) => {
 .action-btn.primary.large { padding:12px 24px; font-size:15px; font-weight:600; }
 .action-btn.danger { background:rgba(232,17,35,0.2); color:#ff6b6b; margin-top:8px; }
 .action-btn.danger:hover { background:rgba(232,17,35,0.3); }
+.action-btn.danger-soft {
+  background: rgba(232, 17, 35, 0.12);
+  color: #ff8f8f;
+  border: 1px solid rgba(232, 17, 35, 0.24);
+}
+.action-btn.danger-soft:hover {
+  background: rgba(232, 17, 35, 0.2);
+}
 .action-btn.sm { padding:6px 12px; font-size:12px; margin-top:8px; }
 
 /* 进度条 */
