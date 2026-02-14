@@ -7,4 +7,6 @@ pub mod mod_manager;
 pub mod process;
 pub mod settings;
 pub mod telemetry;
+pub mod jadeite;
+pub mod log_viewer;
 pub mod wine_manager;

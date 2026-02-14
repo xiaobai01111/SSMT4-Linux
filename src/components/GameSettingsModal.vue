@@ -7,7 +7,7 @@ import {
   deleteGameConfigFolder as apiDeleteGameConfigFolder,
   setGameIcon as apiSetGameIcon,
   setGameBackground as apiSetGameBackground,
-  updateGameBackground as apiUpdateGameBackground,
+  // updateGameBackground as apiUpdateGameBackground,
   resetGameBackground as apiResetGameBackground,
   get3dmigotoLatestRelease,
   install3dmigotoUpdate as apiInstall3dmigotoUpdate,
@@ -22,8 +22,15 @@ import {
   setGameWineConfig,
   checkVulkan,
   getDisplayInfo,
+  getPrefixInfo,
+  getJadeiteStatus,
+  installJadeite,
+  installDxvk,
+  uninstallDxvk,
   type WineVersion,
   type ProtonSettings,
+  type PrefixInfo,
+  type JadeiteStatus,
   type VulkanInfo,
   type DisplayInfo,
 } from '../api';
@@ -86,6 +93,109 @@ const configName = ref(''); // Separate UI state for the folder name
 
 
 const isLoading = ref(false);
+const hasLoadedConfig = ref(false);
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const asString = (value: unknown, fallback = ''): string =>
+  typeof value === 'string' ? value : fallback;
+
+const asNumber = (value: unknown, fallback: number): number =>
+  typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+
+const normalizeLoadedConfig = (raw: unknown): GameConfig => {
+  const root = isRecord(raw) ? raw : {};
+  const basicRaw = isRecord(root.basic) ? root.basic : {};
+  const migotoRaw = isRecord(root.threeDMigoto) ? root.threeDMigoto : {};
+  const otherRaw = isRecord(root.other) ? root.other : {};
+
+  const gamePreset =
+    asString(basicRaw.gamePreset) ||
+    asString(basicRaw.GamePreset) ||
+    asString(root.GamePreset) ||
+    asString(root.LogicName) ||
+    'GIMI';
+
+  const backgroundTypeRaw =
+    asString(basicRaw.backgroundType) || asString(root.backgroundType);
+  const backgroundType: 'Image' | 'Video' =
+    backgroundTypeRaw === 'Video' ? 'Video' : 'Image';
+
+  let autoSetAnalyseOptions = true;
+  if (typeof migotoRaw.autoSetAnalyseOptions === 'boolean') {
+    autoSetAnalyseOptions = migotoRaw.autoSetAnalyseOptions;
+  } else if (typeof root.AutoSetAnalyseOptions === 'boolean') {
+    autoSetAnalyseOptions = root.AutoSetAnalyseOptions;
+  } else if (typeof root.AutoSetAnalyseOptionsSelectedIndex === 'number') {
+    autoSetAnalyseOptions = root.AutoSetAnalyseOptionsSelectedIndex === 0;
+  }
+
+  const showErrorPopup =
+    typeof migotoRaw.showErrorPopup === 'boolean'
+      ? migotoRaw.showErrorPopup
+      : typeof root.AutoRunIgnoreErrorGIPlugin === 'boolean'
+        ? !root.AutoRunIgnoreErrorGIPlugin
+        : true;
+
+  const mergedOther: Record<string, unknown> = { ...otherRaw };
+  for (const [key, value] of Object.entries(root)) {
+    if (key === 'basic' || key === 'threeDMigoto' || key === 'other') continue;
+    if (mergedOther[key] === undefined) {
+      mergedOther[key] = value;
+    }
+  }
+
+  const legacyGamePath =
+    asString(mergedOther.gamePath) ||
+    asString(mergedOther.game_path) ||
+    asString(root.gamePath) ||
+    asString(root.game_path) ||
+    asString(root.TargetPath);
+  if (legacyGamePath) {
+    mergedOther.gamePath = legacyGamePath;
+  }
+
+  return {
+    basic: {
+      gamePreset,
+      backgroundType,
+    },
+    threeDMigoto: {
+      installDir:
+        asString(migotoRaw.installDir) || asString(root['3DmigotoPath']),
+      targetExePath:
+        asString(migotoRaw.targetExePath) || asString(root.TargetPath),
+      launcherExePath:
+        asString(migotoRaw.launcherExePath) || asString(root.LaunchPath),
+      launchArgs: asString(migotoRaw.launchArgs) || asString(root.LaunchArgs),
+      showErrorPopup,
+      autoSetAnalyseOptions,
+      useShell:
+        typeof migotoRaw.useShell === 'boolean'
+          ? migotoRaw.useShell
+          : typeof root.RunWithShell === 'boolean'
+            ? root.RunWithShell
+            : false,
+      useUpx:
+        typeof migotoRaw.useUpx === 'boolean'
+          ? migotoRaw.useUpx
+          : typeof root.DllReplaceSelectedIndex === 'number'
+            ? root.DllReplaceSelectedIndex > 0
+            : false,
+      delay:
+        typeof migotoRaw.delay === 'number'
+          ? migotoRaw.delay
+          : asNumber(root.DllInitializationDelay, 100),
+      autoExitSeconds:
+        typeof migotoRaw.autoExitSeconds === 'number'
+          ? migotoRaw.autoExitSeconds
+          : asNumber(root.Delay, 5),
+      extraDll: asString(migotoRaw.extraDll),
+    },
+    other: mergedOther,
+  };
+};
 
 // Wine/Proton State
 const wineVersions = ref<WineVersion[]>([]);
@@ -164,13 +274,87 @@ const variantLabel = (variant: string) => {
   return labels[variant] || variant;
 };
 
-// Tabs
-const activeTab = ref('basic');
+// Jadeite 状态
+const jadeiteStatus = ref<JadeiteStatus | null>(null);
+const isJadeiteInstalling = ref(false);
+const prefixInfo = ref<PrefixInfo | null>(null);
+
+const isHoyoverse = computed(() => ['GIMI', 'SRMI', 'ZZMI', 'HIMI'].includes(config.basic.gamePreset));
+
+const loadJadeiteState = async () => {
+  if (!props.gameName) return;
+  try {
+    jadeiteStatus.value = await getJadeiteStatus(props.gameName);
+  } catch (e) {
+    console.warn('[jadeite] 获取状态失败:', e);
+    jadeiteStatus.value = null;
+  }
+};
+
+const doInstallJadeite = async () => {
+  if (isJadeiteInstalling.value) return;
+  try {
+    isJadeiteInstalling.value = true;
+    const result = await installJadeite(props.gameName);
+    await showMessage(result, { title: 'Jadeite', kind: 'info' });
+    await loadJadeiteState();
+  } catch (e) {
+    await showMessage(`安装 jadeite 失败: ${e}`, { title: '错误', kind: 'error' });
+  } finally {
+    isJadeiteInstalling.value = false;
+  }
+};
+
+const loadPrefixState = async () => {
+  if (!props.gameName) return;
+  try {
+    prefixInfo.value = await getPrefixInfo(props.gameName);
+  } catch (e) {
+    console.warn('[prefix] 获取状态失败:', e);
+    prefixInfo.value = null;
+  }
+};
+
+// DXVK 管理
+const dxvkVersion = ref('2.5.3');
+const isDxvkBusy = ref(false);
+
+const doInstallDxvk = async () => {
+  if (isDxvkBusy.value) return;
+  try {
+    isDxvkBusy.value = true;
+    const result = await installDxvk(props.gameName, dxvkVersion.value);
+    await showMessage(result, { title: 'DXVK', kind: 'info' });
+    await loadPrefixState();
+  } catch (e) {
+    await showMessage(`DXVK 安装失败: ${e}`, { title: '错误', kind: 'error' });
+  } finally {
+    isDxvkBusy.value = false;
+  }
+};
+
+const doUninstallDxvk = async () => {
+  if (isDxvkBusy.value) return;
+  try {
+    isDxvkBusy.value = true;
+    const result = await uninstallDxvk(props.gameName);
+    await showMessage(result, { title: 'DXVK', kind: 'info' });
+    await loadPrefixState();
+  } catch (e) {
+    await showMessage(`DXVK 卸载失败: ${e}`, { title: '错误', kind: 'error' });
+  } finally {
+    isDxvkBusy.value = false;
+  }
+};
+
+// Tabs（参考 Lutris 风格：5个标签页）
+const activeTab = ref('info');
 const tabs = computed(() => [
-  { id: 'basic', label: t('gamesettingsmodal.basicsettings') },
-  { id: '3dmigoto', label: t('gamesettingsmodal.migoto') },
-  { id: 'wine', label: t('gamesettingsmodal.wine') },
-  { id: 'other', label: t('gamesettingsmodal.other') },
+  { id: 'info', label: '游戏信息' },
+  { id: 'game', label: '游戏选项' },
+  { id: 'runtime', label: '运行环境' },
+  { id: '3dmigoto', label: '3Dmigoto' },
+  { id: 'system', label: '系统选项' },
 ]);
 
 const presetOptions = computed(() => [
@@ -196,28 +380,12 @@ const presetOptions = computed(() => [
 const loadConfig = async () => {
   if (!props.gameName) return;
   isLoading.value = true;
+  hasLoadedConfig.value = false;
   try {
-    const data = await apiLoadGameConfig(props.gameName) as unknown as GameConfig;
-    // Merge
-    config.basic = {
-      gamePreset: data.basic.gamePreset || 'GIMI',
-      backgroundType: (data.basic as any).backgroundType || 'Image'
-    };
-
-    const threeDMigotoData = data.threeDMigoto || {};
-    config.threeDMigoto = {
-      installDir: threeDMigotoData.installDir || '',
-      targetExePath: threeDMigotoData.targetExePath || '',
-      launcherExePath: threeDMigotoData.launcherExePath || '',
-      launchArgs: threeDMigotoData.launchArgs || '',
-      showErrorPopup: threeDMigotoData.showErrorPopup !== undefined ? threeDMigotoData.showErrorPopup : true,
-      autoSetAnalyseOptions: threeDMigotoData.autoSetAnalyseOptions !== undefined ? threeDMigotoData.autoSetAnalyseOptions : true,
-      useShell: threeDMigotoData.useShell || false,
-      useUpx: threeDMigotoData.useUpx || false,
-      delay: threeDMigotoData.delay !== undefined ? threeDMigotoData.delay : 100,
-      autoExitSeconds: threeDMigotoData.autoExitSeconds !== undefined ? threeDMigotoData.autoExitSeconds : 5,
-      extraDll: threeDMigotoData.extraDll || ''
-    };
+    const data = await apiLoadGameConfig(props.gameName);
+    const normalized = normalizeLoadedConfig(data);
+    config.basic = normalized.basic;
+    config.threeDMigoto = normalized.threeDMigoto;
 
     // Default Logic for installDir if empty on first load (user requirement)
     if (!config.threeDMigoto.installDir && appSettings.cacheDir) {
@@ -229,7 +397,8 @@ const loadConfig = async () => {
       }
     }
 
-    config.other = data.other || {};
+    config.other = normalized.other || {};
+    hasLoadedConfig.value = true;
     // Note: configName is NOT set from file, but from props
   } catch (e) {
     console.error(t('gamesettingsmodal.error.failloadconfig'), e);
@@ -323,41 +492,8 @@ const selectBackground = async () => {
 };
 
 // 自动更新背景暂不可用（资源目录中无默认背景文件）
-const canAutoUpdate = computed(() => false);
-
-const autoUpdateBackground = async () => {
-  try {
-    isLoading.value = true;
-    await apiUpdateGameBackground(props.gameName, config.basic.gamePreset, config.basic.backgroundType || 'Image');
-    await loadGames();
-    await showMessage(
-      t('gamesettingsmodal.message.success.backgroundupdated'),
-      {
-        title: t('gamesettingsmodal.message.success.title'),
-        kind: 'info'
-      }
-    );
-
-    if (appSettings.currentConfigName === props.gameName) {
-      // Force refresh UI if active
-      const current = gamesList.find(g => g.name === props.gameName);
-      if (current) switchToGame(current);
-    }
-
-  } catch (e) {
-    console.error(e);
-
-    await showMessage(
-      t('gamesettingsmodal.message.error.updateFailed', { error: e }),
-      {
-        title: t('gamesettingsmodal.message.error.title'),
-        kind: 'error'
-      }
-    );
-  } finally {
-    isLoading.value = false;
-  }
-};
+// const canAutoUpdate = computed(() => false);
+// const autoUpdateBackground — 功能保留但暂时注释，待资源目录准备好后启用
 
 // 3Dmigoto Helper Functions
 const pick3dmigotoDir = async () => {
@@ -594,14 +730,19 @@ const deleteCurrentConfig = async () => {
 // Open/Close
 watch(() => props.modelValue, (val) => {
   if (val) {
-    activeTab.value = 'basic'; // Reset to first tab
-    configName.value = props.gameName; // Initialize config name from current game
+    activeTab.value = 'info'; // Reset to first tab
+    configName.value = props.gameName;
+    hasLoadedConfig.value = false;
     loadConfig();
     loadWineState();
+    loadJadeiteState();
+    loadPrefixState();
   } else {
-    // When closing, save
-    saveConfig();
-    saveWineConfig();
+    // Only save when current modal session loaded successfully.
+    if (hasLoadedConfig.value) {
+      saveConfig();
+      saveWineConfig();
+    }
   }
 });
 
@@ -661,59 +802,195 @@ defineExpose({
           </div>
 
           <div class="scroll-content">
-            <!-- Basic Settings -->
-            <div v-if="activeTab === 'basic'" class="tab-pane">
+            <!-- ==================== Tab 1: 游戏信息 ==================== -->
+            <div v-if="activeTab === 'info'" class="tab-pane">
               <div class="setting-group">
-                <div class="setting-label">{{ t('gamesettingsmodal.configname') }}</div>
-                <input v-model="configName" type="text" class="custom-input" :placeholder="t('gamesettingsmodal.configname_placeholder')" />
-
+                <div class="setting-label">配置名称</div>
+                <input v-model="configName" type="text" class="custom-input" placeholder="输入配置名称..." />
                 <div class="button-row">
-                  <button class="action-btn create" @click="createNewConfig">
-                    {{ t('gamesettingsmodal.createnew') }}
-                  </button>
-                  <button class="action-btn delete" @click="deleteCurrentConfig">
-                    {{ t('gamesettingsmodal.deletecurrent') }}
-                  </button>
-                  <button class="action-btn" @click="resetToDefault">
-                    {{ t('gamesettingsmodal.resetdefault') }}
-                  </button>
+                  <button class="action-btn create" @click="createNewConfig">新建配置</button>
+                  <button class="action-btn delete" @click="deleteCurrentConfig">删除配置</button>
+                  <button class="action-btn" @click="resetToDefault">恢复默认</button>
                 </div>
               </div>
 
               <div class="setting-group">
-                <div class="setting-label">{{ t('gamesettingsmodal.gamepreset') }}</div>
-                <el-select v-model="config.basic.gamePreset" placeholder="Select" class="custom-select"
-                  @change="saveConfig">
+                <div class="setting-label">游戏预设</div>
+                <el-select v-model="config.basic.gamePreset" placeholder="Select" class="custom-select" @change="saveConfig">
                   <el-option v-for="item in presetOptions" :key="item.value" :label="item.label" :value="item.value" />
                 </el-select>
               </div>
 
               <div class="setting-group">
-                <div class="setting-label">{{ t('gamesettingsmodal.gameicon') }}</div>
-                <button class="action-btn" @click="selectIcon">{{ t('gamesettingsmodal.selecticon') }}</button>
+                <div class="setting-label">游戏图标</div>
+                <button class="action-btn" @click="selectIcon">选择图标</button>
               </div>
 
               <div class="setting-group">
-                <div class="setting-label">{{ t('gamesettingsmodal.bgsettings') }}</div>
+                <div class="setting-label">背景设置</div>
                 <div style="margin-bottom: 10px;">
                   <el-radio-group v-model="config.basic.backgroundType" @change="handleBgTypeChange">
-                    <el-radio value="Image" label="Image">{{ t('gamesettingsmodal.image') }}</el-radio>
-                    <el-radio value="Video" label="Video">{{ t('gamesettingsmodal.video') }}</el-radio>
+                    <el-radio value="Image" label="Image">图片</el-radio>
+                    <el-radio value="Video" label="Video">视频</el-radio>
                   </el-radio-group>
                 </div>
-                <!-- Separate check: if video, show video file btn, if image, show image file btn -->
                 <div class="button-row">
                   <button class="action-btn" @click="selectBackground">
-                    {{ config.basic.backgroundType === 'Video' ? t('gamesettingsmodal.selectbgvideo') : t('gamesettingsmodal.selectbgimage') }}
-                  </button>
-                  <button v-if="canAutoUpdate" class="action-btn" @click="autoUpdateBackground">
-                    {{ t('gamesettingsmodal.autoupdatebg') }}
+                    {{ config.basic.backgroundType === 'Video' ? '选择背景视频' : '选择背景图片' }}
                   </button>
                 </div>
               </div>
             </div>
 
-            <!-- 3Dmigoto Settings -->
+            <!-- ==================== Tab 2: 游戏选项 ==================== -->
+            <div v-if="activeTab === 'game'" class="tab-pane">
+              <div class="setting-group">
+                <div class="setting-label">主程序</div>
+                <input v-model="config.other.gamePath" type="text" class="custom-input" placeholder="选择游戏可执行文件（如 StarRail.exe）..." />
+                <div class="button-row">
+                  <button class="action-btn" @click="pickGameExe">选择文件</button>
+                </div>
+              </div>
+
+              <div class="setting-group">
+                <div class="setting-label">启动参数</div>
+                <input v-model="config.other.launchArgs" type="text" class="custom-input" placeholder="可选，如 -screen-fullscreen 0 -popupwindow" />
+              </div>
+
+              <div class="setting-group">
+                <div class="setting-label">工作目录</div>
+                <input v-model="config.other.workingDir" type="text" class="custom-input" placeholder="留空则使用主程序所在目录" />
+              </div>
+
+              <div class="setting-group">
+                <div class="setting-label">容器目录（Wine Prefix）</div>
+                <div class="info-text" v-if="prefixInfo">
+                  <span :class="prefixInfo.exists ? 'text-ok' : 'text-err'">
+                    {{ prefixInfo.exists ? '✓ 已创建' : '✗ 未创建（首次启动时自动创建）' }}
+                  </span>
+                  <div class="wine-path">{{ prefixInfo.path }}</div>
+                  <div v-if="prefixInfo.exists && prefixInfo.size_bytes > 0" class="info-sub">
+                    大小：{{ (prefixInfo.size_bytes / 1024 / 1024).toFixed(1) }} MB
+                  </div>
+                </div>
+                <div v-else class="info-text text-muted">加载中...</div>
+              </div>
+
+              <!-- Jadeite 反作弊补丁（仅 HoYoverse 游戏） -->
+              <div v-if="isHoyoverse" class="setting-group">
+                <div class="setting-label">Jadeite 反作弊补丁</div>
+                <div class="info-text" v-if="jadeiteStatus">
+                  <span :class="jadeiteStatus.installed ? 'text-ok' : 'text-err'">
+                    {{ jadeiteStatus.installed ? `✓ 已安装 (v${jadeiteStatus.localVersion})` : '✗ 未安装（HoYoverse 游戏必需）' }}
+                  </span>
+                  <div class="wine-path">{{ jadeiteStatus.patchDir }}</div>
+                </div>
+                <div class="button-row">
+                  <button class="action-btn highlight" @click="doInstallJadeite" :disabled="isJadeiteInstalling">
+                    {{ isJadeiteInstalling ? '安装中...' : (jadeiteStatus?.installed ? '更新 Jadeite' : '安装 Jadeite') }}
+                  </button>
+                </div>
+                <div class="info-sub" style="margin-top:6px;">
+                  Jadeite 用于在 Linux 上绕过 HoYoverse 反作弊，启动时自动通过 jadeite.exe 包装游戏。
+                </div>
+              </div>
+            </div>
+
+            <!-- ==================== Tab 3: 运行环境 ==================== -->
+            <div v-if="activeTab === 'runtime'" class="tab-pane">
+              <!-- Wine/Proton 版本选择 -->
+              <div class="setting-group">
+                <div class="setting-label">Wine 版本</div>
+                <el-select v-model="selectedWineVersionId" placeholder="选择 Wine/Proton 版本..." class="custom-select" filterable style="width: 100%">
+                  <el-option-group
+                    v-for="group in [
+                      { label: 'GE-Proton', items: wineVersions.filter(v => v.variant === 'geproton') },
+                      { label: 'DW-Proton', items: wineVersions.filter(v => v.variant === 'dwproton') },
+                      { label: 'Proton Official', items: wineVersions.filter(v => v.variant === 'official') },
+                      { label: 'Proton Experimental', items: wineVersions.filter(v => v.variant === 'experimental') },
+                      { label: 'Proton-TKG', items: wineVersions.filter(v => v.variant === 'protontkg') },
+                      { label: 'Lutris Wine', items: wineVersions.filter(v => v.variant === 'lutris') },
+                      { label: 'System Wine', items: wineVersions.filter(v => v.variant === 'systemwine') },
+                      { label: 'Custom', items: wineVersions.filter(v => v.variant === 'custom') },
+                    ].filter(g => g.items.length > 0)"
+                    :key="group.label"
+                    :label="group.label"
+                  >
+                    <el-option v-for="ver in group.items" :key="ver.id" :label="`${ver.name} (${ver.version})`" :value="ver.id" />
+                  </el-option-group>
+                </el-select>
+                <div v-if="selectedWineVersion" class="wine-detail">
+                  <span class="badge">{{ variantLabel(selectedWineVersion.variant) }}</span>
+                  <span class="wine-path">{{ selectedWineVersion.path }}</span>
+                </div>
+              </div>
+
+              <!-- DXVK -->
+              <div class="setting-group">
+                <div class="setting-label">DXVK</div>
+                <div class="info-text" v-if="prefixInfo?.config?.dxvk">
+                  <span :class="prefixInfo.config.dxvk.enabled ? 'text-ok' : 'text-muted'">
+                    {{ prefixInfo.config.dxvk.enabled ? `✓ 已启用 (${prefixInfo.config.dxvk.version || '未知版本'})` : '未启用' }}
+                  </span>
+                </div>
+                <div class="flex-row" style="align-items:flex-end; gap:8px; margin-top:6px;">
+                  <input v-model="dxvkVersion" type="text" class="custom-input" placeholder="版本号，如 2.5.3" style="flex:1" />
+                  <button class="action-btn highlight" @click="doInstallDxvk" :disabled="isDxvkBusy" style="flex:0 0 auto">安装</button>
+                  <button class="action-btn" @click="doUninstallDxvk" :disabled="isDxvkBusy" style="flex:0 0 auto">卸载</button>
+                </div>
+              </div>
+
+              <!-- Proton 设置 -->
+              <div class="setting-group">
+                <div class="setting-label">Proton 设置</div>
+                <div class="setting-checkbox-row">
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.use_pressure_vessel" /> 使用 Pressure Vessel 容器</label>
+                </div>
+                <div class="setting-checkbox-row">
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.proton_enable_wayland" /> 启用 Wayland</label>
+                </div>
+                <div class="setting-checkbox-row">
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.proton_no_d3d12" /> 禁用 D3D12</label>
+                </div>
+                <div class="setting-checkbox-row">
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.proton_media_use_gst" /> 使用 GStreamer 媒体</label>
+                </div>
+                <div class="setting-checkbox-row">
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.mangohud" /> MangoHud 性能覆盖</label>
+                </div>
+                <div class="setting-checkbox-row">
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.steam_deck_compat" /> Steam Deck 兼容模式</label>
+                </div>
+              </div>
+
+              <!-- Steam App ID -->
+              <div class="setting-group">
+                <div class="setting-label">Steam App ID</div>
+                <input v-model="protonSettings.steam_app_id" type="text" class="custom-input" placeholder="0 = N/A" />
+              </div>
+
+              <!-- 自定义环境变量 -->
+              <div class="setting-group">
+                <div class="setting-label">自定义环境变量</div>
+                <div v-for="(val, key) in protonSettings.custom_env" :key="key" class="env-row">
+                  <span class="env-key">{{ key }}</span>
+                  <span class="env-val">{{ val }}</span>
+                  <button class="env-remove" @click="removeCustomEnv(key as string)">✕</button>
+                </div>
+                <div class="env-add-row">
+                  <input v-model="newEnvKey" type="text" class="custom-input env-input" placeholder="KEY" />
+                  <input v-model="newEnvValue" type="text" class="custom-input env-input" placeholder="VALUE" />
+                  <button class="action-btn" style="flex: 0 0 auto;" @click="addCustomEnv">添加</button>
+                </div>
+              </div>
+
+              <!-- 保存 -->
+              <div class="button-row">
+                <button class="action-btn highlight" @click="saveWineConfig">保存运行环境配置</button>
+              </div>
+            </div>
+
+            <!-- ==================== Tab 4: 3Dmigoto ==================== -->
             <div v-if="activeTab === '3dmigoto'" class="tab-pane">
 
               <div class="setting-group">
@@ -804,105 +1081,30 @@ defineExpose({
 
             </div>
 
-            <!-- Wine / Proton Settings -->
-            <div v-if="activeTab === 'wine'" class="tab-pane">
+            <!-- ==================== Tab 5: 系统选项 ==================== -->
+            <div v-if="activeTab === 'system'" class="tab-pane">
 
-              <!-- System Info -->
+              <!-- 系统信息 -->
               <div v-if="displayInfo" class="setting-group info-card">
-                <div class="setting-label">{{ t('gamesettingsmodal.sysinfo') }}</div>
+                <div class="setting-label">系统信息</div>
                 <div class="info-grid">
-                  <span class="info-key">{{ t('gamesettingsmodal.displayserver') }}</span>
+                  <span class="info-key">显示服务器</span>
                   <span class="info-val">{{ displayInfo.server }}{{ displayInfo.wayland_compositor ? ` (${displayInfo.wayland_compositor})` : '' }}</span>
-                  <span class="info-key">{{ t('gamesettingsmodal.gpu_driver') }}</span>
-                  <span class="info-val">{{ displayInfo.gpu_driver || t('gamesettingsmodal.unknown') }}</span>
+                  <span class="info-key">GPU 驱动</span>
+                  <span class="info-val">{{ displayInfo.gpu_driver || '未知' }}</span>
                   <span class="info-key">Vulkan</span>
                   <span class="info-val" :class="{ 'text-ok': vulkanInfo?.available, 'text-err': !vulkanInfo?.available }">
-                    {{ vulkanInfo?.available ? `✓ ${vulkanInfo.version || ''}` : `✗ ${t('gamesettingsmodal.notdetected')}` }}
+                    {{ vulkanInfo?.available ? `✓ ${vulkanInfo.version || ''}` : '✗ 未检测到' }}
                   </span>
-                  <span class="info-key">{{ t('gamesettingsmodal.gamepad') }}</span>
-                  <span class="info-val">{{ displayInfo.gamepad_detected ? `✓ ${t('gamesettingsmodal.detected')}` : `— ${t('gamesettingsmodal.notdetected')}` }}</span>
+                  <span class="info-key">游戏手柄</span>
+                  <span class="info-val">{{ displayInfo.gamepad_detected ? '✓ 已检测' : '— 未检测到' }}</span>
                 </div>
               </div>
 
-              <!-- Wine/Proton Version Selector -->
+              <!-- 沙盒设置 -->
               <div class="setting-group">
-                <div class="setting-label">{{ t('gamesettingsmodal.wineversion') }}</div>
-                <el-select
-                  v-model="selectedWineVersionId"
-                  :placeholder="t('gamesettingsmodal.wineversion_placeholder')"
-                  class="custom-select"
-                  filterable
-                  style="width: 100%"
-                >
-                  <el-option-group
-                    v-for="group in [
-                      { label: 'GE-Proton', items: wineVersions.filter(v => v.variant === 'geproton') },
-                      { label: 'DW-Proton', items: wineVersions.filter(v => v.variant === 'dwproton') },
-                      { label: 'Proton Official', items: wineVersions.filter(v => v.variant === 'official') },
-                      { label: 'Proton Experimental', items: wineVersions.filter(v => v.variant === 'experimental') },
-                      { label: 'Proton-TKG', items: wineVersions.filter(v => v.variant === 'protontkg') },
-                      { label: 'Lutris Wine', items: wineVersions.filter(v => v.variant === 'lutris') },
-                      { label: 'System Wine', items: wineVersions.filter(v => v.variant === 'systemwine') },
-                      { label: 'Custom', items: wineVersions.filter(v => v.variant === 'custom') },
-                    ].filter(g => g.items.length > 0)"
-                    :key="group.label"
-                    :label="group.label"
-                  >
-                    <el-option
-                      v-for="ver in group.items"
-                      :key="ver.id"
-                      :label="`${ver.name} (${ver.version})`"
-                      :value="ver.id"
-                    />
-                  </el-option-group>
-                </el-select>
+                <div class="setting-label">沙盒设置</div>
 
-                <div v-if="selectedWineVersion" class="wine-detail">
-                  <span class="badge">{{ variantLabel(selectedWineVersion.variant) }}</span>
-                  <span class="wine-path">{{ selectedWineVersion.path }}</span>
-                </div>
-              </div>
-
-              <!-- Proton Settings -->
-              <div class="setting-group">
-                <div class="setting-label">{{ t('gamesettingsmodal.protonsettings') }}</div>
-
-                <div class="setting-checkbox-row">
-                  <label class="checkbox-label">
-                    <input type="checkbox" v-model="protonSettings.use_pressure_vessel" />
-                    {{ t('gamesettingsmodal.pressure_vessel') }}
-                  </label>
-                </div>
-                <div class="setting-checkbox-row">
-                  <label class="checkbox-label">
-                    <input type="checkbox" v-model="protonSettings.proton_enable_wayland" />
-                    {{ t('gamesettingsmodal.wayland') }}
-                  </label>
-                </div>
-                <div class="setting-checkbox-row">
-                  <label class="checkbox-label">
-                    <input type="checkbox" v-model="protonSettings.proton_no_d3d12" />
-                    {{ t('gamesettingsmodal.no_d3d12') }}
-                  </label>
-                </div>
-                <div class="setting-checkbox-row">
-                  <label class="checkbox-label">
-                    <input type="checkbox" v-model="protonSettings.proton_media_use_gst" />
-                    {{ t('gamesettingsmodal.gstreamer') }}
-                  </label>
-                </div>
-                <div class="setting-checkbox-row">
-                  <label class="checkbox-label">
-                    <input type="checkbox" v-model="protonSettings.mangohud" />
-                    {{ t('gamesettingsmodal.mangohud') }}
-                  </label>
-                </div>
-                <div class="setting-checkbox-row">
-                  <label class="checkbox-label">
-                    <input type="checkbox" v-model="protonSettings.steam_deck_compat" />
-                    {{ t('gamesettingsmodal.steamdeck') }}
-                  </label>
-                </div>
                 <div class="setting-checkbox-row">
                   <label class="checkbox-label">
                     <input type="checkbox" v-model="protonSettings.sandbox_enabled" />
@@ -917,44 +1119,10 @@ defineExpose({
                 </div>
               </div>
 
-              <!-- Steam App ID -->
-              <div class="setting-group">
-                <div class="setting-label">Steam App ID</div>
-                <input v-model="protonSettings.steam_app_id" type="text" class="custom-input" placeholder="0 = N/A" />
-              </div>
-
-              <!-- Custom Environment Variables -->
-              <div class="setting-group">
-                <div class="setting-label">{{ t('gamesettingsmodal.custom_env') }}</div>
-                <div v-for="(val, key) in protonSettings.custom_env" :key="key" class="env-row">
-                  <span class="env-key">{{ key }}</span>
-                  <span class="env-val">{{ val }}</span>
-                  <button class="env-remove" @click="removeCustomEnv(key as string)">✕</button>
-                </div>
-                <div class="env-add-row">
-                  <input v-model="newEnvKey" type="text" class="custom-input env-input" placeholder="KEY" />
-                  <input v-model="newEnvValue" type="text" class="custom-input env-input" placeholder="VALUE" />
-                  <button class="action-btn" style="flex: 0 0 auto;" @click="addCustomEnv">{{ t('gamesettingsmodal.add') }}</button>
-                </div>
-              </div>
-
-              <!-- Save -->
+              <!-- 保存 -->
               <div class="button-row">
-                <button class="action-btn highlight" @click="saveWineConfig">{{ t('gamesettingsmodal.save_wine') }}</button>
+                <button class="action-btn highlight" @click="saveWineConfig">保存系统选项</button>
               </div>
-
-            </div>
-
-            <!-- Other Settings -->
-            <div v-if="activeTab === 'other'" class="tab-pane">
-              <div class="setting-group">
-                <div class="setting-label">{{ t('gamesettingsmodal.gamepath') }}</div>
-                <input v-model="config.other.gamePath" type="text" class="custom-input" :placeholder="t('gamesettingsmodal.gamepath_placeholder')" />
-                <div class="button-row">
-                  <button class="action-btn" @click="pickGameExe">{{ t('gamesettingsmodal.selectfile') }}</button>
-                </div>
-              </div>
-              <div class="empty-state" style="margin-top: 20px;">{{ t('gamesettingsmodal.more_coming') }}</div>
             </div>
           </div>
         </div>
@@ -1220,6 +1388,24 @@ defineExpose({
 
 .text-ok { color: #67c23a; }
 .text-err { color: #f56c6c; }
+.text-muted { color: rgba(255, 255, 255, 0.4); }
+
+.info-text {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.75);
+  line-height: 1.6;
+}
+
+.info-sub {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+  margin-top: 2px;
+}
+
+.action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 .wine-detail {
   margin-top: 8px;

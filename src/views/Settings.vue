@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { appSettings } from '../store'
-import { openFileDialog } from '../api';
+import { openFileDialog, openLogWindow } from '../api';
 import { useI18n } from 'vue-i18n';
 
 const { t } = useI18n()
@@ -73,6 +73,12 @@ const selectDataDir = async () => {
           </el-select>
           <div style="font-size: 12px; color: rgba(255,255,255,0.4); margin-top: 4px; line-height: 1.5;">
             推荐保持“官方优先”，网络异常时会自动回退到另一来源。
+          </div>
+        </el-form-item>
+        <el-form-item label="日志查看器">
+          <el-button @click="openLogWindow()">打开日志窗口</el-button>
+          <div style="font-size: 12px; color: rgba(255,255,255,0.4); margin-top: 4px; line-height: 1.5;">
+            在新窗口中查看软件运行日志，便于排查问题时提供给开发者。
           </div>
         </el-form-item>
       </el-form>

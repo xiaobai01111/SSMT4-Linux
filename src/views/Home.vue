@@ -18,6 +18,7 @@ import {
 } from '../api'
 import GameSettingsModal from '../components/GameSettingsModal.vue'
 import GameDownloadModal from '../components/GameDownloadModal.vue'
+import { dlState } from '../downloadStore'
 
 import { useI18n  } from 'vue-i18n';
 
@@ -243,7 +244,7 @@ const ensureProtectionEnabled = async (gameName: string, gameConfig: any) => {
       : '';
 
     await showMessage(
-      `未启用应用防护，当前禁止启动游戏。\n请先打开“下载/安装游戏”，点击“应用安全防护”。${missing}`,
+      `未启用应用防护，当前禁止启动游戏。\n请通过菜单"下载/防护管理"应用安全防护。${missing}`,
       { title: '需要应用防护', kind: 'warning' }
     );
     showDownload.value = true;
@@ -283,18 +284,19 @@ const launchGame = async () => {
       const gameExePath = data.other?.gamePath || '';
       const wineVersionId = data.other?.wineVersionId || '';
 
-      // Check 3Dmigoto Integrity
+      // Check 3Dmigoto Integrity（非强制，用户可选择无 Mod 启动）
       const safe = await check3dmigotoIntegrity(gameName, gamePath || '');
       if (!safe) {
-          const yes = await askConfirm(
-              '当前游戏目录下缺少必要的 3Dmigoto 文件 (d3d11.dll 或 d3dx.ini)。\n\n这可能导致 Mod 无法生效。\n是否现在检查并安装 3Dmigoto 更新？', 
-              { title: '缺少核心组件', kind: 'warning', okLabel: '检查更新', cancelLabel: '取消' }
+          const install = await askConfirm(
+              '未检测到 3Dmigoto 文件 (d3d11.dll 或 d3dx.ini)。\n\nMod 功能将不可用。\n是否现在安装 3Dmigoto？\n\n点击"取消"将直接启动游戏（无 Mod）。', 
+              { title: 'Mod 组件缺失', kind: 'warning', okLabel: '安装 3Dmigoto', cancelLabel: '继续启动' }
           );
           
-          if (yes) {
+          if (install) {
               openSettingsAndUpdate();
+              return;
           }
-          return; // Stop launch
+          // 用户选择"继续启动"，不阻断
       }
       
       if (!gameExePath) {
@@ -372,7 +374,19 @@ onUnmounted(() => {
 
     <div class="content-area">
 
-
+      <!-- Mini download progress (shown when modal is closed but download is active) -->
+      <div v-if="dlState.active && !showDownload" class="mini-dl-bar" @click="showDownload = true">
+        <div class="mini-dl-info">
+          <span class="mini-dl-name">{{ dlState.displayName || dlState.gameName }}</span>
+          <span class="mini-dl-phase">{{ dlState.phase === 'verifying' ? '校验中' : (dlState.progress?.phase === 'install' ? '安装中' : '下载中') }}</span>
+          <span class="mini-dl-pct" v-if="dlState.progress && dlState.progress.total_size > 0">
+            {{ Math.round((dlState.progress.finished_size / dlState.progress.total_size) * 100) }}%
+          </span>
+        </div>
+        <div class="mini-dl-track">
+          <div class="mini-dl-fill" :style="{ width: (dlState.progress && dlState.progress.total_size > 0 ? Math.round((dlState.progress.finished_size / dlState.progress.total_size) * 100) : 0) + '%' }"></div>
+        </div>
+      </div>
 
     </div>
 
@@ -413,7 +427,8 @@ onUnmounted(() => {
             <el-dropdown-item @click="openD3dxIni">{{ t('home.dropdown.opend3dx') }}</el-dropdown-item>
             <el-dropdown-item divided @click="toggleSymlink(true)">{{ t('home.dropdown.enablesymlink') }}</el-dropdown-item>
             <el-dropdown-item @click="toggleSymlink(false)">{{ t('home.dropdown.disablesymlink') }}</el-dropdown-item>
-            <el-dropdown-item divided @click="openSettingsAndUpdate">{{ t('home.dropdown.checkupdate') }}</el-dropdown-item>
+            <el-dropdown-item divided @click="showDownload = true">下载/防护管理</el-dropdown-item>
+            <el-dropdown-item @click="openSettingsAndUpdate">{{ t('home.dropdown.checkupdate') }}</el-dropdown-item>
 
           </el-dropdown-menu>
         </template>
@@ -749,6 +764,74 @@ onUnmounted(() => {
 .menu-item:hover {
   background-color: rgba(255, 255, 255, 0.1);
   color: #fff;
+}
+
+/* Mini download toast (top-right notification) */
+.mini-dl-bar {
+  position: fixed;
+  top: 38px;
+  right: 16px;
+  width: 280px;
+  background: rgba(20, 20, 20, 0.92);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: all 0.25s;
+  z-index: 1000;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  animation: toastSlideIn 0.3s ease-out;
+}
+@keyframes toastSlideIn {
+  from { opacity: 0; transform: translateX(40px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.mini-dl-bar:hover {
+  background: rgba(30, 30, 30, 0.96);
+  border-color: rgba(247, 206, 70, 0.35);
+  box-shadow: 0 4px 24px rgba(247, 206, 70, 0.1);
+}
+.mini-dl-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.mini-dl-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #F7CE46;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+}
+.mini-dl-phase {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.45);
+  padding: 1px 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+}
+.mini-dl-pct {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.9);
+  margin-left: auto;
+}
+.mini-dl-track {
+  width: 100%;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.mini-dl-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #F7CE46, #f0a030);
+  border-radius: 2px;
+  transition: width 0.3s ease;
 }
 </style>
 

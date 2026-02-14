@@ -194,6 +194,10 @@ export function switchToGame(game: GameInfo) {
 loadSettings();
 loadGames();
 
+// Initialize global download event listeners
+import { initDlListeners } from './downloadStore';
+initDlListeners();
+
 // Auto-save behavior
 watch(appSettings, async (newVal) => {
   if (!isInitialized) {

@@ -36,12 +36,20 @@ fn get_telemetry_servers(game_preset: &str) -> &'static [&'static str] {
 /// HoYoverse 游戏中需要删除的遥测 DLL（相对于游戏数据目录）
 fn get_telemetry_dlls(game_preset: &str) -> Vec<&'static str> {
     match game_preset {
-        "SRMI" => vec!["StarRail_Data/Plugins/x86_64/Telemetry.dll"],
+        "SRMI" => vec![
+            "StarRail_Data/Plugins/x86_64/Telemetry.dll",
+            "StarRail_Data/Plugins/x86_64/telemetry.dll",
+        ],
         "GIMI" => vec![
             "GenshinImpact_Data/Plugins/x86_64/Telemetry.dll",
+            "GenshinImpact_Data/Plugins/x86_64/telemetry.dll",
             "YuanShen_Data/Plugins/x86_64/Telemetry.dll",
+            "YuanShen_Data/Plugins/x86_64/telemetry.dll",
         ],
-        "ZZMI" => vec!["ZenlessZoneZero_Data/Plugins/x86_64/Telemetry.dll"],
+        "ZZMI" => vec![
+            "ZenlessZoneZero_Data/Plugins/x86_64/Telemetry.dll",
+            "ZenlessZoneZero_Data/Plugins/x86_64/telemetry.dll",
+        ],
         _ => vec![],
     }
 }

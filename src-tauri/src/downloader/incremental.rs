@@ -1,6 +1,6 @@
 use crate::downloader::cdn::{self, LauncherInfo, ResourceIndex};
 use crate::downloader::fetcher;
-use crate::downloader::progress::{DownloadProgress, SpeedTracker};
+use crate::downloader::progress::DownloadProgress;
 use crate::utils::hash_verify;
 use reqwest::Client;
 use std::path::{Path, PathBuf};
@@ -35,7 +35,7 @@ pub async fn update_game_full(
 
     let mut finished_size: u64 = 0;
     let mut finished_count: usize = 0;
-    let mut speed_tracker = SpeedTracker::new();
+    let start_time = std::time::Instant::now();
 
     for file in &resource_index.resource {
         if *cancel_token.lock().await {
@@ -51,8 +51,10 @@ pub async fn update_game_full(
             finished_size += file.size;
             finished_count += 1;
 
+            let elapsed_secs = start_time.elapsed().as_secs_f64();
+            let speed = if elapsed_secs > 1.0 { (finished_size as f64 / elapsed_secs) as u64 } else { 0 };
             let remaining = total_size.saturating_sub(finished_size);
-            speed_tracker.record(file.size);
+            let eta = if speed > 0 { remaining / speed } else { 0 };
             let progress = DownloadProgress {
                 phase: "update".to_string(),
                 total_size,
@@ -60,8 +62,8 @@ pub async fn update_game_full(
                 total_count,
                 finished_count,
                 current_file: file.dest.clone(),
-                speed_bps: speed_tracker.speed_bps(),
-                eta_seconds: speed_tracker.eta_seconds(remaining),
+                speed_bps: speed,
+                eta_seconds: eta,
             };
             emit_update_progress(&app, &progress);
             continue;
@@ -82,9 +84,11 @@ pub async fn update_game_full(
 
         finished_size += file.size;
         finished_count += 1;
-        speed_tracker.record(file.size);
 
+        let elapsed_secs = start_time.elapsed().as_secs_f64();
+        let speed = if elapsed_secs > 1.0 { (finished_size as f64 / elapsed_secs) as u64 } else { 0 };
         let remaining = total_size.saturating_sub(finished_size);
+        let eta = if speed > 0 { remaining / speed } else { 0 };
         let progress = DownloadProgress {
             phase: "update".to_string(),
             total_size,
@@ -92,8 +96,8 @@ pub async fn update_game_full(
             total_count,
             finished_count,
             current_file: file.dest.clone(),
-            speed_bps: speed_tracker.speed_bps(),
-            eta_seconds: speed_tracker.eta_seconds(remaining),
+            speed_bps: speed,
+            eta_seconds: eta,
         };
         emit_update_progress(&app, &progress);
     }

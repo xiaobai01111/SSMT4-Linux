@@ -1,0 +1,21 @@
+{
+  "TargetPath": "",
+  "3DmigotoPath": "",
+  "LaunchPath": "",
+  "LaunchArgs": "",
+  "WorkSpace": "",
+  "GamePreset": "EFMI",
+  "LogicName": "EFMI",
+  "GameTypeName": "EFMI",
+  "MigotoPackage": "EFMI-Package",
+  "AutoSetAnalyseOptionsSelectedIndex": 0,
+  "GithubPackageVersion": "",
+  "DllInitializationDelay": 1,
+  "DllReplaceSelectedIndex": 0,
+  "DllPreProcessSelectedIndex": 1,
+  "PureGameMode": false,
+  "RunWithShell": false,
+  "AutoRunIgnoreErrorGIPlugin": false,
+  "Delay": 5,
+  "LaunchItems": []
+}

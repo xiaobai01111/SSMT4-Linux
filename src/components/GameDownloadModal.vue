@@ -2,25 +2,20 @@
 import { ref, watch, computed } from 'vue';
 import {
   getGameState,
-  downloadGame as apiDownloadGame,
-  updateGame as apiUpdateGame,
-  verifyGameFiles as apiVerifyGameFiles,
-  cancelDownload as apiCancelDownload,
   getDefaultGameFolder,
   getGameProtectionInfo,
   applyGameProtection,
   checkGameProtectionStatus,
   restoreTelemetry,
   askConfirm,
-  listenEvent,
   openFileDialog,
   showMessage,
   loadGameConfig,
   saveGameConfig,
   type GameState,
-  type DownloadProgress,
 } from '../api';
 import { appSettings } from '../store';
+import { dlState, isActiveFor, fireDownload, fireVerify, cancelActive } from '../downloadStore';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -34,10 +29,7 @@ const emit = defineEmits<{
 }>();
 
 const gameState = ref<GameState | null>(null);
-const progress = ref<DownloadProgress | null>(null);
 const isChecking = ref(false);
-const isDownloading = ref(false);
-const isVerifying = ref(false);
 const launcherApi = ref('');
 const gameFolder = ref('');
 const error = ref('');
@@ -149,7 +141,6 @@ const KNOWN_LAUNCHER_APIS: Record<string, LauncherApiConfig> = {
 };
 
 const close = () => {
-  if (isDownloading.value) return; // 下载中不可关闭
   emit('update:modelValue', false);
 };
 
@@ -311,73 +302,32 @@ const checkState = async () => {
 
 const startDownload = async () => {
   if (!launcherApi.value || !gameFolder.value) return;
+  if (dlState.active) return;
   if (!(await ensureRiskAcknowledged())) return;
-  isDownloading.value = true;
   error.value = '';
-  progress.value = null;
 
-  // 兼容旧/新事件名：下载与更新都走同一进度条。
-  const onProgress = (event: any) => {
-    progress.value = event.payload;
-  };
-  const progressEvent = gameState.value?.state === 'needupdate'
-    ? 'game-update-progress'
-    : 'game-download-progress';
-  const unlistenProgress = await listenEvent(progressEvent, onProgress);
-
-  try {
-    const langs = selectedLanguages.value.length > 0 ? selectedLanguages.value : undefined;
-    const biz = selectedServer.value?.bizPrefix || undefined;
-    if (gameState.value?.state === 'needupdate') {
-      await apiUpdateGame(launcherApi.value, gameFolder.value, langs, biz);
-    } else {
-      await apiDownloadGame(launcherApi.value, gameFolder.value, langs, biz);
-    }
-    // 下载完成后保存配置
-    await saveDownloadConfig();
-    await showMessage('下载完成！正在校验文件...', { title: '成功', kind: 'info' });
-    // 自动校验
-    await startVerify();
-    // 刷新状态
-    await checkState();
-  } catch (e: any) {
-    if (!String(e).includes('cancelled')) {
-      error.value = `下载失败: ${e}`;
-    }
-  } finally {
-    isDownloading.value = false;
-    unlistenProgress();
-  }
+  fireDownload({
+    gameName: props.gameName,
+    displayName: props.displayName,
+    launcherApi: launcherApi.value,
+    gameFolder: gameFolder.value,
+    languages: selectedLanguages.value.length > 0 ? [...selectedLanguages.value] : undefined,
+    bizPrefix: selectedServer.value?.bizPrefix || undefined,
+    isUpdate: gameState.value?.state === 'needupdate',
+  });
 };
 
 const startVerify = async () => {
   if (!launcherApi.value || !gameFolder.value) return;
-  isVerifying.value = true;
-  progress.value = null;
+  if (dlState.active) return;
 
-  const unlisten = await listenEvent('game-verify-progress', (event: any) => {
-    progress.value = event.payload;
+  fireVerify({
+    gameName: props.gameName,
+    displayName: props.displayName,
+    launcherApi: launcherApi.value,
+    gameFolder: gameFolder.value,
+    bizPrefix: selectedServer.value?.bizPrefix || undefined,
   });
-
-  try {
-    const biz = selectedServer.value?.bizPrefix || undefined;
-    const result = await apiVerifyGameFiles(launcherApi.value, gameFolder.value, biz);
-    if (result.failed.length > 0) {
-      error.value = `校验完成，但有 ${result.failed.length} 个文件仍然异常`;
-    } else {
-      await showMessage(
-        `校验完成！共 ${result.total_files} 个文件，${result.verified_ok} 个正常，${result.redownloaded} 个已重新下载。`,
-        { title: '校验结果', kind: 'info' }
-      );
-    }
-  } catch (e: any) {
-    if (!String(e).includes('cancelled')) {
-      error.value = `校验失败: ${e}`;
-    }
-  } finally {
-    isVerifying.value = false;
-    unlisten();
-  }
 };
 
 // 手动应用游戏防护（遥测屏蔽 + 删除遥测 DLL）
@@ -444,7 +394,7 @@ const disableProtection = async () => {
 };
 
 const cancelDownload = async () => {
-  try { await apiCancelDownload(); } catch (e) { console.error(e); }
+  await cancelActive();
 };
 
 const selectGameExe = async () => {
@@ -499,13 +449,18 @@ const formatSize = (bytes: number) => {
   return `${(bytes / 1073741824).toFixed(2)} GB`;
 };
 const formatEta = (seconds: number) => {
-  if (seconds <= 0) return '--:--';
+  if (seconds <= 0) return '计算中...';
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
   if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   return `${m}:${s.toString().padStart(2, '0')}`;
 };
+
+const progress = computed(() => {
+  if (isActiveFor(props.gameName)) return dlState.progress;
+  return null;
+});
 
 const progressPercent = computed(() => {
   if (!progress.value || progress.value.total_size === 0) return 0;
@@ -539,19 +494,24 @@ const canDownload = computed(() => {
   return gameState.value.state === 'needinstall' || gameState.value.state === 'needupdate';
 });
 
-const isWorking = computed(() => isDownloading.value || isVerifying.value);
+const isWorking = computed(() => isActiveFor(props.gameName) && (dlState.phase === 'downloading' || dlState.phase === 'verifying'));
 const workingPhase = computed(() => {
-  if (isVerifying.value) return '校验中';
-  if (isDownloading.value) return '下载中';
+  if (!isActiveFor(props.gameName)) return '';
+  if (dlState.phase === 'verifying') return '校验中';
+  if (dlState.phase === 'downloading') {
+    if (progress.value?.phase === 'install') return '安装中';
+    return '下载中';
+  }
   return '';
 });
 
 watch(() => props.modelValue, (val) => {
   if (val) {
     error.value = '';
-    progress.value = null;
-    gameState.value = null;
     statusMsg.value = '';
+    if (!isActiveFor(props.gameName)) {
+      gameState.value = null;
+    }
     loadState();
   }
 }, { immediate: true });
@@ -564,7 +524,7 @@ watch(() => props.modelValue, (val) => {
         <!-- 标题栏 -->
         <div class="dl-header">
           <span class="dl-title">下载 / 安装游戏</span>
-          <div class="dl-close" @click="close" v-if="!isWorking">
+          <div class="dl-close" @click="close">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
               fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
@@ -702,14 +662,21 @@ watch(() => props.modelValue, (val) => {
               </div>
               <div class="progress-info">
                 <span>{{ progressPercent }}%</span>
-                <span>{{ formatSize(progress.finished_size) }} / {{ formatSize(progress.total_size) }}</span>
+                <span v-if="progress.phase === 'install'">
+                  {{ progress.finished_size }} / {{ progress.total_size }} 条目
+                </span>
+                <span v-else>
+                  {{ formatSize(progress.finished_size) }} / {{ formatSize(progress.total_size) }}
+                </span>
               </div>
               <div class="progress-detail">
                 <span class="progress-file">{{ progress.current_file }}</span>
-                <span>{{ formatSize(progress.speed_bps) }}/s · 剩余 {{ formatEta(progress.eta_seconds) }}</span>
+                <span v-if="progress.phase !== 'install'">
+                  {{ formatSize(progress.speed_bps) }}/s · 剩余 {{ formatEta(progress.eta_seconds) }}
+                </span>
               </div>
               <div class="progress-counts">
-                文件: {{ progress.finished_count }} / {{ progress.total_count }}
+                包: {{ progress.finished_count }} / {{ progress.total_count }}
               </div>
               <button class="action-btn danger" @click="cancelDownload">取消</button>
             </div>

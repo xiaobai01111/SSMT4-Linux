@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ssmt4",
+  "productName": "SSMT4-Linux",
   "version": "0.0.4",
   "identifier": "ssmt4",
   "build": {

@@ -62,13 +62,13 @@ impl SpeedTracker {
     }
 
     pub fn speed_bps(&self) -> u64 {
-        if self.samples.len() < 2 {
+        if self.samples.is_empty() {
             return 0;
         }
+        let now = std::time::Instant::now();
         let first = self.samples.first().unwrap();
-        let last = self.samples.last().unwrap();
-        let elapsed = last.0.duration_since(first.0).as_secs_f64();
-        if elapsed < 0.001 {
+        let elapsed = now.duration_since(first.0).as_secs_f64();
+        if elapsed < 1.0 {
             return 0;
         }
         let total_bytes: u64 = self.samples.iter().map(|(_, b)| b).sum();
