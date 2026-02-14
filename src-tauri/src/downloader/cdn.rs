@@ -1,7 +1,7 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tracing::info;
+use tracing::{info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LauncherInfo {
@@ -156,42 +156,70 @@ fn select_best_cdn(cdn_list: &[Value]) -> Result<String, String> {
 
 async fn fetch_json(client: &Client, url: &str) -> Result<Value, String> {
     info!("Fetching JSON: {}", url);
-    let resp = client
-        .get(url)
-        .header("User-Agent", "Mozilla/5.0")
-        .send()
-        .await
-        .map_err(|e| {
-            tracing::error!("HTTP request failed for {}: {}", url, e);
-            format!("HTTP request failed: {}", e)
-        })?;
 
-    if !resp.status().is_success() {
-        return Err(format!("HTTP {}: {}", resp.status(), url));
+    // 带超时的客户端（防止无限等待）
+    let retry_client = Client::builder()
+        .user_agent("Mozilla/5.0")
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_else(|_| client.clone());
+
+    let max_retries = 3;
+    let mut last_err = String::new();
+
+    for attempt in 1..=max_retries {
+        match retry_client
+            .get(url)
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                if !resp.status().is_success() {
+                    last_err = format!("HTTP {}: {}", resp.status(), url);
+                    warn!("fetch_json 第 {}/{} 次失败: {}", attempt, max_retries, last_err);
+                    if attempt < max_retries {
+                        tokio::time::sleep(std::time::Duration::from_secs(2 * attempt as u64)).await;
+                        continue;
+                    }
+                    return Err(last_err);
+                }
+
+                let bytes = resp
+                    .bytes()
+                    .await
+                    .map_err(|e| format!("Failed to read response body: {}", e))?;
+
+                let text = String::from_utf8(bytes.to_vec())
+                    .or_else(|_| {
+                        let (decoded, _, _) = encoding_rs::GBK.decode(&bytes);
+                        Ok::<String, String>(decoded.into_owned())
+                    })
+                    .map_err(|e| format!("Failed to decode response: {}", e))?;
+
+                return serde_json::from_str(&text).map_err(|e| {
+                    tracing::error!(
+                        "Failed to parse JSON from {}: {} (first 200 chars: {:?})",
+                        url,
+                        e,
+                        &text[..text.len().min(200)]
+                    );
+                    format!("Failed to parse JSON: {}", e)
+                });
+            }
+            Err(e) => {
+                last_err = format!("HTTP request failed: {}", e);
+                warn!("fetch_json 第 {}/{} 次失败: {} ({})", attempt, max_retries, last_err, url);
+                if attempt < max_retries {
+                    tokio::time::sleep(std::time::Duration::from_secs(2 * attempt as u64)).await;
+                    continue;
+                }
+            }
+        }
     }
 
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("Failed to read response body: {}", e))?;
-
-    // Try parsing directly (reqwest handles gzip decompression automatically)
-    let text = String::from_utf8(bytes.to_vec())
-        .or_else(|_| {
-            let (decoded, _, _) = encoding_rs::GBK.decode(&bytes);
-            Ok::<String, String>(decoded.into_owned())
-        })
-        .map_err(|e| format!("Failed to decode response: {}", e))?;
-
-    serde_json::from_str(&text).map_err(|e| {
-        tracing::error!(
-            "Failed to parse JSON from {}: {} (first 200 chars: {:?})",
-            url,
-            e,
-            &text[..text.len().min(200)]
-        );
-        format!("Failed to parse JSON: {}", e)
-    })
+    tracing::error!("fetch_json 全部 {} 次重试失败: {} ({})", max_retries, last_err, url);
+    Err(format!("下载失败: {} ({})", last_err, url))
 }
 
 pub fn join_url(base: &str, path: &str) -> String {

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::Manager;
 use tracing::info;
 
@@ -219,7 +219,7 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
     Ok(games)
 }
 
-fn find_background_image(game_dir: &PathBuf) -> Option<String> {
+fn find_background_image(game_dir: &Path) -> Option<String> {
     for ext in &["png", "jpg", "jpeg", "webp"] {
         let path = game_dir.join(format!("Background.{}", ext));
         if path.exists() {
@@ -229,7 +229,7 @@ fn find_background_image(game_dir: &PathBuf) -> Option<String> {
     None
 }
 
-fn find_background_video(game_dir: &PathBuf) -> Option<String> {
+fn find_background_video(game_dir: &Path) -> Option<String> {
     for ext in &["mp4", "webm"] {
         let path = game_dir.join(format!("Background.{}", ext));
         if path.exists() {
@@ -512,7 +512,7 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()
     Ok(())
 }
 
-fn load_hidden_games(games_dir: &PathBuf) -> Vec<String> {
+fn load_hidden_games(games_dir: &Path) -> Vec<String> {
     let hidden_path = games_dir.join("hidden_games.json");
     if hidden_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&hidden_path) {

@@ -7,15 +7,34 @@ use crate::downloader::{
     full_download, hoyoverse_download, incremental, snowbreak_download, verifier,
 };
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 use tauri::{AppHandle, State};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::info;
 
-/// Global cancel token for download operations
-static CANCEL_TOKEN: once_cell::sync::Lazy<Arc<AsyncMutex<bool>>> =
-    once_cell::sync::Lazy::new(|| Arc::new(AsyncMutex::new(false)));
+/// 按任务（game_folder）管理取消令牌，避免并行任务互相干扰
+static CANCEL_TOKENS: once_cell::sync::Lazy<StdMutex<HashMap<String, Arc<AsyncMutex<bool>>>>> =
+    once_cell::sync::Lazy::new(|| StdMutex::new(HashMap::new()));
+
+/// 获取指定任务的取消令牌（每次创建全新令牌，避免旧状态污染）
+///
+/// 总是用新 Arc 替换旧条目，新任务必定从 false 起步。
+/// 旧任务仍持有自己的 Arc 副本（可能已被置 true），不受影响。
+fn get_cancel_token(task_id: &str) -> Arc<AsyncMutex<bool>> {
+    let mut tokens = CANCEL_TOKENS.lock().unwrap();
+    let token = Arc::new(AsyncMutex::new(false));
+    tokens.insert(task_id.to_string(), token.clone());
+    token
+}
+
+/// 清理已完成任务的令牌
+fn cleanup_cancel_token(task_id: &str) {
+    if let Ok(mut tokens) = CANCEL_TOKENS.lock() {
+        tokens.remove(task_id);
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameState {
@@ -102,7 +121,7 @@ pub async fn download_game(
     languages: Option<Vec<String>>,
     biz_prefix: Option<String>,
 ) -> Result<(), String> {
-    *CANCEL_TOKEN.lock().await = false;
+    let cancel_token = get_cancel_token(&game_folder);
     let snowbreak_policy = get_snowbreak_policy(&settings);
 
     let game_path = PathBuf::from(&game_folder);
@@ -111,47 +130,52 @@ pub async fn download_game(
 
     let langs = languages.unwrap_or_default();
 
-    // Snowbreak 分支
-    if snowbreak::is_snowbreak_api(&launcher_api) {
-        snowbreak_download::download_or_update_game(
+    let result = async {
+        // Snowbreak 分支
+        if snowbreak::is_snowbreak_api(&launcher_api) {
+            snowbreak_download::download_or_update_game(
+                app,
+                &game_path,
+                snowbreak_policy,
+                cancel_token.clone(),
+            )
+            .await?;
+            info!("Snowbreak download completed for {}", game_folder);
+            return Ok(());
+        }
+
+        // HoYoverse 分支
+        if hoyoverse::is_hoyoverse_api(&launcher_api) {
+            let biz = biz_prefix.as_deref().unwrap_or("hkrpg_");
+            let game_pkg = hoyoverse::fetch_game_packages(&launcher_api, biz).await?;
+            hoyoverse_download::download_game(app, &game_pkg, &game_path, &langs, cancel_token.clone())
+                .await?;
+            write_local_version(&game_path, &game_pkg.main.major.version)?;
+            info!("HoYoverse full download completed for {}", game_folder);
+            return Ok(());
+        }
+
+        // Kuro Games 分支
+        let launcher_info = cdn::fetch_launcher_info(&launcher_api).await?;
+        let resource_index =
+            cdn::fetch_resource_index(&launcher_info.cdn_url, &launcher_info.index_file_url).await?;
+
+        full_download::download_game(
             app,
+            &launcher_info,
+            &resource_index,
             &game_path,
-            snowbreak_policy,
-            CANCEL_TOKEN.clone(),
+            cancel_token.clone(),
         )
         .await?;
-        info!("Snowbreak download completed for {}", game_folder);
-        return Ok(());
-    }
 
-    // HoYoverse 分支
-    if hoyoverse::is_hoyoverse_api(&launcher_api) {
-        let biz = biz_prefix.as_deref().unwrap_or("hkrpg_");
-        let game_pkg = hoyoverse::fetch_game_packages(&launcher_api, biz).await?;
-        hoyoverse_download::download_game(app, &game_pkg, &game_path, &langs, CANCEL_TOKEN.clone())
-            .await?;
-        write_local_version(&game_path, &game_pkg.main.major.version)?;
-        info!("HoYoverse full download completed for {}", game_folder);
-        return Ok(());
-    }
+        write_local_version(&game_path, &launcher_info.version)?;
+        info!("Full download completed for {}", game_folder);
+        Ok(())
+    }.await;
 
-    // Kuro Games 分支
-    let launcher_info = cdn::fetch_launcher_info(&launcher_api).await?;
-    let resource_index =
-        cdn::fetch_resource_index(&launcher_info.cdn_url, &launcher_info.index_file_url).await?;
-
-    full_download::download_game(
-        app,
-        &launcher_info,
-        &resource_index,
-        &game_path,
-        CANCEL_TOKEN.clone(),
-    )
-    .await?;
-
-    write_local_version(&game_path, &launcher_info.version)?;
-    info!("Full download completed for {}", game_folder);
-    Ok(())
+    cleanup_cancel_token(&game_folder);
+    result
 }
 
 #[tauri::command]
@@ -163,62 +187,67 @@ pub async fn update_game(
     languages: Option<Vec<String>>,
     biz_prefix: Option<String>,
 ) -> Result<(), String> {
-    *CANCEL_TOKEN.lock().await = false;
+    let cancel_token = get_cancel_token(&game_folder);
     let snowbreak_policy = get_snowbreak_policy(&settings);
 
     let game_path = PathBuf::from(&game_folder);
     let langs = languages.unwrap_or_default();
 
-    // Snowbreak 分支（下载和更新是同一个流程）
-    if snowbreak::is_snowbreak_api(&launcher_api) {
-        snowbreak_download::download_or_update_game(
+    let result = async {
+        // Snowbreak 分支（下载和更新是同一个流程）
+        if snowbreak::is_snowbreak_api(&launcher_api) {
+            snowbreak_download::download_or_update_game(
+                app,
+                &game_path,
+                snowbreak_policy,
+                cancel_token.clone(),
+            )
+            .await?;
+            info!("Snowbreak update completed for {}", game_folder);
+            return Ok(());
+        }
+
+        // HoYoverse 分支
+        if hoyoverse::is_hoyoverse_api(&launcher_api) {
+            let biz = biz_prefix.as_deref().unwrap_or("hkrpg_");
+            let game_pkg = hoyoverse::fetch_game_packages(&launcher_api, biz).await?;
+            let local_version = get_local_version_internal(&game_path)
+                .ok_or("未找到本地版本，请使用全量下载".to_string())?;
+            hoyoverse_download::update_game(
+                app,
+                &game_pkg,
+                &local_version,
+                &game_path,
+                &langs,
+                cancel_token.clone(),
+            )
+            .await?;
+            write_local_version(&game_path, &game_pkg.main.major.version)?;
+            info!("HoYoverse update completed for {}", game_folder);
+            return Ok(());
+        }
+
+        // Kuro Games 分支
+        let launcher_info = cdn::fetch_launcher_info(&launcher_api).await?;
+        let resource_index =
+            cdn::fetch_resource_index(&launcher_info.cdn_url, &launcher_info.index_file_url).await?;
+
+        incremental::update_game_full(
             app,
+            &launcher_info,
+            &resource_index,
             &game_path,
-            snowbreak_policy,
-            CANCEL_TOKEN.clone(),
+            cancel_token.clone(),
         )
         .await?;
-        info!("Snowbreak update completed for {}", game_folder);
-        return Ok(());
-    }
 
-    // HoYoverse 分支
-    if hoyoverse::is_hoyoverse_api(&launcher_api) {
-        let biz = biz_prefix.as_deref().unwrap_or("hkrpg_");
-        let game_pkg = hoyoverse::fetch_game_packages(&launcher_api, biz).await?;
-        let local_version = get_local_version_internal(&game_path)
-            .ok_or("未找到本地版本，请使用全量下载".to_string())?;
-        hoyoverse_download::update_game(
-            app,
-            &game_pkg,
-            &local_version,
-            &game_path,
-            &langs,
-            CANCEL_TOKEN.clone(),
-        )
-        .await?;
-        write_local_version(&game_path, &game_pkg.main.major.version)?;
-        info!("HoYoverse update completed for {}", game_folder);
-        return Ok(());
-    }
+        write_local_version(&game_path, &launcher_info.version)?;
+        info!("Full comparison update completed for {}", game_folder);
+        Ok(())
+    }.await;
 
-    // Kuro Games 分支
-    let launcher_info = cdn::fetch_launcher_info(&launcher_api).await?;
-    let resource_index =
-        cdn::fetch_resource_index(&launcher_info.cdn_url, &launcher_info.index_file_url).await?;
-
-    incremental::update_game_full(
-        app,
-        &launcher_info,
-        &resource_index,
-        &game_path,
-        CANCEL_TOKEN.clone(),
-    )
-    .await?;
-
-    write_local_version(&game_path, &launcher_info.version)?;
-    info!("Full comparison update completed for {}", game_folder);
-    Ok(())
+    cleanup_cancel_token(&game_folder);
+    result
 }
 
 #[tauri::command]
@@ -227,7 +256,7 @@ pub async fn update_game_patch(
     launcher_api: String,
     game_folder: String,
 ) -> Result<(), String> {
-    *CANCEL_TOKEN.lock().await = false;
+    let cancel_token = get_cancel_token(&game_folder);
 
     let game_path = PathBuf::from(&game_folder);
     let local_version = get_local_version_internal(&game_path)
@@ -235,15 +264,18 @@ pub async fn update_game_patch(
 
     let launcher_info = cdn::fetch_launcher_info(&launcher_api).await?;
 
-    incremental::update_game_patch(
+    let result = incremental::update_game_patch(
         app,
         &launcher_info,
         &local_version,
         &game_path,
-        CANCEL_TOKEN.clone(),
+        cancel_token.clone(),
     )
-    .await?;
+    .await;
 
+    cleanup_cancel_token(&game_folder);
+
+    result?;
     write_local_version(&game_path, &launcher_info.version)?;
     info!("Incremental patch update completed for {}", game_folder);
     Ok(())
@@ -257,60 +289,77 @@ pub async fn verify_game_files(
     game_folder: String,
     biz_prefix: Option<String>,
 ) -> Result<verifier::VerifyResult, String> {
-    *CANCEL_TOKEN.lock().await = false;
+    let cancel_token = get_cancel_token(&game_folder);
     let snowbreak_policy = get_snowbreak_policy(&settings);
 
     let game_path = PathBuf::from(&game_folder);
 
-    // Snowbreak 分支
-    if snowbreak::is_snowbreak_api(&launcher_api) {
-        return snowbreak_download::verify_game(
-            app,
-            &game_path,
-            snowbreak_policy,
-            CANCEL_TOKEN.clone(),
-        )
-        .await;
-    }
-
-    // HoYoverse 分支
-    if hoyoverse::is_hoyoverse_api(&launcher_api) {
-        let biz = biz_prefix.as_deref().unwrap_or("hkrpg_");
-        let game_pkg = hoyoverse::fetch_game_packages(&launcher_api, biz).await?;
-        return hoyoverse_download::verify_game(app, &game_pkg, &game_path, CANCEL_TOKEN.clone())
+    let result = async {
+        // Snowbreak 分支
+        if snowbreak::is_snowbreak_api(&launcher_api) {
+            return snowbreak_download::verify_game(
+                app,
+                &game_path,
+                snowbreak_policy,
+                cancel_token.clone(),
+            )
             .await;
-    }
+        }
 
-    // Kuro Games 分支
-    let launcher_info = cdn::fetch_launcher_info(&launcher_api).await?;
-    let resource_index =
-        cdn::fetch_resource_index(&launcher_info.cdn_url, &launcher_info.index_file_url).await?;
+        // HoYoverse 分支
+        if hoyoverse::is_hoyoverse_api(&launcher_api) {
+            let biz = biz_prefix.as_deref().unwrap_or("hkrpg_");
+            let game_pkg = hoyoverse::fetch_game_packages(&launcher_api, biz).await?;
+            return hoyoverse_download::verify_game(app, &game_pkg, &game_path, cancel_token.clone())
+                .await;
+        }
 
-    let result = verifier::verify_game_files(
-        app,
-        &launcher_info,
-        &resource_index,
-        &game_path,
-        CANCEL_TOKEN.clone(),
-    )
-    .await?;
+        // Kuro Games 分支
+        let launcher_info = cdn::fetch_launcher_info(&launcher_api).await?;
+        let resource_index =
+            cdn::fetch_resource_index(&launcher_info.cdn_url, &launcher_info.index_file_url).await?;
 
-    if result.failed.is_empty() {
-        write_local_version(&game_path, &launcher_info.version)?;
-    } else {
-        tracing::warn!(
-            "Verification finished with {} failed files; local version will not be updated",
-            result.failed.len()
-        );
-    }
+        let result = verifier::verify_game_files(
+            app,
+            &launcher_info,
+            &resource_index,
+            &game_path,
+            cancel_token.clone(),
+        )
+        .await?;
 
-    Ok(result)
+        if result.failed.is_empty() {
+            write_local_version(&game_path, &launcher_info.version)?;
+        } else {
+            tracing::warn!(
+                "Verification finished with {} failed files; local version will not be updated",
+                result.failed.len()
+            );
+        }
+
+        Ok(result)
+    }.await;
+
+    cleanup_cancel_token(&game_folder);
+    result
 }
 
 #[tauri::command]
-pub async fn cancel_download() -> Result<(), String> {
-    *CANCEL_TOKEN.lock().await = true;
-    info!("Download cancellation requested");
+pub async fn cancel_download(game_folder: Option<String>) -> Result<(), String> {
+    // 先从 StdMutex 中 clone 出需要的 token（不跨 await 持有 guard）
+    let targets: Vec<(String, Arc<AsyncMutex<bool>>)> = {
+        let tokens = CANCEL_TOKENS.lock().unwrap();
+        if let Some(folder) = &game_folder {
+            tokens.get(folder).map(|t| vec![(folder.clone(), t.clone())]).unwrap_or_default()
+        } else {
+            tokens.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        }
+    };
+    // 异步设置取消标志
+    for (id, token) in targets {
+        *token.lock().await = true;
+        info!("Download cancellation requested for: {}", id);
+    }
     Ok(())
 }
 
@@ -319,7 +368,7 @@ pub fn get_local_version(game_folder: String) -> Result<Option<String>, String> 
     Ok(get_local_version_internal(&PathBuf::from(game_folder)))
 }
 
-fn get_local_version_internal(game_folder: &PathBuf) -> Option<String> {
+fn get_local_version_internal(game_folder: &Path) -> Option<String> {
     // 优先读取 .version (HoYoverse)
     let version_file = game_folder.join(".version");
     if version_file.exists() {
@@ -342,46 +391,28 @@ fn get_local_version_internal(game_folder: &PathBuf) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-/// 根据游戏预设返回对应的 launcher API URL
+/// 根据游戏预设返回对应的 launcher API URL（配置驱动，硬编码兜底）
 #[tauri::command]
 pub fn get_game_launcher_api(game_preset: String) -> Result<serde_json::Value, String> {
-    match game_preset.as_str() {
-        // 鸣潮（国服）
-        "WWMI" | "WuWa" => Ok(serde_json::json!({
-            "launcherApi": "https://prod-cn-alicdn-gamestarter.kurogame.com/launcher/game/G152/10003_Y8xXrXk65DqFHEDgApn3cpK5lfczpFx5/index.json",
-            "launcherDownloadApi": "https://prod-cn-alicdn-gamestarter.kurogame.com/launcher/launcher/10003_Y8xXrXk65DqFHEDgApn3cpK5lfczpFx5/G152/index.json",
-            "defaultFolder": "Wuthering Waves Game",
-            "supported": true
-        })),
-        // 崩坏：星穹铁道
-        "SRMI" => Ok(serde_json::json!({
-            "supported": true,
-            "defaultFolder": "StarRail"
-        })),
-        // 绝区零
-        "ZZMI" => Ok(serde_json::json!({
-            "supported": true,
-            "defaultFolder": "ZenlessZoneZero"
-        })),
-        // 原神
-        "GIMI" => Ok(serde_json::json!({
-            "supported": true,
-            "defaultFolder": "GenshinImpact"
-        })),
-        // 崩坏3
-        "HIMI" => Ok(serde_json::json!({
-            "supported": true,
-            "defaultFolder": "HonkaiImpact3rd"
-        })),
-        // 尘白禁区
-        "EFMI" => Ok(serde_json::json!({
-            "supported": true,
-            "defaultFolder": "SnowbreakContainmentZone"
-        })),
-        _ => Ok(serde_json::json!({
-            "supported": false
-        })),
+    use crate::configs::game_presets;
+
+    let Some(preset) = game_presets::get_preset(&game_preset) else {
+        return Ok(serde_json::json!({ "supported": false }));
+    };
+
+    let mut obj = serde_json::json!({
+        "supported": preset.supported,
+        "defaultFolder": preset.default_folder,
+    });
+
+    if let Some(ref api) = preset.launcher_api {
+        obj["launcherApi"] = serde_json::Value::String(api.clone());
     }
+    if let Some(ref api) = preset.launcher_download_api {
+        obj["launcherDownloadApi"] = serde_json::Value::String(api.clone());
+    }
+
+    Ok(obj)
 }
 
 /// 返回游戏默认安装目录（自动跟随软件数据目录 dataDir）
@@ -393,7 +424,7 @@ pub fn get_default_game_folder(game_name: String) -> Result<String, String> {
 
 /// Snowbreak 游戏状态检测
 async fn get_game_state_snowbreak(
-    game_path: &PathBuf,
+    game_path: &Path,
     source_policy: snowbreak::SourcePolicy,
 ) -> Result<GameState, String> {
     let local_version = snowbreak::read_local_version(game_path);
@@ -440,7 +471,7 @@ fn get_snowbreak_policy(settings: &State<'_, StdMutex<AppConfig>>) -> snowbreak:
 /// HoYoverse 游戏状态检测
 async fn get_game_state_hoyoverse(
     launcher_api: &str,
-    game_path: &PathBuf,
+    game_path: &Path,
     biz: &str,
 ) -> Result<GameState, String> {
     let game_pkg = match hoyoverse::fetch_game_packages(launcher_api, biz).await {
@@ -482,7 +513,7 @@ async fn get_game_state_hoyoverse(
     })
 }
 
-fn write_local_version(game_folder: &PathBuf, version: &str) -> Result<(), String> {
+fn write_local_version(game_folder: &Path, version: &str) -> Result<(), String> {
     let config = serde_json::json!({
         "version": version,
         "reUseVersion": "",

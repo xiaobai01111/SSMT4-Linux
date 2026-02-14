@@ -143,6 +143,38 @@ export interface PrefixTemplate {
   proton_settings: ProtonSettings;
 }
 
+// DXVK 版本管理
+export interface DxvkLocalVersion {
+  version: string;
+  extracted: boolean;
+  path: string;
+}
+
+export interface DxvkRemoteVersion {
+  version: string;
+  tag_name: string;
+  download_url: string;
+  file_size: number;
+  published_at: string;
+  is_local: boolean;
+}
+
+export interface DxvkInstalledStatus {
+  installed: boolean;
+  version: string | null;
+  dlls_found: string[];
+}
+
+export interface RemoteWineVersion {
+  tag: string;
+  version: string;
+  variant: string;
+  download_url: string;
+  file_size: number;
+  published_at: string;
+  installed: boolean;
+}
+
 export interface GameWineConfig {
   game_id: string;
   wine_version_id: string | null;
@@ -171,6 +203,13 @@ export interface RuntimeComponent {
   description: string;
 }
 
+export interface GpuDevice {
+  pci_addr: string;
+  name: string;
+  driver: string;
+  index: number;
+}
+
 export interface DisplayInfo {
   server: string;
   wayland_compositor: string | null;
@@ -179,6 +218,7 @@ export interface DisplayInfo {
   vulkan_version: string | null;
   ime_configured: boolean;
   gamepad_detected: boolean;
+  gpus: GpuDevice[];
 }
 
 // ============================================================
@@ -363,6 +403,10 @@ export async function toggleSymlink(gamePath: string, enabled: boolean): Promise
   return invoke<boolean>('toggle_symlink', { gamePath, enabled });
 }
 
+export async function getSymlinkStatus(gamePath: string): Promise<boolean> {
+  return invoke<boolean>('get_symlink_status', { gamePath });
+}
+
 // ============================================================
 // Mod Manager Commands
 // ============================================================
@@ -478,6 +522,14 @@ export async function scanWineVersions(): Promise<WineVersion[]> {
   return invoke<WineVersion[]>('scan_wine_versions');
 }
 
+export async function fetchRemoteProton(): Promise<RemoteWineVersion[]> {
+  return invoke<RemoteWineVersion[]>('fetch_remote_proton');
+}
+
+export async function downloadProton(downloadUrl: string, tag: string, variant: string): Promise<string> {
+  return invoke<string>('download_proton', { downloadUrl, tag, variant });
+}
+
 export async function getGameWineConfig(gameId: string): Promise<GameWineConfig> {
   return invoke<GameWineConfig>('get_game_wine_config', { gameId });
 }
@@ -506,6 +558,19 @@ export async function installDxvk(gameId: string, version: string): Promise<stri
 
 export async function uninstallDxvk(gameId: string): Promise<string> {
   return invoke<string>('uninstall_dxvk', { gameId });
+}
+
+// DXVK 版本管理
+export async function scanLocalDxvk(): Promise<DxvkLocalVersion[]> {
+  return invoke<DxvkLocalVersion[]>('scan_local_dxvk');
+}
+
+export async function detectDxvkStatus(gameId: string): Promise<DxvkInstalledStatus> {
+  return invoke<DxvkInstalledStatus>('detect_dxvk_status', { gameId });
+}
+
+export async function fetchDxvkVersions(): Promise<DxvkRemoteVersion[]> {
+  return invoke<DxvkRemoteVersion[]>('fetch_dxvk_versions');
 }
 
 export async function installVkd3d(gameId: string, version: string): Promise<string> {
@@ -608,8 +673,8 @@ export async function verifyGameFiles(launcherApi: string, gameFolder: string, b
   return invoke<VerifyResult>('verify_game_files', { launcherApi, gameFolder, bizPrefix: bizPrefix || null });
 }
 
-export async function cancelDownload(): Promise<void> {
-  return invoke('cancel_download');
+export async function cancelDownload(gameFolder?: string): Promise<void> {
+  return invoke('cancel_download', { gameFolder: gameFolder || null });
 }
 
 export async function getLocalVersion(gameFolder: string): Promise<string | null> {
@@ -629,10 +694,6 @@ export async function getGameLauncherApi(gamePreset: string): Promise<GameLaunch
 
 export async function getDefaultGameFolder(gameName: string): Promise<string> {
   return invoke<string>('get_default_game_folder', { gameName });
-}
-
-export async function getVideoServerPort(): Promise<number> {
-  return invoke<number>('get_video_server_port');
 }
 
 // ============================================================

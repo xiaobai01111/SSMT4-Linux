@@ -1,5 +1,6 @@
 use crate::downloader::progress::{DownloadProgress, SpeedTracker};
 use crate::downloader::snowbreak::{self, Manifest, ResolvedCdn};
+use crate::utils::file_manager::{safe_join, safe_join_remote};
 use futures_util::StreamExt;
 use reqwest::Client;
 use std::path::Path;
@@ -58,15 +59,14 @@ pub async fn download_or_update_game(
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
 
     let mut finished_size: u64 = 0;
-    let mut finished_count: usize = 0;
     let mut speed_tracker = SpeedTracker::new();
 
-    for task in &tasks {
+    for (finished_count, task) in tasks.iter().enumerate() {
         if *cancel_token.lock().await {
             return Err("Download cancelled".to_string());
         }
 
-        let dest = game_folder.join(&task.name);
+        let dest = safe_join_remote(game_folder, &task.name)?;
         if let Some(parent) = dest.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
@@ -93,7 +93,6 @@ pub async fn download_or_update_game(
         .await?;
 
         finished_size += task.size;
-        finished_count += 1;
     }
 
     // 6. 保存本地 manifest
@@ -144,7 +143,13 @@ pub async fn verify_game(
             return Err("Verify cancelled".to_string());
         }
 
-        let file_path = game_folder.join(&pak.name);
+        let file_path = match safe_join(game_folder, &pak.name) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!("跳过不安全的清单路径: {} ({})", pak.name, e);
+                continue;
+            }
+        };
         let file_ok = if file_path.exists() {
             // 使用 MD5 校验
             match crate::utils::hash_verify::md5_file(&file_path).await {
@@ -244,7 +249,10 @@ fn compute_download_tasks(
         .paks
         .iter()
         .filter(|pak| {
-            let file_path = game_folder.join(&pak.name);
+            let file_path = match safe_join(game_folder, &pak.name) {
+                Ok(p) => p,
+                Err(_) => return false, // 路径不安全，跳过
+            };
             // 文件不存在 -> 需要下载
             if !file_path.exists() {
                 return true;
@@ -275,6 +283,7 @@ fn load_local_manifest(game_folder: &Path) -> Option<Manifest> {
 }
 
 /// 从多个 CDN 轮询下载单个文件
+#[allow(clippy::too_many_arguments)]
 async fn download_file_with_cdn_fallback(
     app: &AppHandle,
     client: &Client,
@@ -327,6 +336,7 @@ async fn download_file_with_cdn_fallback(
 }
 
 /// 下载单个文件（带进度上报）
+#[allow(clippy::too_many_arguments)]
 async fn download_single_file(
     app: &AppHandle,
     client: &Client,
@@ -377,11 +387,7 @@ async fn download_single_file(
         if last_emit.elapsed() > std::time::Duration::from_millis(200) {
             let current_total = *finished_size + downloaded;
             let speed = speed_tracker.speed_bps();
-            let remaining = if total_size > current_total {
-                total_size - current_total
-            } else {
-                0
-            };
+            let remaining = total_size.saturating_sub(current_total);
 
             emit_progress(
                 app,
@@ -411,6 +417,7 @@ async fn download_single_file(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_progress(
     app: &AppHandle,
     phase: &str,

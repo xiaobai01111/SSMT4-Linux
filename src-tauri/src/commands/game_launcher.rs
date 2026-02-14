@@ -4,11 +4,12 @@ use crate::wine::{detector, prefix};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use tauri::Emitter;
 use tracing::{error, info, warn};
 
 #[tauri::command]
 pub async fn start_game(
-    _app: tauri::AppHandle,
+    app: tauri::AppHandle,
     game_name: String,
     game_exe_path: String,
     wine_version_id: String,
@@ -83,6 +84,9 @@ pub async fn start_game(
     let prefix_dir = prefix::get_prefix_dir(&game_name);
     let pfx_dir = prefix::get_prefix_pfx_dir(&game_name);
 
+    // 确保 prefix 中有 CJK 字体（解决中文乱码）
+    prefix::ensure_cjk_fonts(&game_name);
+
     // Find the selected wine/proton version
     let versions = detector::scan_all_versions(&[]);
     let wine_version = versions
@@ -147,6 +151,48 @@ pub async fn start_game(
     // Custom env from proton_settings
     for (key, value) in &settings.custom_env {
         env.insert(key.clone(), value.clone());
+    }
+
+    // GPU 选择和语言设置（从游戏配置 other 中读取）
+    if let Some(config_json) = db::get_game_config(&game_name) {
+        if let Ok(config_data) = serde_json::from_str::<Value>(&config_json) {
+            // GPU 选择
+            if let Some(gpu_index) = config_data.pointer("/other/gpuIndex").and_then(|v| v.as_i64()) {
+                if gpu_index >= 0 {
+                    let gpus = crate::wine::display::enumerate_gpus();
+                    if let Some(gpu) = gpus.iter().find(|g| g.index == gpu_index as usize) {
+                        if gpu.driver == "nvidia" {
+                            // OpenGL PRIME offload
+                            env.insert("__NV_PRIME_RENDER_OFFLOAD".to_string(), "1".to_string());
+                            env.insert("__NV_PRIME_RENDER_OFFLOAD_PROVIDER".to_string(), format!("NVIDIA-G{}", gpu.index));
+                            env.insert("__GLX_VENDOR_LIBRARY_NAME".to_string(), "nvidia".to_string());
+                            env.insert("__VK_LAYER_NV_optimus".to_string(), "NVIDIA_only".to_string());
+                            // Vulkan: 优先选择 NVIDIA（不排除其他 ICD，避免 pressure-vessel 内失败）
+                            env.insert("VK_LOADER_DRIVERS_SELECT".to_string(), "nvidia*".to_string());
+                            // DXVK/VKD3D: 按 GPU 名称过滤，确保选对设备
+                            env.insert("DXVK_FILTER_DEVICE_NAME".to_string(), "NVIDIA".to_string());
+                            info!("GPU 选择: NVIDIA GPU {} ({}) [Vulkan+OpenGL]", gpu.index, gpu.name);
+                        } else {
+                            env.insert("DRI_PRIME".to_string(), gpu.index.to_string());
+                            info!("GPU 选择: DRI_PRIME={} ({})", gpu.index, gpu.name);
+                        }
+                    } else {
+                        // GPU 索引对应设备未找到，直接用 DRI_PRIME 兜底
+                        env.insert("DRI_PRIME".to_string(), gpu_index.to_string());
+                        info!("GPU 选择: DRI_PRIME={} (设备未枚举到，兜底)", gpu_index);
+                    }
+                }
+            }
+
+            // 语言设置
+            if let Some(lang) = config_data.pointer("/other/gameLang").and_then(|v| v.as_str()) {
+                if !lang.is_empty() {
+                    env.insert("LANG".to_string(), format!("{}.UTF-8", lang));
+                    env.insert("LC_ALL".to_string(), format!("{}.UTF-8", lang));
+                    info!("语言设置: LANG={}.UTF-8", lang);
+                }
+            }
+        }
     }
 
     // 检测 jadeite 补丁（HoYoverse 游戏反作弊包装器）
@@ -225,34 +271,40 @@ pub async fn start_game(
         cmd.current_dir(game_dir);
     }
 
-    // Launch
-    let child = cmd
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+    // Launch — 不捕获 stdout/stderr，避免长时间运行累积内存
+    let mut child = cmd
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|e| format!("Failed to launch game: {}", e))?;
 
     let pid = child.id().unwrap_or(0);
     info!("Game launched with PID {}", pid);
 
-    // Optionally capture output in background for logging
+    // 通知前端游戏已启动
+    let game_name_clone = game_name.clone();
+    app.emit("game-lifecycle", serde_json::json!({
+        "event": "started",
+        "game": game_name_clone,
+        "pid": pid
+    })).ok();
+
+    // 后台等待进程退出，退出后通知前端（仅 wait，不累积输出）
+    let app_clone = app.clone();
     tokio::spawn(async move {
-        match child.wait_with_output().await {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                if !stdout.is_empty() {
-                    info!("Game stdout: {}", stdout);
-                }
-                if !stderr.is_empty() {
-                    warn!("Game stderr: {}", stderr);
-                }
-                info!("Game process exited with status: {}", output.status);
+        match child.wait().await {
+            Ok(status) => {
+                info!("Game process exited with status: {}", status);
             }
             Err(e) => {
                 error!("Failed to wait for game process: {}", e);
             }
         }
+        // 通知前端游戏已退出
+        app_clone.emit("game-lifecycle", serde_json::json!({
+            "event": "exited",
+            "game": game_name
+        })).ok();
     });
 
     Ok(format!("Game launched (PID: {})", pid))
@@ -463,5 +515,22 @@ pub fn toggle_symlink(game_path: &str, enabled: bool) -> Result<bool, String> {
 
     ini_manager::save_ini(&ini_data, &ini_path)?;
     info!("Toggled symlink for {}: enabled={}", game_path, enabled);
+    Ok(enabled)
+}
+
+#[tauri::command]
+pub fn get_symlink_status(game_path: &str) -> Result<bool, String> {
+    let game_dir = PathBuf::from(game_path);
+    let ini_path = game_dir.join("d3dx.ini");
+
+    if !ini_path.exists() {
+        return Err("d3dx.ini not found".to_string());
+    }
+
+    let ini_data = ini_manager::load_ini(&ini_path)?;
+    let enabled = ini_manager::get_value(&ini_data, "Loader", "target")
+        .map(|v| v.trim().eq_ignore_ascii_case("d3d11.dll"))
+        .unwrap_or(false);
+
     Ok(enabled)
 }

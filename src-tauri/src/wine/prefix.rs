@@ -1,7 +1,7 @@
 use crate::configs::wine_config::{PrefixConfig, PrefixTemplate};
 use crate::utils::file_manager;
 use std::path::{Path, PathBuf};
-use tracing::info;
+use tracing::{info, warn};
 
 /// 从数据库的游戏配置中解析游戏根目录（gameFolder 的父目录）
 fn resolve_game_root_from_db(game_id: &str) -> Option<PathBuf> {
@@ -144,7 +144,7 @@ pub fn list_templates() -> Result<Vec<PrefixTemplate>, String> {
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().map_or(false, |e| e == "json") {
+        if path.extension().is_some_and(|e| e == "json") {
             if let Ok(content) = std::fs::read_to_string(&path) {
                 if let Ok(template) = serde_json::from_str::<PrefixTemplate>(&content) {
                     templates.push(template);
@@ -165,6 +165,7 @@ pub fn save_template(template: &PrefixTemplate) -> Result<(), String> {
     std::fs::write(&path, content).map_err(|e| format!("Failed to write template: {}", e))
 }
 
+#[allow(dead_code)]
 pub fn export_template_from_prefix(
     game_id: &str,
     template_id: &str,
@@ -185,6 +186,68 @@ pub fn export_template_from_prefix(
     };
     save_template(&template)?;
     Ok(template)
+}
+
+/// 确保 prefix 中有 CJK 字体（将系统字体目录链接到 prefix 的 Fonts 目录）
+pub fn ensure_cjk_fonts(game_id: &str) {
+    let pfx_dir = get_prefix_pfx_dir(game_id);
+    let fonts_dir = pfx_dir.join("drive_c").join("windows").join("Fonts");
+
+    if !fonts_dir.exists() {
+        // prefix 还没被 Proton 初始化过，跳过
+        return;
+    }
+
+    // 常见系统字体目录
+    let system_font_dirs = [
+        "/usr/share/fonts",
+        "/usr/local/share/fonts",
+    ];
+
+    // 查找系统中的 CJK 字体文件
+    let cjk_patterns = ["noto", "cjk", "wqy", "wenquanyi", "droid", "source-han", "sarasa"];
+
+    let home = std::env::var("HOME").unwrap_or_default();
+    let user_fonts = PathBuf::from(&home).join(".local").join("share").join("fonts");
+    let mut search_dirs: Vec<PathBuf> = system_font_dirs.iter().map(PathBuf::from).collect();
+    if user_fonts.exists() {
+        search_dirs.push(user_fonts);
+    }
+
+    let mut linked = 0u32;
+    for search_dir in &search_dirs {
+        if !search_dir.exists() {
+            continue;
+        }
+        for entry in walkdir::WalkDir::new(search_dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            if !(name.ends_with(".ttf") || name.ends_with(".ttc") || name.ends_with(".otf")) {
+                continue;
+            }
+            let is_cjk = cjk_patterns.iter().any(|p| name.contains(p));
+            if !is_cjk {
+                continue;
+            }
+            let target = fonts_dir.join(entry.file_name());
+            if target.exists() {
+                continue;
+            }
+            if let Err(e) = std::os::unix::fs::symlink(entry.path(), &target) {
+                warn!("字体链接失败: {} -> {}: {}", entry.path().display(), target.display(), e);
+            } else {
+                linked += 1;
+            }
+        }
+    }
+    if linked > 0 {
+        info!("已链接 {} 个 CJK 字体到 prefix: {}", linked, fonts_dir.display());
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

@@ -289,6 +289,7 @@ pub async fn fetch_manifest_with_policy(
     Err(format!("所有来源均不可用: {}", errors.join(" | ")))
 }
 
+#[allow(dead_code)]
 pub async fn fetch_manifest() -> Result<(Manifest, ResolvedCdn), String> {
     fetch_manifest_with_policy(SourcePolicy::OfficialFirst).await
 }

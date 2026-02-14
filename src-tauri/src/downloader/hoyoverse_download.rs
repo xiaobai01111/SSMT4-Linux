@@ -1,5 +1,6 @@
 use crate::downloader::hoyoverse::{self, GamePackage, Segment};
 use crate::downloader::progress::{DownloadProgress, SpeedTracker};
+use crate::utils::file_manager::{safe_join, safe_join_remote};
 use crate::utils::hash_verify;
 use futures_util::StreamExt;
 use reqwest::Client;
@@ -16,7 +17,6 @@ const MAX_CONCURRENT_DOWNLOADS: usize = 4;
 
 // ============================================================
 // 全量下载：下载压缩包 → 解压到游戏目录
-// 支持 7z 分卷（.7z.001）、单文件 7z、zip
 // ============================================================
 
 pub async fn download_game(
@@ -33,9 +33,7 @@ pub async fn download_game(
 
     std::fs::create_dir_all(game_folder).map_err(|e| format!("创建游戏目录失败: {}", e))?;
 
-    // 收集所有需要下载的包：游戏本体 + 语言包
     let audio_segments = collect_audio_segments(&game_pkg.main.major.audio_pkgs, languages);
-    let game_pkg_count = segments.len();
 
     let all_tasks: Vec<DownloadTask> = segments
         .iter()
@@ -56,322 +54,17 @@ pub async fn download_game(
         }))
         .collect();
 
-    let total_size: u64 = all_tasks
-        .iter()
-        .filter_map(|s| s.size.parse::<u64>().ok())
-        .sum();
-    let total_count = all_tasks.len();
+    let plan = DownloadPlan {
+        all_tasks,
+        primary_pkg_count: segments.len(),
+        primary_label: "游戏本体".to_string(),
+        migrate_old_files: true,
+        post_install: PostInstall::WriteVersion {
+            version: game_pkg.main.major.version.clone(),
+        },
+    };
 
-    info!(
-        "开始全量下载: {} 个包 (含 {} 个语言包), 总大小 {} 字节",
-        total_count,
-        audio_segments.len(),
-        total_size
-    );
-
-    // 加载下载状态（JSON 缓存）
-    let mut state = read_download_state(game_folder);
-    if state.expected_total_size != 0 && state.expected_total_size != total_size {
-        info!("下载任务变更 (total_size 不同)，重置状态");
-        state = DownloadState::default();
-    }
-    state.expected_total_size = total_size;
-
-    // ===== 阶段 1: 全部下载 =====
-    // 1a: 预检查（缓存/迁移/MD5校验）- 顺序执行
-    let mut cached_size: u64 = 0;
-    let mut to_download: Vec<usize> = Vec::new();
-
-    for (i, task) in all_tasks.iter().enumerate() {
-        if *cancel_token.lock().await {
-            return Err("Download cancelled".to_string());
-        }
-
-        let dest = game_folder.join(&task.filename);
-
-        // 检查 JSON 缓存（key = 文件名）
-        if let Some(cached_md5) = state.checksums.get(&task.filename) {
-            if !task.md5.is_empty() && cached_md5.to_lowercase() == task.md5.to_lowercase() {
-                let file_size = if dest.exists() {
-                    tokio::fs::metadata(&dest).await.map(|m| m.len()).unwrap_or(0)
-                } else {
-                    task.size.parse::<u64>().unwrap_or(0)
-                };
-                cached_size += file_size;
-                info!("分段 {} ({}) 已缓存，跳过下载", i, task.filename);
-                emit_progress(
-                    &app, "download", cached_size, total_size,
-                    total_count, i + 1,
-                    &format!("已缓存，跳过 {}", task.label),
-                    0, 0,
-                );
-                continue;
-            }
-        }
-
-        // 迁移旧格式文件: _download_N.zip → 原始文件名
-        let old_file = game_folder.join(format!("_download_{}.zip", i));
-        if !dest.exists() && old_file.exists() && !task.md5.is_empty() {
-            let file_size = tokio::fs::metadata(&old_file).await.map(|m| m.len()).unwrap_or(0);
-            emit_progress(
-                &app, "download", cached_size, total_size,
-                total_count, i + 1,
-                &format!("校验旧文件 {} ({:.1} MB)...", task.label, file_size as f64 / 1048576.0),
-                0, 0,
-            );
-            let actual_md5 = hash_verify::md5_file(&old_file).await.unwrap_or_default();
-            if actual_md5.to_lowercase() == task.md5.to_lowercase() {
-                info!("迁移旧文件 {} → {}", old_file.display(), dest.display());
-                tokio::fs::rename(&old_file, &dest).await.ok();
-                state.checksums.insert(task.filename.clone(), task.md5.clone());
-                save_download_state(game_folder, &state);
-                cached_size += file_size;
-                emit_progress(
-                    &app, "download", cached_size, total_size,
-                    total_count, i + 1,
-                    &format!("已迁移，跳过 {}", task.label),
-                    0, 0,
-                );
-                continue;
-            } else {
-                warn!("旧文件 MD5 不匹配，将重新下载");
-            }
-        }
-
-        // 无缓存但正确文件名已存在 → 计算 MD5 补录
-        if dest.exists() && !task.md5.is_empty() {
-            let file_size = tokio::fs::metadata(&dest).await.map(|m| m.len()).unwrap_or(0);
-            emit_progress(
-                &app, "download", cached_size, total_size,
-                total_count, i + 1,
-                &format!("校验已有文件 {} ({:.1} MB)...", task.label, file_size as f64 / 1048576.0),
-                0, 0,
-            );
-            let actual_md5 = hash_verify::md5_file(&dest).await.unwrap_or_default();
-            if actual_md5.to_lowercase() == task.md5.to_lowercase() {
-                info!("文件 {} MD5 匹配，补录缓存", task.filename);
-                state.checksums.insert(task.filename.clone(), task.md5.clone());
-                save_download_state(game_folder, &state);
-                cached_size += file_size;
-                emit_progress(
-                    &app, "download", cached_size, total_size,
-                    total_count, i + 1,
-                    &format!("已缓存，跳过 {}", task.label),
-                    0, 0,
-                );
-                continue;
-            } else {
-                warn!("文件 {} MD5 不匹配，将重新下载", task.filename);
-            }
-        }
-
-        to_download.push(i);
-    }
-
-    // 1b: 并行下载
-    if !to_download.is_empty() {
-        info!(
-            "开始并行下载 {} 个文件 (最多 {} 并发)",
-            to_download.len(),
-            MAX_CONCURRENT_DOWNLOADS
-        );
-
-        let client = Client::builder()
-            .pool_max_idle_per_host(MAX_CONCURRENT_DOWNLOADS + 2)
-            .build()
-            .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
-
-        let shared_bytes = Arc::new(AtomicU64::new(cached_size));
-        let shared_done = Arc::new(AtomicUsize::new(total_count - to_download.len()));
-
-        // 进度上报任务
-        let reporter = {
-            let app = app.clone();
-            let bytes = shared_bytes.clone();
-            let done = shared_done.clone();
-            let cancel = cancel_token.clone();
-            tokio::spawn(async move {
-                let mut tracker = SpeedTracker::new();
-                let mut prev = bytes.load(Ordering::Relaxed);
-                loop {
-                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                    if *cancel.lock().await {
-                        break;
-                    }
-                    let current = bytes.load(Ordering::Relaxed);
-                    let delta = current.saturating_sub(prev);
-                    prev = current;
-                    if delta > 0 {
-                        tracker.record(delta);
-                    }
-                    let remaining = total_size.saturating_sub(current);
-                    emit_progress(
-                        &app,
-                        "download",
-                        current,
-                        total_size,
-                        total_count,
-                        done.load(Ordering::Relaxed),
-                        &format!("并行下载中 ({}路)", MAX_CONCURRENT_DOWNLOADS),
-                        tracker.speed_bps(),
-                        tracker.eta_seconds(remaining),
-                    );
-                }
-            })
-        };
-
-        // 启动下载任务
-        let sem = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_DOWNLOADS));
-        let mut handles = Vec::new();
-
-        for &idx in &to_download {
-            let task = &all_tasks[idx];
-            let sem = sem.clone();
-            let client = client.clone();
-            let cancel = cancel_token.clone();
-            let bytes = shared_bytes.clone();
-            let done = shared_done.clone();
-            let dest = game_folder.join(&task.filename);
-            let url = task.url.clone();
-            let md5 = task.md5.clone();
-            let filename = task.filename.clone();
-
-            let handle = tokio::spawn(async move {
-                let _permit = sem
-                    .acquire()
-                    .await
-                    .map_err(|e| format!("信号量错误: {}", e))?;
-                info!("开始下载: {}", filename);
-                download_file_to_disk(&client, &url, &dest, &md5, bytes, cancel).await?;
-                done.fetch_add(1, Ordering::Relaxed);
-                let final_md5 = if !md5.is_empty() {
-                    md5
-                } else {
-                    hash_verify::md5_file(&dest).await.unwrap_or_default()
-                };
-                info!("下载完成: {}", filename);
-                Ok::<(String, String), String>((filename, final_md5))
-            });
-            handles.push(handle);
-        }
-
-        // 等待所有下载完成
-        let mut first_error: Option<String> = None;
-        for handle in handles {
-            match handle.await {
-                Ok(Ok((filename, md5))) => {
-                    state.checksums.insert(filename, md5);
-                    save_download_state(game_folder, &state);
-                }
-                Ok(Err(e)) => {
-                    if first_error.is_none() {
-                        first_error = Some(e);
-                    }
-                }
-                Err(e) => {
-                    if first_error.is_none() {
-                        first_error = Some(format!("下载任务失败: {}", e));
-                    }
-                }
-            }
-        }
-
-        reporter.abort();
-
-        if let Some(e) = first_error {
-            return Err(e);
-        }
-    }
-
-    info!("全部 {} 个压缩包下载完成，开始安装...", total_count);
-
-    // ===== 阶段 2: 安装 =====
-    // 2a: 游戏本体（可能是 7z 分卷，只需从第一个 part 解压一次）
-    let first_game_file = &all_tasks[0].filename;
-    if !state.installed_archives.contains(first_game_file) {
-        let first_part = game_folder.join(first_game_file);
-        if first_part.exists() {
-            info!("安装游戏本体 (从 {})", first_game_file);
-            match extract_archive(
-                &first_part, game_folder, &app, "游戏本体",
-                total_count, 1,
-            ).await {
-                Ok(()) => {
-                    // 删除所有游戏本体分段文件
-                    for task in &all_tasks[..game_pkg_count] {
-                        tokio::fs::remove_file(game_folder.join(&task.filename)).await.ok();
-                    }
-                    state.installed_archives.push(first_game_file.to_string());
-                    save_download_state(game_folder, &state);
-                }
-                Err(e) => {
-                    error!("游戏本体安装失败: {}", e);
-                    // 清除所有游戏段缓存
-                    for task in &all_tasks[..game_pkg_count] {
-                        state.checksums.remove(&task.filename);
-                        tokio::fs::remove_file(game_folder.join(&task.filename)).await.ok();
-                    }
-                    save_download_state(game_folder, &state);
-                    return Err(format!(
-                        "游戏本体安装失败: {}。已删除文件，请重新下载。", e
-                    ));
-                }
-            }
-        } else {
-            warn!("游戏本体首段文件不存在: {}", first_part.display());
-        }
-    } else {
-        info!("游戏本体已安装，跳过");
-    }
-
-    // 2b: 语言包（每个单独解压）
-    for (idx, task) in all_tasks[game_pkg_count..].iter().enumerate() {
-        if state.installed_archives.contains(&task.filename) {
-            info!("语言包 {} 已安装，跳过", task.filename);
-            continue;
-        }
-
-        if *cancel_token.lock().await {
-            return Err("Download cancelled".to_string());
-        }
-
-        let archive = game_folder.join(&task.filename);
-        if !archive.exists() {
-            info!("语言包文件不存在 (可能已安装): {}", task.filename);
-            continue;
-        }
-
-        info!("安装语言包: {}", task.filename);
-        match extract_archive(
-            &archive, game_folder, &app, &task.label,
-            total_count, game_pkg_count + idx + 1,
-        ).await {
-            Ok(()) => {
-                tokio::fs::remove_file(&archive).await.ok();
-                state.installed_archives.push(task.filename.clone());
-                save_download_state(game_folder, &state);
-            }
-            Err(e) => {
-                error!("语言包安装失败: {}", e);
-                tokio::fs::remove_file(&archive).await.ok();
-                state.checksums.remove(&task.filename);
-                save_download_state(game_folder, &state);
-                return Err(format!(
-                    "安装 {} 失败: {}。已删除文件，请重新下载。",
-                    task.label, e
-                ));
-            }
-        }
-    }
-
-    // 全部完成，清除状态文件
-    clear_download_state(game_folder);
-
-    // 写入版本号
-    hoyoverse::write_local_version(game_folder, &game_pkg.main.major.version)?;
-
-    info!("全量下载安装完成");
-    Ok(())
+    execute_plan(app, plan, game_folder, cancel_token).await
 }
 
 // ============================================================
@@ -386,7 +79,6 @@ pub async fn update_game(
     languages: &[String],
     cancel_token: Arc<Mutex<bool>>,
 ) -> Result<(), String> {
-    // 查找匹配当前版本的补丁
     let patch = game_pkg
         .main
         .patches
@@ -399,9 +91,7 @@ pub async fn update_game(
             )
         })?;
 
-    // 收集所有需要下载的包：游戏补丁 + 语言包补丁
     let audio_segments = collect_audio_segments(&patch.audio_pkgs, languages);
-    let patch_pkg_count = patch.game_pkgs.len();
 
     let all_tasks: Vec<DownloadTask> = patch
         .game_pkgs
@@ -427,289 +117,17 @@ pub async fn update_game(
         return Err("补丁包为空".to_string());
     }
 
-    let total_size: u64 = all_tasks
-        .iter()
-        .filter_map(|s| s.size.parse::<u64>().ok())
-        .sum();
-    let total_count = all_tasks.len();
+    let plan = DownloadPlan {
+        all_tasks,
+        primary_pkg_count: patch.game_pkgs.len(),
+        primary_label: "游戏补丁".to_string(),
+        migrate_old_files: false,
+        post_install: PostInstall::PatchAndWriteVersion {
+            version: game_pkg.main.major.version.clone(),
+        },
+    };
 
-    info!(
-        "开始增量更新 {} → {}: {} 个包 (含 {} 个语言包补丁), {} 字节",
-        local_version,
-        game_pkg.main.major.version,
-        total_count,
-        audio_segments.len(),
-        total_size
-    );
-
-    // 加载下载状态（JSON 缓存）
-    let mut state = read_download_state(game_folder);
-    if state.expected_total_size != 0 && state.expected_total_size != total_size {
-        info!("更新任务变更，重置状态");
-        state = DownloadState::default();
-    }
-    state.expected_total_size = total_size;
-
-    // ===== 阶段 1: 全部下载 =====
-    // 1a: 预检查 - 顺序执行
-    let mut cached_size: u64 = 0;
-    let mut to_download: Vec<usize> = Vec::new();
-
-    for (i, task) in all_tasks.iter().enumerate() {
-        if *cancel_token.lock().await {
-            return Err("Download cancelled".to_string());
-        }
-
-        let dest = game_folder.join(&task.filename);
-
-        // 检查 JSON 缓存
-        if let Some(cached_md5) = state.checksums.get(&task.filename) {
-            if !task.md5.is_empty() && cached_md5.to_lowercase() == task.md5.to_lowercase() {
-                let file_size = if dest.exists() {
-                    tokio::fs::metadata(&dest).await.map(|m| m.len()).unwrap_or(0)
-                } else {
-                    task.size.parse::<u64>().unwrap_or(0)
-                };
-                cached_size += file_size;
-                info!("补丁 {} ({}) 已缓存，跳过下载", i, task.filename);
-                emit_progress(
-                    &app, "download", cached_size, total_size,
-                    total_count, i + 1,
-                    &format!("已缓存，跳过 {}", task.label),
-                    0, 0,
-                );
-                continue;
-            }
-        }
-
-        // 无缓存但文件已存在 → 计算 MD5 补录
-        if dest.exists() && !task.md5.is_empty() {
-            let file_size = tokio::fs::metadata(&dest).await.map(|m| m.len()).unwrap_or(0);
-            emit_progress(
-                &app, "download", cached_size, total_size,
-                total_count, i + 1,
-                &format!("校验已有文件 {} ({:.1} MB)...", task.label, file_size as f64 / 1048576.0),
-                0, 0,
-            );
-            let actual_md5 = hash_verify::md5_file(&dest).await.unwrap_or_default();
-            if actual_md5.to_lowercase() == task.md5.to_lowercase() {
-                info!("补丁 {} MD5 匹配，补录缓存", task.filename);
-                state.checksums.insert(task.filename.clone(), task.md5.clone());
-                save_download_state(game_folder, &state);
-                cached_size += file_size;
-                emit_progress(
-                    &app, "download", cached_size, total_size,
-                    total_count, i + 1,
-                    &format!("已缓存，跳过 {}", task.label),
-                    0, 0,
-                );
-                continue;
-            } else {
-                warn!("补丁 {} MD5 不匹配，将重新下载", task.filename);
-            }
-        }
-
-        to_download.push(i);
-    }
-
-    // 1b: 并行下载
-    if !to_download.is_empty() {
-        info!(
-            "开始并行下载 {} 个补丁 (最多 {} 并发)",
-            to_download.len(),
-            MAX_CONCURRENT_DOWNLOADS
-        );
-
-        let client = Client::builder()
-            .pool_max_idle_per_host(MAX_CONCURRENT_DOWNLOADS + 2)
-            .build()
-            .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
-
-        let shared_bytes = Arc::new(AtomicU64::new(cached_size));
-        let shared_done = Arc::new(AtomicUsize::new(total_count - to_download.len()));
-
-        let reporter = {
-            let app = app.clone();
-            let bytes = shared_bytes.clone();
-            let done = shared_done.clone();
-            let cancel = cancel_token.clone();
-            tokio::spawn(async move {
-                let mut tracker = SpeedTracker::new();
-                let mut prev = bytes.load(Ordering::Relaxed);
-                loop {
-                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                    if *cancel.lock().await {
-                        break;
-                    }
-                    let current = bytes.load(Ordering::Relaxed);
-                    let delta = current.saturating_sub(prev);
-                    prev = current;
-                    if delta > 0 {
-                        tracker.record(delta);
-                    }
-                    let remaining = total_size.saturating_sub(current);
-                    emit_progress(
-                        &app,
-                        "download",
-                        current,
-                        total_size,
-                        total_count,
-                        done.load(Ordering::Relaxed),
-                        &format!("并行下载中 ({}路)", MAX_CONCURRENT_DOWNLOADS),
-                        tracker.speed_bps(),
-                        tracker.eta_seconds(remaining),
-                    );
-                }
-            })
-        };
-
-        let sem = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_DOWNLOADS));
-        let mut handles = Vec::new();
-
-        for &idx in &to_download {
-            let task = &all_tasks[idx];
-            let sem = sem.clone();
-            let client = client.clone();
-            let cancel = cancel_token.clone();
-            let bytes = shared_bytes.clone();
-            let done = shared_done.clone();
-            let dest = game_folder.join(&task.filename);
-            let url = task.url.clone();
-            let md5 = task.md5.clone();
-            let filename = task.filename.clone();
-
-            let handle = tokio::spawn(async move {
-                let _permit = sem
-                    .acquire()
-                    .await
-                    .map_err(|e| format!("信号量错误: {}", e))?;
-                info!("开始下载: {}", filename);
-                download_file_to_disk(&client, &url, &dest, &md5, bytes, cancel).await?;
-                done.fetch_add(1, Ordering::Relaxed);
-                let final_md5 = if !md5.is_empty() {
-                    md5
-                } else {
-                    hash_verify::md5_file(&dest).await.unwrap_or_default()
-                };
-                info!("下载完成: {}", filename);
-                Ok::<(String, String), String>((filename, final_md5))
-            });
-            handles.push(handle);
-        }
-
-        let mut first_error: Option<String> = None;
-        for handle in handles {
-            match handle.await {
-                Ok(Ok((filename, md5))) => {
-                    state.checksums.insert(filename, md5);
-                    save_download_state(game_folder, &state);
-                }
-                Ok(Err(e)) => {
-                    if first_error.is_none() {
-                        first_error = Some(e);
-                    }
-                }
-                Err(e) => {
-                    if first_error.is_none() {
-                        first_error = Some(format!("下载任务失败: {}", e));
-                    }
-                }
-            }
-        }
-
-        reporter.abort();
-
-        if let Some(e) = first_error {
-            return Err(e);
-        }
-    }
-
-    info!("全部 {} 个补丁包下载完成，开始安装...", total_count);
-
-    // ===== 阶段 2: 安装 =====
-    // 2a: 游戏补丁本体
-    if patch_pkg_count > 0 {
-        let first_patch_file = &all_tasks[0].filename;
-        if !state.installed_archives.contains(first_patch_file) {
-            let first_part = game_folder.join(first_patch_file);
-            if first_part.exists() {
-                info!("安装游戏补丁 (从 {})", first_patch_file);
-                match extract_archive(
-                    &first_part, game_folder, &app, "游戏补丁",
-                    total_count, 1,
-                ).await {
-                    Ok(()) => {
-                        for task in &all_tasks[..patch_pkg_count] {
-                            tokio::fs::remove_file(game_folder.join(&task.filename)).await.ok();
-                        }
-                        state.installed_archives.push(first_patch_file.to_string());
-                        save_download_state(game_folder, &state);
-                    }
-                    Err(e) => {
-                        error!("游戏补丁安装失败: {}", e);
-                        for task in &all_tasks[..patch_pkg_count] {
-                            state.checksums.remove(&task.filename);
-                            tokio::fs::remove_file(game_folder.join(&task.filename)).await.ok();
-                        }
-                        save_download_state(game_folder, &state);
-                        return Err(format!("游戏补丁安装失败: {}。已删除文件，请重新下载。", e));
-                    }
-                }
-            }
-        } else {
-            info!("游戏补丁已安装，跳过");
-        }
-    }
-
-    // 2b: 语言包补丁（每个单独解压）
-    for (idx, task) in all_tasks[patch_pkg_count..].iter().enumerate() {
-        if state.installed_archives.contains(&task.filename) {
-            info!("语言包补丁 {} 已安装，跳过", task.filename);
-            continue;
-        }
-
-        if *cancel_token.lock().await {
-            return Err("Download cancelled".to_string());
-        }
-
-        let archive = game_folder.join(&task.filename);
-        if !archive.exists() {
-            continue;
-        }
-
-        info!("安装语言包补丁: {}", task.filename);
-        match extract_archive(
-            &archive, game_folder, &app, &task.label,
-            total_count, patch_pkg_count + idx + 1,
-        ).await {
-            Ok(()) => {
-                tokio::fs::remove_file(&archive).await.ok();
-                state.installed_archives.push(task.filename.clone());
-                save_download_state(game_folder, &state);
-            }
-            Err(e) => {
-                error!("语言包补丁安装失败: {}", e);
-                tokio::fs::remove_file(&archive).await.ok();
-                state.checksums.remove(&task.filename);
-                save_download_state(game_folder, &state);
-                return Err(format!("安装 {} 失败: {}。已删除文件，请重新下载。", task.label, e));
-            }
-        }
-    }
-
-    clear_download_state(game_folder);
-
-    // 处理 hdiff 补丁文件（如果有）
-    apply_hdiff_patches(game_folder).await?;
-
-    // 清理 deletefiles.txt 中列出的旧文件
-    cleanup_deleted_files(game_folder).await;
-
-    // 写入新版本号
-    hoyoverse::write_local_version(game_folder, &game_pkg.main.major.version)?;
-
-    info!("增量更新安装完成");
-    Ok(())
+    execute_plan(app, plan, game_folder, cancel_token).await
 }
 
 // ============================================================
@@ -739,7 +157,7 @@ pub async fn verify_game(
     );
 
     let mut verified_ok: usize = 0;
-    let mut redownloaded: usize = 0;
+    let redownloaded: usize = 0;
     let mut failed: Vec<String> = Vec::new();
     let mut finished_size: u64 = 0;
     let mut speed_tracker = SpeedTracker::new();
@@ -749,7 +167,13 @@ pub async fn verify_game(
             return Err("Verification cancelled".to_string());
         }
 
-        let file_path = game_folder.join(&entry.remote_name);
+        let file_path = match safe_join(game_folder, &entry.remote_name) {
+            Ok(p) => p,
+            Err(e) => {
+                warn!("跳过不安全的清单路径: {} ({})", entry.remote_name, e);
+                continue;
+            }
+        };
         let current_md5 = hash_verify::md5_file(&file_path).await.unwrap_or_default();
 
         if current_md5.to_lowercase() == entry.md5.to_lowercase() {
@@ -910,7 +334,8 @@ async fn download_file_to_disk(
             .map_err(|e| format!("写入错误: {}", e))?;
 
         let len = chunk.len() as u64;
-        downloaded_bytes += len;
+        #[allow(unused_assignments)]
+        { downloaded_bytes += len; }
         shared_bytes.fetch_add(len, Ordering::Relaxed);
     }
 
@@ -919,14 +344,16 @@ async fn download_file_to_disk(
         .map_err(|e| format!("刷新缓冲失败: {}", e))?;
     drop(file);
 
-    // MD5 校验
+    // MD5 校验：不匹配则删除临时文件并返回错误，由调用方重试
     if !expected_md5.is_empty() {
         let actual_md5 = hash_verify::md5_file(&temp_path).await.unwrap_or_default();
         if actual_md5.to_lowercase() != expected_md5.to_lowercase() {
-            warn!(
-                "MD5 不匹配 (期望: {}, 实际: {}), 将继续使用",
-                expected_md5, actual_md5
-            );
+            // 删除损坏的临时文件，确保下次不会断点续传坏数据
+            tokio::fs::remove_file(&temp_path).await.ok();
+            return Err(format!(
+                "MD5 不匹配 (期望: {}, 实际: {}): {}",
+                expected_md5, actual_md5, url
+            ));
         }
     }
 
@@ -1014,7 +441,7 @@ async fn extract_7z(
                     Ok(n) => {
                         let text = String::from_utf8_lossy(&buf[..n]);
                         // 解析 7z 进度百分比，格式如 " 42% 3 - filename" 或 "100%"
-                        for part in text.split(|c: char| c == '\r' || c == '\n') {
+                        for part in text.split(['\r', '\n']) {
                             let trimmed = part.trim();
                             if let Some(pos) = trimmed.find('%') {
                                 let before = trimmed[..pos].trim();
@@ -1275,7 +702,13 @@ async fn cleanup_deleted_files(game_folder: &Path) {
             if line.is_empty() {
                 continue;
             }
-            let file_path = game_folder.join(line);
+            let file_path = match safe_join_remote(game_folder, line) {
+                Ok(p) => p,
+                Err(e) => {
+                    warn!("跳过不安全的删除路径: {} ({})", line, e);
+                    continue;
+                }
+            };
             if file_path.exists() {
                 info!("删除旧文件: {}", line);
                 tokio::fs::remove_file(&file_path).await.ok();
@@ -1288,12 +721,15 @@ async fn cleanup_deleted_files(game_folder: &Path) {
 
 // ============================================================
 // JSON 下载状态文件：缓存 MD5 + 安装进度
+// 内存态 + 节流落盘（≤1s 一次）+ 原子写入（tmp → rename）
 // ============================================================
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 const STATE_FILE: &str = "_download_state.json";
+/// 节流间隔：两次磁盘写入之间的最小间隔
+const FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
 #[derive(Serialize, Deserialize, Default)]
 struct DownloadState {
@@ -1303,31 +739,514 @@ struct DownloadState {
     installed_archives: Vec<String>,
     /// 预期总大小（用于校验是否同一批下载任务）
     expected_total_size: u64,
+    /// 轻量 MD5 缓存："filename:size:mtime_secs" → md5
+    /// 避免文件未变更时重复计算哈希
+    #[serde(default)]
+    file_hashes: HashMap<String, String>,
 }
 
-fn state_path(game_folder: &Path) -> PathBuf {
-    game_folder.join(STATE_FILE)
+/// 带节流的状态写入器：内存中持有 DownloadState，按需落盘
+struct StateWriter {
+    state: DownloadState,
+    game_folder: PathBuf,
+    dirty: bool,
+    last_flush: std::time::Instant,
 }
 
-fn read_download_state(game_folder: &Path) -> DownloadState {
-    let path = state_path(game_folder);
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
-}
+impl StateWriter {
+    /// 从磁盘加载已有状态（或返回默认值）
+    fn load(game_folder: &Path) -> Self {
+        let path = game_folder.join(STATE_FILE);
+        let state = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        Self {
+            state,
+            game_folder: game_folder.to_path_buf(),
+            dirty: false,
+            last_flush: std::time::Instant::now(),
+        }
+    }
 
-fn save_download_state(game_folder: &Path, state: &DownloadState) {
-    let path = state_path(game_folder);
-    if let Ok(json) = serde_json::to_string_pretty(state) {
-        std::fs::write(&path, json).ok();
+    /// 标记脏并节流写盘：距上次写盘 ≥1s 才真正落盘
+    fn mark_dirty(&mut self) {
+        self.dirty = true;
+        if self.last_flush.elapsed() >= FLUSH_INTERVAL {
+            self.flush();
+        }
+    }
+
+    /// 立即落盘（原子写入：写 .tmp → rename）
+    fn flush(&mut self) {
+        if !self.dirty {
+            return;
+        }
+        let path = self.game_folder.join(STATE_FILE);
+        let tmp = self.game_folder.join(format!("{}.tmp", STATE_FILE));
+        if let Ok(json) = serde_json::to_string(&self.state) {
+            if std::fs::write(&tmp, &json).is_ok() {
+                std::fs::rename(&tmp, &path).ok();
+            }
+        }
+        self.dirty = false;
+        self.last_flush = std::time::Instant::now();
+    }
+
+    /// 清除状态文件
+    fn clear(self) {
+        let path = self.game_folder.join(STATE_FILE);
+        std::fs::remove_file(&path).ok();
+        let tmp = self.game_folder.join(format!("{}.tmp", STATE_FILE));
+        std::fs::remove_file(&tmp).ok();
+        // 清理旧格式 checkpoint（如果存在）
+        std::fs::remove_file(self.game_folder.join("_download_checkpoint")).ok();
     }
 }
 
-fn clear_download_state(game_folder: &Path) {
-    std::fs::remove_file(state_path(game_folder)).ok();
-    // 清理旧格式 checkpoint（如果存在）
-    std::fs::remove_file(game_folder.join("_download_checkpoint")).ok();
+// ============================================================
+// 统一下载-安装流水线
+// ============================================================
+
+/// 下载计划：描述"下载什么"和"安装策略"
+struct DownloadPlan {
+    all_tasks: Vec<DownloadTask>,
+    /// 前 N 个任务属于主包（游戏本体/补丁），其余为语言包
+    primary_pkg_count: usize,
+    /// 主包显示标签（如 "游戏本体" / "游戏补丁"）
+    primary_label: String,
+    /// 是否尝试迁移旧格式文件（_download_N.zip）— 仅全量下载需要
+    migrate_old_files: bool,
+    /// 安装完成后的收尾动作
+    post_install: PostInstall,
+}
+
+/// 安装完成后的收尾策略
+enum PostInstall {
+    /// 全量下载：只写版本号
+    WriteVersion { version: String },
+    /// 增量更新：应用 hdiff + 清理 deletefiles + 写版本号
+    PatchAndWriteVersion { version: String },
+}
+
+/// 统一流水线：预检 → 并行下载 → 安装主包 → 安装语言包 → 收尾
+async fn execute_plan(
+    app: AppHandle,
+    plan: DownloadPlan,
+    game_folder: &Path,
+    cancel_token: Arc<Mutex<bool>>,
+) -> Result<(), String> {
+    let DownloadPlan {
+        all_tasks,
+        primary_pkg_count,
+        primary_label,
+        migrate_old_files,
+        post_install,
+    } = plan;
+
+    if all_tasks.is_empty() {
+        return Err("下载任务列表为空".to_string());
+    }
+
+    let total_size: u64 = all_tasks
+        .iter()
+        .filter_map(|s| s.size.parse::<u64>().ok())
+        .sum();
+    let total_count = all_tasks.len();
+
+    info!(
+        "execute_plan: {} 个包 (主包 {}×{}), 总大小 {} 字节",
+        total_count, primary_label, primary_pkg_count, total_size
+    );
+
+    // 加载下载状态（内存态 + 节流落盘）
+    let mut sw = StateWriter::load(game_folder);
+    if sw.state.expected_total_size != 0 && sw.state.expected_total_size != total_size {
+        info!("下载任务变更 (total_size 不同)，重置状态");
+        sw.state = DownloadState::default();
+    }
+    sw.state.expected_total_size = total_size;
+
+    // ===== 阶段 1a: 预检查 =====
+    // 第一遍（快速串行）：JSON 缓存命中 → 跳过；无缓存且文件存在 → 收集待哈希
+    let mut cached_size: u64 = 0;
+    let mut to_download: Vec<usize> = Vec::new();
+    // (task_index, file_path, file_size, is_old_file) — 需要做 MD5 校验的条目
+    let mut needs_hash: Vec<(usize, PathBuf, u64, bool)> = Vec::new();
+
+    for (i, task) in all_tasks.iter().enumerate() {
+        if *cancel_token.lock().await {
+            sw.flush();
+            return Err("Download cancelled".to_string());
+        }
+
+        let dest = safe_join(game_folder, &task.filename)?;
+
+        // 检查 JSON 缓存（纯内存，无 I/O）
+        if let Some(cached_md5) = sw.state.checksums.get(&task.filename) {
+            if !task.md5.is_empty() && cached_md5.to_lowercase() == task.md5.to_lowercase() {
+                let file_size = if dest.exists() {
+                    tokio::fs::metadata(&dest).await.map(|m| m.len()).unwrap_or(0)
+                } else {
+                    task.size.parse::<u64>().unwrap_or(0)
+                };
+                cached_size += file_size;
+                info!("{} ({}) 已缓存，跳过下载", task.label, task.filename);
+                emit_progress(
+                    &app, "download", cached_size, total_size,
+                    total_count, i + 1,
+                    &format!("已缓存，跳过 {}", task.label),
+                    0, 0,
+                );
+                continue;
+            }
+        }
+
+        // 迁移旧格式文件：检查旧文件是否存在（仅全量下载）
+        if migrate_old_files && !dest.exists() && !task.md5.is_empty() {
+            let old_file = game_folder.join(format!("_download_{}.zip", i));
+            if old_file.exists() {
+                let file_size = tokio::fs::metadata(&old_file).await.map(|m| m.len()).unwrap_or(0);
+                needs_hash.push((i, old_file, file_size, true));
+                continue;
+            }
+        }
+
+        // 文件已存在但无缓存 → 需要哈希校验
+        if dest.exists() && !task.md5.is_empty() {
+            let file_size = tokio::fs::metadata(&dest).await.map(|m| m.len()).unwrap_or(0);
+            needs_hash.push((i, dest, file_size, false));
+            continue;
+        }
+
+        // 文件不存在且无缓存 → 需要下载
+        to_download.push(i);
+    }
+
+    // 第二遍（受控并发）：对 needs_hash 中的文件做 MD5 校验
+    if !needs_hash.is_empty() {
+        const HASH_CONCURRENCY: usize = 4;
+
+        // 先用 mtime 缓存快速过滤
+        let mut still_needs_hash: Vec<(usize, PathBuf, u64, bool)> = Vec::new();
+        for (idx, path, file_size, is_old) in needs_hash {
+            let cache_key = make_hash_cache_key(&path, file_size);
+            if let Some(cached) = sw.state.file_hashes.get(&cache_key) {
+                let task = &all_tasks[idx];
+                if !task.md5.is_empty() && cached.to_lowercase() == task.md5.to_lowercase() {
+                    // mtime 缓存命中且 MD5 匹配
+                    if is_old {
+                        let dest = safe_join(game_folder, &task.filename)?;
+                        info!("迁移旧文件 (mtime缓存) {} → {}", path.display(), dest.display());
+                        tokio::fs::rename(&path, &dest).await.ok();
+                    }
+                    sw.state.checksums.insert(task.filename.clone(), task.md5.clone());
+                    sw.mark_dirty();
+                    cached_size += file_size;
+                    info!("{} mtime缓存命中，跳过哈希", task.filename);
+                    emit_progress(
+                        &app, "download", cached_size, total_size,
+                        total_count, idx + 1,
+                        &format!("已缓存，跳过 {}", task.label),
+                        0, 0,
+                    );
+                    continue;
+                }
+            }
+            still_needs_hash.push((idx, path, file_size, is_old));
+        }
+
+        if !still_needs_hash.is_empty() {
+        info!("预检：{} 个文件需要 MD5 校验 ({}路并发)", still_needs_hash.len(), HASH_CONCURRENCY);
+
+        let hash_sem = Arc::new(tokio::sync::Semaphore::new(HASH_CONCURRENCY));
+        let mut hash_handles = Vec::new();
+
+        for (idx, path, file_size, is_old) in still_needs_hash {
+            let sem = hash_sem.clone();
+            let cancel = cancel_token.clone();
+            let handle = tokio::spawn(async move {
+                let _permit = sem.acquire().await.map_err(|e| format!("{}", e))?;
+                if *cancel.lock().await {
+                    return Err("Download cancelled".to_string());
+                }
+                let md5 = hash_verify::md5_file(&path).await.unwrap_or_default();
+                Ok::<(usize, PathBuf, u64, bool, String), String>((idx, path, file_size, is_old, md5))
+            });
+            hash_handles.push(handle);
+        }
+
+        for handle in hash_handles {
+            let (idx, path, file_size, is_old, actual_md5) = match handle.await {
+                Ok(Ok(v)) => v,
+                Ok(Err(e)) => {
+                    sw.flush();
+                    return Err(e);
+                }
+                Err(e) => {
+                    sw.flush();
+                    return Err(format!("哈希任务失败: {}", e));
+                }
+            };
+
+            // 写入 mtime 缓存，无论匹配与否都记录（下次可快速判断）
+            let cache_key = make_hash_cache_key(&path, file_size);
+            sw.state.file_hashes.insert(cache_key, actual_md5.clone());
+
+            let task = &all_tasks[idx];
+            if actual_md5.to_lowercase() == task.md5.to_lowercase() {
+                // MD5 匹配
+                if is_old {
+                    let dest = safe_join(game_folder, &task.filename)?;
+                    info!("迁移旧文件 {} → {}", path.display(), dest.display());
+                    tokio::fs::rename(&path, &dest).await.ok();
+                }
+                sw.state.checksums.insert(task.filename.clone(), task.md5.clone());
+                sw.mark_dirty();
+                cached_size += file_size;
+                info!("{} MD5 匹配，补录缓存", task.filename);
+                emit_progress(
+                    &app, "download", cached_size, total_size,
+                    total_count, idx + 1,
+                    &format!("已缓存，跳过 {}", task.label),
+                    0, 0,
+                );
+            } else {
+                // MD5 不匹配 → 需要下载
+                if is_old {
+                    warn!("旧文件 {} MD5 不匹配，将重新下载", path.display());
+                } else {
+                    warn!("{} MD5 不匹配，将重新下载", task.filename);
+                }
+                to_download.push(idx);
+            }
+        }
+        } // end if !still_needs_hash.is_empty()
+    }
+
+    // 预检结束，确保脏数据落盘
+    sw.flush();
+
+    // ===== 阶段 1b: 并行下载 =====
+    if !to_download.is_empty() {
+        info!(
+            "开始并行下载 {} 个文件 (最多 {} 并发)",
+            to_download.len(),
+            MAX_CONCURRENT_DOWNLOADS
+        );
+
+        let client = Client::builder()
+            .pool_max_idle_per_host(MAX_CONCURRENT_DOWNLOADS + 2)
+            .build()
+            .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+
+        let shared_bytes = Arc::new(AtomicU64::new(cached_size));
+        let shared_done = Arc::new(AtomicUsize::new(total_count - to_download.len()));
+
+        // 进度上报任务
+        let reporter = {
+            let app = app.clone();
+            let bytes = shared_bytes.clone();
+            let done = shared_done.clone();
+            let cancel = cancel_token.clone();
+            tokio::spawn(async move {
+                let mut tracker = SpeedTracker::new();
+                let mut prev = bytes.load(Ordering::Relaxed);
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    if *cancel.lock().await {
+                        break;
+                    }
+                    let current = bytes.load(Ordering::Relaxed);
+                    let delta = current.saturating_sub(prev);
+                    prev = current;
+                    if delta > 0 {
+                        tracker.record(delta);
+                    }
+                    let remaining = total_size.saturating_sub(current);
+                    emit_progress(
+                        &app,
+                        "download",
+                        current,
+                        total_size,
+                        total_count,
+                        done.load(Ordering::Relaxed),
+                        &format!("并行下载中 ({}路)", MAX_CONCURRENT_DOWNLOADS),
+                        tracker.speed_bps(),
+                        tracker.eta_seconds(remaining),
+                    );
+                }
+            })
+        };
+
+        // 启动下载任务
+        let sem = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_DOWNLOADS));
+        let mut handles = Vec::new();
+
+        for &idx in &to_download {
+            let task = &all_tasks[idx];
+            let sem = sem.clone();
+            let client = client.clone();
+            let cancel = cancel_token.clone();
+            let bytes = shared_bytes.clone();
+            let done = shared_done.clone();
+            let dest = safe_join(game_folder, &task.filename)?;
+            let url = task.url.clone();
+            let md5 = task.md5.clone();
+            let filename = task.filename.clone();
+
+            let handle = tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .map_err(|e| format!("信号量错误: {}", e))?;
+                info!("开始下载: {}", filename);
+                download_file_to_disk(&client, &url, &dest, &md5, bytes, cancel).await?;
+                done.fetch_add(1, Ordering::Relaxed);
+                let final_md5 = if !md5.is_empty() {
+                    md5
+                } else {
+                    hash_verify::md5_file(&dest).await.unwrap_or_default()
+                };
+                info!("下载完成: {}", filename);
+                Ok::<(String, String), String>((filename, final_md5))
+            });
+            handles.push(handle);
+        }
+
+        // 等待所有下载完成（节流写盘）
+        let mut first_error: Option<String> = None;
+        for handle in handles {
+            match handle.await {
+                Ok(Ok((filename, md5))) => {
+                    sw.state.checksums.insert(filename, md5);
+                    sw.mark_dirty();
+                }
+                Ok(Err(e)) => {
+                    if first_error.is_none() {
+                        first_error = Some(e);
+                    }
+                }
+                Err(e) => {
+                    if first_error.is_none() {
+                        first_error = Some(format!("下载任务失败: {}", e));
+                    }
+                }
+            }
+        }
+
+        reporter.abort();
+
+        // 下载阶段结束，强制落盘
+        sw.flush();
+
+        if let Some(e) = first_error {
+            return Err(e);
+        }
+    }
+
+    info!("全部 {} 个包下载完成，开始安装...", total_count);
+
+    // ===== 阶段 2a: 安装主包（可能是分卷，只需从第一个 part 解压一次）=====
+    if primary_pkg_count > 0 {
+        let first_file = &all_tasks[0].filename;
+        if !sw.state.installed_archives.contains(first_file) {
+            let first_part = safe_join(game_folder, first_file)?;
+            if first_part.exists() {
+                info!("安装{} (从 {})", primary_label, first_file);
+                match extract_archive(
+                    &first_part, game_folder, &app, &primary_label,
+                    total_count, 1,
+                ).await {
+                    Ok(()) => {
+                        for task in &all_tasks[..primary_pkg_count] {
+                            if let Ok(p) = safe_join(game_folder, &task.filename) {
+                                tokio::fs::remove_file(p).await.ok();
+                            }
+                        }
+                        sw.state.installed_archives.push(first_file.to_string());
+                        sw.flush();
+                    }
+                    Err(e) => {
+                        error!("{}安装失败: {}", primary_label, e);
+                        for task in &all_tasks[..primary_pkg_count] {
+                            sw.state.checksums.remove(&task.filename);
+                            if let Ok(p) = safe_join(game_folder, &task.filename) {
+                                tokio::fs::remove_file(p).await.ok();
+                            }
+                        }
+                        sw.flush();
+                        return Err(format!(
+                            "{}安装失败: {}。已删除文件，请重新下载。", primary_label, e
+                        ));
+                    }
+                }
+            } else {
+                warn!("{}首段文件不存在: {}", primary_label, first_part.display());
+            }
+        } else {
+            info!("{}已安装，跳过", primary_label);
+        }
+    }
+
+    // ===== 阶段 2b: 安装语言包（每个单独解压）=====
+    for (idx, task) in all_tasks[primary_pkg_count..].iter().enumerate() {
+        if sw.state.installed_archives.contains(&task.filename) {
+            info!("{} 已安装，跳过", task.label);
+            continue;
+        }
+
+        if *cancel_token.lock().await {
+            sw.flush();
+            return Err("Download cancelled".to_string());
+        }
+
+        let archive = safe_join(game_folder, &task.filename)?;
+        if !archive.exists() {
+            info!("语言包文件不存在 (可能已安装): {}", task.filename);
+            continue;
+        }
+
+        info!("安装 {}", task.label);
+        match extract_archive(
+            &archive, game_folder, &app, &task.label,
+            total_count, primary_pkg_count + idx + 1,
+        ).await {
+            Ok(()) => {
+                tokio::fs::remove_file(&archive).await.ok();
+                sw.state.installed_archives.push(task.filename.clone());
+                sw.flush();
+            }
+            Err(e) => {
+                error!("{} 安装失败: {}", task.label, e);
+                tokio::fs::remove_file(&archive).await.ok();
+                sw.state.checksums.remove(&task.filename);
+                sw.flush();
+                return Err(format!(
+                    "安装 {} 失败: {}。已删除文件，请重新下载。",
+                    task.label, e
+                ));
+            }
+        }
+    }
+
+    // ===== 阶段 3: 收尾 =====
+    sw.clear();
+
+    match post_install {
+        PostInstall::WriteVersion { version } => {
+            hoyoverse::write_local_version(game_folder, &version)?;
+            info!("全量下载安装完成");
+        }
+        PostInstall::PatchAndWriteVersion { version } => {
+            apply_hdiff_patches(game_folder).await?;
+            cleanup_deleted_files(game_folder).await;
+            hoyoverse::write_local_version(game_folder, &version)?;
+            info!("增量更新安装完成");
+        }
+    }
+
+    Ok(())
 }
 
 // ============================================================
@@ -1342,6 +1261,17 @@ struct DownloadTask {
     label: String,
     /// 从 URL 提取的原始文件名（如 StarRail_4.0.0.7z.001, Chinese.7z）
     filename: String,
+}
+
+/// 构造 mtime 缓存键："filename:size:mtime_secs"
+fn make_hash_cache_key(path: &Path, size: u64) -> String {
+    let mtime = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).map_err(std::io::Error::other))
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    format!("{}:{}:{}", name, size, mtime)
 }
 
 /// 从 URL 中提取文件名
@@ -1360,7 +1290,7 @@ fn collect_audio_segments(
 
     audio_pkgs
         .iter()
-        .filter(|pkg| languages.iter().any(|lang| pkg.language == *lang))
+        .filter(|pkg| languages.contains(&pkg.language))
         .map(|pkg| {
             (
                 pkg.language.clone(),
@@ -1375,6 +1305,7 @@ fn collect_audio_segments(
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_progress(
     app: &AppHandle,
     phase: &str,

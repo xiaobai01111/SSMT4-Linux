@@ -27,7 +27,7 @@ pub async fn md5_file(path: &Path) -> Result<String, String> {
         .await
         .map_err(|e| format!("Failed to open file {}: {}", path.display(), e))?;
     let mut hasher = Md5::new();
-    let mut buf = vec![0u8; 4096];
+    let mut buf = vec![0u8; 1024 * 1024];
     loop {
         let n = file
             .read(&mut buf)
@@ -41,6 +41,7 @@ pub async fn md5_file(path: &Path) -> Result<String, String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+#[allow(dead_code)]
 pub async fn verify_sha256(path: &Path, expected: &str) -> Result<bool, String> {
     let actual = sha256_file(path).await?;
     Ok(actual == expected)

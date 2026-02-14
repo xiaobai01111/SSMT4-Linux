@@ -153,11 +153,11 @@ pub fn get_recent_logs(lines: Option<usize>) -> Result<Vec<String>, String> {
     let mut log_files: Vec<_> = std::fs::read_dir(&log_dir)
         .map_err(|e| format!("Failed to read log dir: {}", e))?
         .flatten()
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "log"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "log"))
         .collect();
 
     log_files
-        .sort_by_key(|e| std::cmp::Reverse(e.metadata().ok().map(|m| m.modified().ok()).flatten()));
+        .sort_by_key(|e| std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok())));
 
     if let Some(latest) = log_files.first() {
         let content = std::fs::read_to_string(latest.path())
@@ -193,4 +193,45 @@ pub fn list_prefix_templates() -> Result<Vec<PrefixTemplate>, String> {
 #[tauri::command]
 pub fn save_prefix_template(template: PrefixTemplate) -> Result<(), String> {
     prefix::save_template(&template)
+}
+
+// ============================================================
+// Wine/Proton 远程版本管理
+// ============================================================
+
+#[tauri::command]
+pub async fn fetch_remote_proton(
+    settings: State<'_, Mutex<crate::configs::app_config::AppConfig>>,
+) -> Result<Vec<detector::RemoteWineVersion>, String> {
+    let custom_paths = {
+        let s = settings.lock().map_err(|e| e.to_string())?;
+        s.custom_search_paths.clone()
+    };
+    let installed = detector::scan_all_versions(&custom_paths);
+    detector::fetch_remote_proton_versions(&installed).await
+}
+
+#[tauri::command]
+pub async fn download_proton(app: tauri::AppHandle, download_url: String, tag: String, variant: String) -> Result<String, String> {
+    detector::download_and_install_proton(&download_url, &tag, &variant, Some(app)).await
+}
+
+// ============================================================
+// DXVK 版本管理命令
+// ============================================================
+
+#[tauri::command]
+pub fn scan_local_dxvk() -> Result<Vec<graphics::DxvkLocalVersion>, String> {
+    Ok(graphics::scan_local_dxvk_versions())
+}
+
+#[tauri::command]
+pub fn detect_dxvk_status(game_id: &str) -> Result<graphics::DxvkInstalledStatus, String> {
+    let pfx_dir = prefix::get_prefix_pfx_dir(game_id);
+    Ok(graphics::detect_installed_dxvk(&pfx_dir))
+}
+
+#[tauri::command]
+pub async fn fetch_dxvk_versions() -> Result<Vec<graphics::DxvkRemoteVersion>, String> {
+    graphics::fetch_dxvk_releases(20).await
 }

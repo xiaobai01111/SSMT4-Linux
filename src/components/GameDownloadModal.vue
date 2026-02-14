@@ -495,6 +495,7 @@ const canDownload = computed(() => {
 });
 
 const isWorking = computed(() => isActiveFor(props.gameName) && (dlState.phase === 'downloading' || dlState.phase === 'verifying'));
+const isVerifyPhase = computed(() => dlState.phase === 'verifying' || progress.value?.phase === 'verify');
 const workingPhase = computed(() => {
   if (!isActiveFor(props.gameName)) return '';
   if (dlState.phase === 'verifying') return '校验中';
@@ -658,7 +659,9 @@ watch(() => props.modelValue, (val) => {
             <div v-if="isWorking && progress" class="progress-section">
               <div class="progress-phase">{{ workingPhase }}</div>
               <div class="progress-bar-track">
-                <div class="progress-bar-fill" :style="{ width: progressPercent + '%' }"></div>
+                <div class="progress-bar-fill"
+                  :class="{ 'verify-fill': isVerifyPhase }"
+                  :style="{ width: progressPercent + '%' }"></div>
               </div>
               <div class="progress-info">
                 <span>{{ progressPercent }}%</span>
@@ -671,12 +674,15 @@ watch(() => props.modelValue, (val) => {
               </div>
               <div class="progress-detail">
                 <span class="progress-file">{{ progress.current_file }}</span>
-                <span v-if="progress.phase !== 'install'">
+                <span v-if="isVerifyPhase">
+                  校验速度 {{ formatSize(progress.speed_bps) }}/s · 剩余 {{ formatEta(progress.eta_seconds) }}
+                </span>
+                <span v-else-if="progress.phase !== 'install'">
                   {{ formatSize(progress.speed_bps) }}/s · 剩余 {{ formatEta(progress.eta_seconds) }}
                 </span>
               </div>
               <div class="progress-counts">
-                包: {{ progress.finished_count }} / {{ progress.total_count }}
+                {{ isVerifyPhase ? '文件' : '包' }}: {{ progress.finished_count }} / {{ progress.total_count }}
               </div>
               <button class="action-btn danger" @click="cancelDownload">取消</button>
             </div>
@@ -895,6 +901,9 @@ watch(() => props.modelValue, (val) => {
 .progress-bar-fill {
   height:100%; background:linear-gradient(90deg, #F7CE46, #f0a030); border-radius:5px;
   transition: width 0.3s ease;
+}
+.progress-bar-fill.verify-fill {
+  background:linear-gradient(90deg, #67c23a, #4caf50);
 }
 .progress-info {
   display:flex; justify-content:space-between; font-size:13px;

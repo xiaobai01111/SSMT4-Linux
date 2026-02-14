@@ -10,11 +10,13 @@ import {
   ensureDirectory,
   openInExplorer,
   toggleSymlink as apiToggleSymlink,
+  getSymlinkStatus,
   check3dmigotoIntegrity,
   startGame as apiStartGame,
   checkGameProtectionStatus,
   getGameProtectionInfo,
   joinPath,
+  listenEvent,
 } from '../api'
 import GameSettingsModal from '../components/GameSettingsModal.vue'
 import GameDownloadModal from '../components/GameDownloadModal.vue'
@@ -27,6 +29,10 @@ import { useI18n  } from 'vue-i18n';
 const { t, te } = useI18n()
 const router = useRouter()
 const getGameName = (game: any) => te(`games.${game.name}`) ? t(`games.${game.name}`) : (game.displayName || game.name)
+const hasCurrentGame = computed(() => {
+  const gameName = appSettings.currentConfigName;
+  return !!gameName && gameName !== 'Default';
+});
 
 
 // Computed property to get sidebar games (filtered and reverse order)
@@ -83,55 +89,36 @@ const hideGame = async () => {
   closeMenu();
 };
 
-const open3dmigotoFolder = async () => {
+const resolve3dmigotoDir = async (): Promise<string | null> => {
   const gameName = appSettings.currentConfigName;
-  if (!gameName || gameName === 'Default') return;
+  if (!gameName || gameName === 'Default') return null;
 
+  const data = await loadGameConfig(gameName);
+  let installDir = data.threeDMigoto?.installDir;
+  if (!installDir && appSettings.cacheDir) {
+    installDir = await joinPath(appSettings.cacheDir, '3Dmigoto', gameName);
+  }
+  return installDir || null;
+};
+
+const open3dmigotoPath = async (target: 'folder' | 'ini') => {
+  if (!hasCurrentGame.value) return;
   try {
-    // We need to load the config to find the path
-    const data = await loadGameConfig(gameName);
-    let path = data.threeDMigoto?.installDir;
-
-    // Default Logic (Must match Modal logic)
-    if (!path && appSettings.cacheDir) {
-      path = await joinPath(appSettings.cacheDir, '3Dmigoto', gameName);
+    const installDir = await resolve3dmigotoDir();
+    if (!installDir) {
+      await showMessage('未找到 3Dmigoto 路径，请先在游戏设置中配置', { title: '提示', kind: 'info' });
+      return;
     }
-
-    if (path) {
-      await ensureDirectory(path);
-      await openInExplorer(path);
-    } else {
-      console.warn('No 3Dmigoto path found and no cache dir set.');
-    }
+    await ensureDirectory(installDir);
+    const openTarget = target === 'ini' ? await joinPath(installDir, 'd3dx.ini') : installDir;
+    await openInExplorer(openTarget);
   } catch (e) {
-    console.error('Failed to open 3Dmigoto folder:', e);
+    console.error(`Failed to open 3Dmigoto ${target}:`, e);
   }
 };
 
-const openD3dxIni = async () => {
-  const gameName = appSettings.currentConfigName;
-  if (!gameName || gameName === 'Default') return;
-
-  try {
-    let path: string | undefined;
-    // Load config to find path
-    const data = await loadGameConfig(gameName);
-    path = data.threeDMigoto?.installDir;
-
-    // Fallback
-    if (!path && appSettings.cacheDir) {
-      path = await joinPath(appSettings.cacheDir, '3Dmigoto', gameName);
-    }
-
-    if (path) {
-      await ensureDirectory(path);
-      const iniPath = await joinPath(path, 'd3dx.ini');
-      await openInExplorer(iniPath);
-    }
-  } catch (e) {
-    console.error('Failed to open d3dx.ini:', e);
-  }
-};
+const open3dmigotoFolder = () => open3dmigotoPath('folder');
+const openD3dxIni = () => open3dmigotoPath('ini');
 
 const showSettings = ref(false);
 const showDownload = ref(false);
@@ -150,26 +137,49 @@ const openSettingsAndUpdate = () => {
   }, 100);
 };
 
-const toggleSymlink = async (enable: boolean) => {
-  const gameName = appSettings.currentConfigName;
-  if (!gameName || gameName === 'Default') return;
+const symlinkEnabled = ref(false);
+const symlinkToggleLabel = computed(() =>
+  symlinkEnabled.value ? t('home.dropdown.disablesymlink') : t('home.dropdown.enablesymlink')
+);
+
+const refreshSymlinkStatus = async () => {
+  if (!hasCurrentGame.value) {
+    symlinkEnabled.value = false;
+    return;
+  }
 
   try {
-    const data = await loadGameConfig(gameName);
-    let gamePath = data.threeDMigoto?.installDir;
-    if (!gamePath && appSettings.cacheDir) {
-      gamePath = await joinPath(appSettings.cacheDir, '3Dmigoto', gameName);
-    }
-    if (!gamePath) {
-      await showMessage('无法确定游戏路径', { title: '错误', kind: 'error' });
+    const installDir = await resolve3dmigotoDir();
+    if (!installDir) {
+      symlinkEnabled.value = false;
       return;
     }
-    await apiToggleSymlink(gamePath, enable);
+    symlinkEnabled.value = await getSymlinkStatus(installDir);
+  } catch {
+    symlinkEnabled.value = false;
+  }
+};
+
+const setSymlinkState = async (enable: boolean) => {
+  if (!hasCurrentGame.value) return;
+
+  try {
+    const installDir = await resolve3dmigotoDir();
+    if (!installDir) {
+      await showMessage('未找到 3Dmigoto 路径，请先在游戏设置中配置', { title: '错误', kind: 'error' });
+      return;
+    }
+    await apiToggleSymlink(installDir, enable);
+    symlinkEnabled.value = enable;
     await showMessage(enable ? 'Symlink 已开启' : 'Symlink 已关闭', { title: '成功', kind: 'info' });
   } catch (e) {
     console.error('Failed to toggle symlink:', e);
     await showMessage(`操作失败: ${e}`, { title: '错误', kind: 'error' });
   }
+};
+
+const toggleSymlink = async () => {
+  await setSymlinkState(!symlinkEnabled.value);
 };
 
 // 检查当前游戏是否已配置可执行文件
@@ -189,8 +199,19 @@ const checkGameExe = async () => {
   }
 };
 
+// 组件下载进度（Proton/DXVK）
+interface ComponentDlProgress {
+  component: string;
+  phase: string;
+  downloaded: number;
+  total: number;
+}
+const componentDlProgress = ref<ComponentDlProgress | null>(null);
+
 // Start Game Logic
 const isLaunching = ref(false);
+const isGameRunning = ref(false);
+const runningGameName = ref('');
 
 const ensureRiskAcknowledged = async () => {
   if (appSettings.tosRiskAcknowledged) return true;
@@ -326,15 +347,41 @@ const launchGame = async () => {
 
 watch(() => appSettings.currentConfigName, () => {
   checkGameExe();
+  refreshSymlinkStatus();
 });
 
-onMounted(() => {
+let unlistenLifecycle: (() => void) | null = null;
+let unlistenComponentDl: (() => void) | null = null;
+
+onMounted(async () => {
   document.addEventListener('click', closeMenu);
   checkGameExe();
+  refreshSymlinkStatus();
+  unlistenLifecycle = await listenEvent('game-lifecycle', (event: any) => {
+    const data = event.payload;
+    if (data.event === 'started') {
+      isGameRunning.value = true;
+      runningGameName.value = data.game || '';
+    } else if (data.event === 'exited') {
+      isGameRunning.value = false;
+      runningGameName.value = '';
+      isLaunching.value = false;
+    }
+  });
+  unlistenComponentDl = await listenEvent('component-download-progress', (event: any) => {
+    const data = event.payload as ComponentDlProgress;
+    if (data.phase === 'done') {
+      componentDlProgress.value = null;
+    } else {
+      componentDlProgress.value = data;
+    }
+  });
 });
 
 onUnmounted(() => {
   document.removeEventListener('click', closeMenu);
+  if (unlistenLifecycle) unlistenLifecycle();
+  if (unlistenComponentDl) unlistenComponentDl();
 });
 </script>
 
@@ -384,7 +431,25 @@ onUnmounted(() => {
           </span>
         </div>
         <div class="mini-dl-track">
-          <div class="mini-dl-fill" :style="{ width: (dlState.progress && dlState.progress.total_size > 0 ? Math.round((dlState.progress.finished_size / dlState.progress.total_size) * 100) : 0) + '%' }"></div>
+          <div class="mini-dl-fill"
+            :class="{ 'mini-dl-verify': dlState.phase === 'verifying' || dlState.progress?.phase === 'verify' }"
+            :style="{ width: (dlState.progress && dlState.progress.total_size > 0 ? Math.round((dlState.progress.finished_size / dlState.progress.total_size) * 100) : 0) + '%' }"></div>
+        </div>
+      </div>
+
+      <!-- Proton/DXVK 组件下载进度 toast -->
+      <div v-if="componentDlProgress" class="mini-dl-bar" style="top: 80px;">
+        <div class="mini-dl-info">
+          <span class="mini-dl-name">{{ componentDlProgress.component }}</span>
+          <span class="mini-dl-phase">{{ componentDlProgress.phase === 'downloading' ? '下载中' : componentDlProgress.phase === 'extracting' ? '解压中' : componentDlProgress.phase }}</span>
+          <span class="mini-dl-pct" v-if="componentDlProgress.total > 0 && componentDlProgress.phase === 'downloading'">
+            {{ Math.round(componentDlProgress.downloaded / componentDlProgress.total * 100) }}%
+          </span>
+        </div>
+        <div class="mini-dl-track">
+          <div class="mini-dl-fill"
+            :class="{ 'mini-dl-verify': componentDlProgress.phase === 'extracting' }"
+            :style="{ width: componentDlProgress.total > 0 ? Math.round(componentDlProgress.downloaded / componentDlProgress.total * 100) + '%' : '100%' }"></div>
         </div>
       </div>
 
@@ -403,12 +468,13 @@ onUnmounted(() => {
 
     <div class="action-bar">
       <!-- Start Game Button -->
-      <div class="start-game-btn" @click="gameHasExe ? launchGame() : (showDownload = true)" :class="{ 'disabled': isLaunching }">
+      <div class="start-game-btn" @click="isGameRunning ? null : (gameHasExe ? launchGame() : (showDownload = true))" :class="{ 'disabled': isLaunching, 'running': isGameRunning }">
         <div class="icon-wrapper">
-          <div class="play-triangle" v-if="gameHasExe"></div>
+          <div class="play-triangle" v-if="gameHasExe && !isGameRunning"></div>
+          <div v-else-if="isGameRunning" class="running-indicator"></div>
           <svg v-else xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
         </div>
-        <span class="btn-text">{{ gameHasExe ? t('home.css.startgame') : t('home.css.downloadgame') }}</span>
+        <span class="btn-text">{{ isGameRunning ? '游戏中' : (gameHasExe ? t('home.css.startgame') : t('home.css.downloadgame')) }}</span>
       </div>
 
       <!-- Settings Menu Button -->
@@ -422,13 +488,12 @@ onUnmounted(() => {
         </div>
         <template #dropdown>
           <el-dropdown-menu>
-            <el-dropdown-item @click="showSettings = true">{{ t('home.dropdown.gamesettings') }}</el-dropdown-item>
-            <el-dropdown-item @click="open3dmigotoFolder">{{ t('home.dropdown.open3dmigoto') }}</el-dropdown-item>
-            <el-dropdown-item @click="openD3dxIni">{{ t('home.dropdown.opend3dx') }}</el-dropdown-item>
-            <el-dropdown-item divided @click="toggleSymlink(true)">{{ t('home.dropdown.enablesymlink') }}</el-dropdown-item>
-            <el-dropdown-item @click="toggleSymlink(false)">{{ t('home.dropdown.disablesymlink') }}</el-dropdown-item>
-            <el-dropdown-item divided @click="showDownload = true">下载/防护管理</el-dropdown-item>
-            <el-dropdown-item @click="openSettingsAndUpdate">{{ t('home.dropdown.checkupdate') }}</el-dropdown-item>
+            <el-dropdown-item @click="showSettings = true" :disabled="!hasCurrentGame">{{ t('home.dropdown.gamesettings') }}</el-dropdown-item>
+            <el-dropdown-item @click="open3dmigotoFolder" :disabled="!hasCurrentGame">{{ t('home.dropdown.open3dmigoto') }}</el-dropdown-item>
+            <el-dropdown-item @click="openD3dxIni" :disabled="!hasCurrentGame">{{ t('home.dropdown.opend3dx') }}</el-dropdown-item>
+            <el-dropdown-item divided @click="toggleSymlink" :disabled="!hasCurrentGame">{{ symlinkToggleLabel }}</el-dropdown-item>
+            <el-dropdown-item divided @click="showDownload = true" :disabled="!hasCurrentGame">下载/防护管理</el-dropdown-item>
+            <el-dropdown-item @click="openSettingsAndUpdate" :disabled="!hasCurrentGame">{{ t('home.dropdown.checkupdate') }}</el-dropdown-item>
 
           </el-dropdown-menu>
         </template>
@@ -641,6 +706,23 @@ onUnmounted(() => {
   opacity: 0.6;
   filter: grayscale(0.5);
 }
+.start-game-btn.running {
+  pointer-events: none;
+  background: linear-gradient(135deg, rgba(76, 175, 80, 0.25), rgba(56, 142, 60, 0.35));
+  border-color: rgba(76, 175, 80, 0.5);
+  color: #81c784;
+}
+.running-indicator {
+  width: 10px;
+  height: 10px;
+  background: #4caf50;
+  border-radius: 50%;
+  animation: pulse-green 1.5s ease-in-out infinite;
+}
+@keyframes pulse-green {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
 
 /* Hover Effect: Flip Colors for Start Button */
 .start-game-btn:hover {
@@ -832,6 +914,9 @@ onUnmounted(() => {
   background: linear-gradient(90deg, #F7CE46, #f0a030);
   border-radius: 2px;
   transition: width 0.3s ease;
+}
+.mini-dl-fill.mini-dl-verify {
+  background: linear-gradient(90deg, #67c23a, #4caf50);
 }
 </style>
 

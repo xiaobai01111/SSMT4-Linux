@@ -1,57 +1,24 @@
 use std::path::{Path, PathBuf};
 use tracing::{error, info, warn};
 
+use crate::configs::game_presets;
+
 // ============================================================
-// 各游戏遥测服务器映射（按游戏分类）
+// 遥测数据查询（配置驱动，从 game_presets 注册表获取）
 // ============================================================
-
-/// HoYoverse 遥测服务器（国服 + 国际服通用）
-const HOYOVERSE_TELEMETRY_SERVERS: &[&str] = &[
-    // 国服
-    "log-upload.mihoyo.com",
-    "uspider.yuanshen.com",
-    // 国际服
-    "log-upload-os.hoyoverse.com",
-    "overseauspider.yuanshen.com",
-    "sg-public-data-api.hoyoverse.com",
-    "public-data-api.mihoyo.com",
-];
-
-/// 鸣潮遥测服务器
-const KUROGAMES_TELEMETRY_SERVERS: &[&str] = &["pc.crashsight.wetest.net"];
-
-/// 尘白禁区遥测服务器（目前无已知需屏蔽的遥测）
-const SNOWBREAK_TELEMETRY_SERVERS: &[&str] = &[];
 
 /// 根据游戏 preset 返回对应的遥测服务器列表
-fn get_telemetry_servers(game_preset: &str) -> &'static [&'static str] {
-    match game_preset {
-        "GIMI" | "SRMI" | "ZZMI" | "HIMI" => HOYOVERSE_TELEMETRY_SERVERS,
-        "WWMI" | "WuWa" => KUROGAMES_TELEMETRY_SERVERS,
-        "EFMI" => SNOWBREAK_TELEMETRY_SERVERS,
-        _ => &[],
-    }
+fn get_telemetry_servers(game_preset: &str) -> Vec<String> {
+    game_presets::get_preset(game_preset)
+        .map(|p| p.telemetry_servers.clone())
+        .unwrap_or_default()
 }
 
-/// HoYoverse 游戏中需要删除的遥测 DLL（相对于游戏数据目录）
-fn get_telemetry_dlls(game_preset: &str) -> Vec<&'static str> {
-    match game_preset {
-        "SRMI" => vec![
-            "StarRail_Data/Plugins/x86_64/Telemetry.dll",
-            "StarRail_Data/Plugins/x86_64/telemetry.dll",
-        ],
-        "GIMI" => vec![
-            "GenshinImpact_Data/Plugins/x86_64/Telemetry.dll",
-            "GenshinImpact_Data/Plugins/x86_64/telemetry.dll",
-            "YuanShen_Data/Plugins/x86_64/Telemetry.dll",
-            "YuanShen_Data/Plugins/x86_64/telemetry.dll",
-        ],
-        "ZZMI" => vec![
-            "ZenlessZoneZero_Data/Plugins/x86_64/Telemetry.dll",
-            "ZenlessZoneZero_Data/Plugins/x86_64/telemetry.dll",
-        ],
-        _ => vec![],
-    }
+/// 根据游戏 preset 返回需要删除的遥测 DLL 路径
+fn get_telemetry_dlls(game_preset: &str) -> Vec<String> {
+    game_presets::get_preset(game_preset)
+        .map(|p| p.telemetry_dlls.clone())
+        .unwrap_or_default()
 }
 
 fn normalize_game_root(game_path: Option<&str>) -> Option<PathBuf> {
@@ -85,16 +52,16 @@ fn evaluate_telemetry_protection(game_preset: &str) -> (bool, Vec<String>, Vec<S
     let mut blocked: Vec<String> = Vec::new();
     let mut unblocked: Vec<String> = Vec::new();
 
-    for &server in servers {
+    for server in &servers {
         let is_blocked = hosts_content.lines().any(|line| {
             let line = line.trim();
-            !line.starts_with('#') && line.contains(server) && line.contains("0.0.0.0")
+            !line.starts_with('#') && line.contains(server.as_str()) && line.contains("0.0.0.0")
         });
 
         if is_blocked {
-            blocked.push(server.to_string());
+            blocked.push(server.clone());
         } else {
-            unblocked.push(server.to_string());
+            unblocked.push(server.clone());
         }
     }
 
@@ -121,7 +88,7 @@ fn evaluate_file_protection(
 
     let mut removed: Vec<String> = Vec::new();
     let mut existing: Vec<String> = Vec::new();
-    for dll in dlls {
+    for dll in &dlls {
         let full_path = root.join(dll);
         if full_path.exists() {
             existing.push(dll.to_string());
@@ -237,15 +204,15 @@ pub async fn disable_telemetry(game_preset: String) -> Result<serde_json::Value,
 
     // 读取当前 /etc/hosts 判断哪些还未屏蔽
     let hosts_content = std::fs::read_to_string("/etc/hosts").unwrap_or_default();
-    let mut to_block: Vec<&str> = Vec::new();
+    let mut to_block: Vec<String> = Vec::new();
 
-    for &server in servers {
+    for server in &servers {
         let already_blocked = hosts_content.lines().any(|line| {
             let line = line.trim();
-            !line.starts_with('#') && line.contains(server) && line.contains("0.0.0.0")
+            !line.starts_with('#') && line.contains(server.as_str()) && line.contains("0.0.0.0")
         });
         if !already_blocked {
-            to_block.push(server);
+            to_block.push(server.clone());
         }
     }
 
@@ -342,7 +309,7 @@ pub async fn restore_telemetry(game_preset: String) -> Result<serde_json::Value,
             if in_ssmt4_block {
                 let is_telemetry_entry = servers
                     .iter()
-                    .any(|&server| trimmed == format!("0.0.0.0 {}", server));
+                    .any(|server| trimmed == format!("0.0.0.0 {}", server));
                 if is_telemetry_entry {
                     removed_count += 1;
                     return false; // 移除该遥测条目
@@ -357,7 +324,7 @@ pub async fn restore_telemetry(game_preset: String) -> Result<serde_json::Value,
             if trimmed.starts_with("0.0.0.0 ") {
                 let is_our_entry = servers
                     .iter()
-                    .any(|&server| trimmed == format!("0.0.0.0 {}", server));
+                    .any(|server| trimmed == format!("0.0.0.0 {}", server));
                 if is_our_entry {
                     removed_count += 1;
                     return false;

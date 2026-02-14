@@ -64,19 +64,10 @@ impl Default for DxvkConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Vkd3dConfig {
     pub enabled: bool,
     pub version: Option<String>,
-}
-
-impl Default for Vkd3dConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            version: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
