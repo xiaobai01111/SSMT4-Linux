@@ -1,5 +1,6 @@
 use crate::downloader::cdn::{LauncherInfo, ResourceIndex, ResourceFile};
 use crate::downloader::progress::{DownloadProgress, SpeedTracker};
+use crate::utils::file_manager::safe_join_remote;
 use futures_util::StreamExt;
 use reqwest::Client;
 use std::path::{Path, PathBuf};
@@ -122,7 +123,7 @@ pub async fn download_game(
             &launcher_info.resources_base_path,
             &file.dest,
         );
-        let dest = game_folder.join(&file.dest);
+        let dest = safe_join_remote(game_folder, &file.dest)?;
         let expected_size = file.size;
 
         let handle = tokio::spawn(async move {
@@ -292,6 +293,7 @@ async fn download_file_parallel(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_progress(
     app: &AppHandle,
     finished_size: u64,

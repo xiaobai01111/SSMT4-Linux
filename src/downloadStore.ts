@@ -24,6 +24,7 @@ export type DlPhase = 'idle' | 'downloading' | 'verifying' | 'done' | 'error';
 export interface DlState {
   active: boolean;
   gameName: string;
+  gameFolder: string;
   displayName: string;
   phase: DlPhase;
   progress: DownloadProgress | null;
@@ -33,6 +34,7 @@ export interface DlState {
 export const dlState = reactive<DlState>({
   active: false,
   gameName: '',
+  gameFolder: '',
   displayName: '',
   phase: 'idle',
   progress: null,
@@ -86,6 +88,7 @@ export function fireDownload(opts: StartDlOpts) {
 
   dlState.active = true;
   dlState.gameName = opts.gameName;
+  dlState.gameFolder = opts.gameFolder;
   dlState.displayName = opts.displayName;
   dlState.phase = 'downloading';
   dlState.progress = null;
@@ -215,7 +218,7 @@ async function _execVerify(opts: VerifyOpts) {
 
 export async function cancelActive() {
   try {
-    await apiCancelDownload();
+    await apiCancelDownload(dlState.gameFolder || undefined);
   } catch (e) {
     console.error('[dlStore] cancel failed:', e);
   }

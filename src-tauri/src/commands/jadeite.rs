@@ -27,7 +27,7 @@ pub async fn get_jadeite_status(game_name: String) -> Result<serde_json::Value, 
 
 /// 下载并安装最新版 jadeite
 #[tauri::command]
-pub async fn install_jadeite(app: tauri::AppHandle, game_name: String) -> Result<String, String> {
+pub async fn install_jadeite(_app: tauri::AppHandle, game_name: String) -> Result<String, String> {
     let patch_dir = resolve_patch_dir(&game_name)?;
     std::fs::create_dir_all(&patch_dir)
         .map_err(|e| format!("创建 patch 目录失败: {}", e))?;
@@ -69,15 +69,24 @@ pub async fn install_jadeite(app: tauri::AppHandle, game_name: String) -> Result
         .await
         .map_err(|e| format!("下载 jadeite 失败: {}", e))?;
 
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| format!("读取 jadeite 数据失败: {}", e))?;
-
-    std::fs::write(&zip_path, &bytes)
-        .map_err(|e| format!("保存 jadeite.zip 失败: {}", e))?;
-
-    info!("[jadeite] 下载完成 ({} bytes)，正在解压...", bytes.len());
+    // 流式写入临时文件，避免全量驻留内存
+    {
+        use futures_util::StreamExt;
+        use tokio::io::AsyncWriteExt;
+        let mut stream = response.bytes_stream();
+        let mut file = tokio::fs::File::create(&zip_path)
+            .await
+            .map_err(|e| format!("创建 jadeite.zip 失败: {}", e))?;
+        let mut total: u64 = 0;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| format!("读取 jadeite 数据流失败: {}", e))?;
+            file.write_all(&chunk).await
+                .map_err(|e| format!("写入 jadeite.zip 失败: {}", e))?;
+            total += chunk.len() as u64;
+        }
+        file.flush().await.map_err(|e| format!("刷新 jadeite.zip 失败: {}", e))?;
+        info!("[jadeite] 下载完成 ({} bytes)，正在解压...", total);
+    }
 
     // 解压 zip
     let file = std::fs::File::open(&zip_path)

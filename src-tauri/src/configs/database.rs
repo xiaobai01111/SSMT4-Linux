@@ -31,6 +31,13 @@ fn init_tables(conn: &Connection) {
             game_name TEXT PRIMARY KEY,
             config    TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS hash_cache (
+            file_path TEXT PRIMARY KEY,
+            file_size INTEGER NOT NULL,
+            mtime_sec INTEGER NOT NULL,
+            md5       TEXT NOT NULL
+        );
         ",
     )
     .expect("创建数据库表失败");
@@ -116,4 +123,32 @@ pub fn list_game_names() -> Vec<String> {
     let mut stmt = conn.prepare("SELECT game_name FROM game_configs").unwrap();
     let rows = stmt.query_map([], |row| row.get(0)).unwrap();
     rows.filter_map(|r| r.ok()).collect()
+}
+
+// ============================
+//  哈希缓存操作 — hash_cache 表
+// ============================
+
+/// 查询缓存：如果 size+mtime 匹配，返回缓存的 md5
+pub fn get_cached_md5(file_path: &str, file_size: i64, mtime_sec: i64) -> Option<String> {
+    let conn = DB.lock().unwrap();
+    conn.query_row(
+        "SELECT md5 FROM hash_cache WHERE file_path = ?1 AND file_size = ?2 AND mtime_sec = ?3",
+        params![file_path, file_size, mtime_sec],
+        |row| row.get(0),
+    )
+    .ok()
+}
+
+/// 写入/更新哈希缓存
+pub fn set_cached_md5(file_path: &str, file_size: i64, mtime_sec: i64, md5: &str) {
+    let conn = DB.lock().unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO hash_cache (file_path, file_size, mtime_sec, md5) VALUES (?1, ?2, ?3, ?4)",
+        params![file_path, file_size, mtime_sec, md5],
+    )
+    .unwrap_or_else(|e| {
+        tracing::error!("写入 hash_cache 失败: path={}, err={}", file_path, e);
+        0
+    });
 }

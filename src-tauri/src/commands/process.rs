@@ -1,5 +1,8 @@
 use tauri::Manager;
 
+/// 允许执行的资源文件白名单（仅文件名，不含路径）
+const ALLOWED_RESOURCE_EXECUTABLES: &[&str] = &["Run.exe", "upx.exe"];
+
 #[tauri::command]
 pub fn run_resource_executable(
     app: tauri::AppHandle,
@@ -10,6 +13,16 @@ pub fn run_resource_executable(
     let resource_name = resource_name
         .or(filename)
         .ok_or("Missing resource executable name".to_string())?;
+
+    // 安全校验：拒绝包含路径分隔符的输入（防止 ../逃逸）
+    if resource_name.contains('/') || resource_name.contains('\\') || resource_name.contains("..") {
+        return Err(format!("拒绝执行：资源名包含非法字符 '{}'", resource_name));
+    }
+
+    // 安全校验：仅允许白名单内的可执行文件
+    if !ALLOWED_RESOURCE_EXECUTABLES.iter().any(|&allowed| allowed == resource_name) {
+        return Err(format!("拒绝执行：'{}' 不在允许的资源列表中", resource_name));
+    }
 
     let resource_path = app
         .path()

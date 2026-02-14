@@ -28,7 +28,7 @@ pub fn load_ini(path: &Path) -> Result<IniData, String> {
         if trimmed.starts_with('[') && trimmed.ends_with(']') {
             current_section = trimmed[1..trimmed.len() - 1].trim().to_string();
             data.entry(current_section.clone())
-                .or_insert_with(BTreeMap::new);
+                .or_default();
             continue;
         }
 
@@ -36,7 +36,7 @@ pub fn load_ini(path: &Path) -> Result<IniData, String> {
             let key = trimmed[..eq_pos].trim().to_string();
             let value = trimmed[eq_pos + 1..].trim().to_string();
             data.entry(current_section.clone())
-                .or_insert_with(BTreeMap::new)
+                .or_default()
                 .insert(key, value);
         }
     }
@@ -44,13 +44,14 @@ pub fn load_ini(path: &Path) -> Result<IniData, String> {
     Ok(data)
 }
 
+#[allow(dead_code)]
 pub fn get_value(data: &IniData, section: &str, key: &str) -> Option<String> {
     data.get(section).and_then(|s| s.get(key).cloned())
 }
 
 pub fn set_value(data: &mut IniData, section: &str, key: &str, value: &str) {
     data.entry(section.to_string())
-        .or_insert_with(BTreeMap::new)
+        .or_default()
         .insert(key.to_string(), value.to_string());
 }
 

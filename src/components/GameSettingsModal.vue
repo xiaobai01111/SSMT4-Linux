@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, reactive, computed } from 'vue';
+import { ref, watch, reactive, computed, onMounted, onUnmounted } from 'vue';
 import {
   loadGameConfig as apiLoadGameConfig,
   saveGameConfig as apiSaveGameConfig,
@@ -27,17 +27,29 @@ import {
   installJadeite,
   installDxvk,
   uninstallDxvk,
+  scanLocalDxvk,
+  detectDxvkStatus,
+  fetchDxvkVersions,
+  fetchRemoteProton,
+  downloadProton,
+  listenEvent,
   type WineVersion,
   type ProtonSettings,
   type PrefixInfo,
   type JadeiteStatus,
   type VulkanInfo,
   type DisplayInfo,
+  type DxvkLocalVersion,
+  type DxvkRemoteVersion,
+  type DxvkInstalledStatus,
+  type RemoteWineVersion,
 } from '../api';
 import { loadGames, appSettings, gamesList, switchToGame } from '../store';
 import { useI18n } from 'vue-i18n';
+import { inject } from 'vue';
 
 const { t } = useI18n();
+const notify = inject<any>('notify');
 
 const props = defineProps<{
   modelValue: boolean;
@@ -51,9 +63,8 @@ const emit = defineEmits<{
 // Config State
 interface GameConfig {
   basic: {
-    // configName is kept in UI state but separate from the object sent to backend
     gamePreset: string;
-    backgroundType?: 'Image' | 'Video';
+    runtimeEnv: 'wine' | 'steam' | 'linux';
   };
   threeDMigoto: {
     installDir: string;
@@ -72,7 +83,7 @@ interface GameConfig {
 }
 
 const config = reactive<GameConfig>({
-  basic: { gamePreset: 'GIMI', backgroundType: 'Image' },
+  basic: { gamePreset: 'GIMI', runtimeEnv: 'wine' },
   threeDMigoto: {
     installDir: '',
     targetExePath: '',
@@ -117,10 +128,10 @@ const normalizeLoadedConfig = (raw: unknown): GameConfig => {
     asString(root.LogicName) ||
     'GIMI';
 
-  const backgroundTypeRaw =
-    asString(basicRaw.backgroundType) || asString(root.backgroundType);
-  const backgroundType: 'Image' | 'Video' =
-    backgroundTypeRaw === 'Video' ? 'Video' : 'Image';
+  const runtimeEnvRaw =
+    asString(basicRaw.runtimeEnv) || asString(root.runtimeEnv);
+  const runtimeEnv: 'wine' | 'steam' | 'linux' =
+    runtimeEnvRaw === 'steam' ? 'steam' : runtimeEnvRaw === 'linux' ? 'linux' : 'wine';
 
   let autoSetAnalyseOptions = true;
   if (typeof migotoRaw.autoSetAnalyseOptions === 'boolean') {
@@ -159,7 +170,7 @@ const normalizeLoadedConfig = (raw: unknown): GameConfig => {
   return {
     basic: {
       gamePreset,
-      backgroundType,
+      runtimeEnv,
     },
     threeDMigoto: {
       installDir:
@@ -217,6 +228,58 @@ const displayInfo = ref<DisplayInfo | null>(null);
 const newEnvKey = ref('');
 const newEnvValue = ref('');
 
+// 系统选项状态
+const selectedGpuIndex = ref(-1); // -1 = 自动
+const gameLang = ref(''); // '' = 跟随系统
+
+// 远程 Proton 版本管理
+const remoteProtonVersions = ref<RemoteWineVersion[]>([]);
+const isProtonFetching = ref(false);
+const isProtonDownloading = ref(false);
+const protonDownloadTag = ref('');
+
+// 组件下载进度（Proton/DXVK）
+interface ComponentDlProgress {
+  component: string;
+  phase: string;
+  downloaded: number;
+  total: number;
+}
+const componentDlProgress = ref<ComponentDlProgress | null>(null);
+let unlistenComponentDl: (() => void) | null = null;
+
+const doFetchRemoteProton = async () => {
+  if (isProtonFetching.value) return;
+  try {
+    isProtonFetching.value = true;
+    remoteProtonVersions.value = await fetchRemoteProton();
+  } catch (e) {
+    await showMessage(`获取远程 Proton 版本失败: ${e}`, { title: '错误', kind: 'error' });
+  } finally {
+    isProtonFetching.value = false;
+  }
+};
+
+const doDownloadProton = async (rv: RemoteWineVersion) => {
+  if (isProtonDownloading.value) return;
+  try {
+    isProtonDownloading.value = true;
+    protonDownloadTag.value = rv.tag;
+    notify?.info('Proton 下载', `开始下载 ${rv.tag}...`);
+    const result = await downloadProton(rv.download_url, rv.tag, rv.variant);
+    notify?.success('Proton 下载完成', result);
+    // 刷新本地版本列表
+    wineVersions.value = await scanWineVersions();
+    // 刷新远程列表标记
+    await doFetchRemoteProton();
+  } catch (e) {
+    notify?.error('Proton 下载失败', `${e}`);
+  } finally {
+    isProtonDownloading.value = false;
+    protonDownloadTag.value = '';
+  }
+};
+
 const loadWineState = async () => {
   try {
     wineVersions.value = await scanWineVersions();
@@ -242,6 +305,15 @@ const saveWineConfig = async () => {
   } catch (e) {
     console.error('Failed to save wine config:', e);
   }
+};
+
+const saveSystemOptions = async () => {
+  // 保存 GPU 和语言到 config.other
+  config.other.gpuIndex = selectedGpuIndex.value;
+  config.other.gameLang = gameLang.value;
+  await saveConfig();
+  // 同步保存 Proton 设置（沙盒等）
+  await saveWineConfig();
 };
 
 const addCustomEnv = () => {
@@ -272,6 +344,15 @@ const variantLabel = (variant: string) => {
     custom: 'Custom',
   };
   return labels[variant] || variant;
+};
+
+const variantBadgeClass = (variant: string) => {
+  const v = variant.toLowerCase().replace(/[- ]/g, '');
+  if (v.includes('geproton') || v.includes('ge')) return 'ge';
+  if (v.includes('dwproton') || v.includes('dw')) return 'dw';
+  if (v.includes('wine') || v.includes('winege') || v.includes('winebuilds')) return 'wine';
+  if (v.includes('tkg')) return 'tkg';
+  return 'default';
 };
 
 // Jadeite 状态
@@ -315,19 +396,93 @@ const loadPrefixState = async () => {
   }
 };
 
-// DXVK 管理
-const dxvkVersion = ref('2.5.3');
+// DXVK 版本管理
+const dxvkLocalVersions = ref<DxvkLocalVersion[]>([]);
+const dxvkRemoteVersions = ref<DxvkRemoteVersion[]>([]);
+const dxvkInstalledStatus = ref<DxvkInstalledStatus | null>(null);
+const dxvkSelectedVersion = ref('');
 const isDxvkBusy = ref(false);
+const isDxvkFetching = ref(false);
+
+// 合并的版本列表（远程 + 本地）
+const dxvkVersionList = computed(() => {
+  const map = new Map<string, { version: string; isLocal: boolean; isRemote: boolean; fileSize: number; publishedAt: string }>();
+
+  // 先添加远程版本
+  for (const rv of dxvkRemoteVersions.value) {
+    map.set(rv.version, {
+      version: rv.version,
+      isLocal: rv.is_local,
+      isRemote: true,
+      fileSize: rv.file_size,
+      publishedAt: rv.published_at,
+    });
+  }
+
+  // 补充仅在本地的版本
+  for (const lv of dxvkLocalVersions.value) {
+    if (!map.has(lv.version)) {
+      map.set(lv.version, {
+        version: lv.version,
+        isLocal: true,
+        isRemote: false,
+        fileSize: 0,
+        publishedAt: '',
+      });
+    }
+  }
+
+  // 按版本号降序排列
+  return Array.from(map.values()).sort((a, b) => b.version.localeCompare(a.version));
+});
+
+const loadDxvkState = async () => {
+  if (!props.gameName) return;
+  try {
+    const [local, status] = await Promise.all([
+      scanLocalDxvk(),
+      detectDxvkStatus(props.gameName),
+    ]);
+    dxvkLocalVersions.value = local;
+    dxvkInstalledStatus.value = status;
+
+    // 如果已安装且检测到版本号，自动选中
+    if (status.installed && status.version) {
+      dxvkSelectedVersion.value = status.version;
+    } else if (local.length > 0 && !dxvkSelectedVersion.value) {
+      dxvkSelectedVersion.value = local[0].version;
+    }
+  } catch (e) {
+    console.warn('[dxvk] 加载状态失败:', e);
+  }
+};
+
+const doFetchDxvkVersions = async () => {
+  if (isDxvkFetching.value) return;
+  try {
+    isDxvkFetching.value = true;
+    dxvkRemoteVersions.value = await fetchDxvkVersions();
+    // 如果当前没选中版本且有远程版本，选最新的
+    if (!dxvkSelectedVersion.value && dxvkRemoteVersions.value.length > 0) {
+      dxvkSelectedVersion.value = dxvkRemoteVersions.value[0].version;
+    }
+  } catch (e) {
+    await showMessage(`获取 DXVK 版本列表失败: ${e}`, { title: '错误', kind: 'error' });
+  } finally {
+    isDxvkFetching.value = false;
+  }
+};
 
 const doInstallDxvk = async () => {
-  if (isDxvkBusy.value) return;
+  if (isDxvkBusy.value || !dxvkSelectedVersion.value) return;
   try {
     isDxvkBusy.value = true;
-    const result = await installDxvk(props.gameName, dxvkVersion.value);
-    await showMessage(result, { title: 'DXVK', kind: 'info' });
-    await loadPrefixState();
+    notify?.info('DXVK', `正在安装 DXVK ${dxvkSelectedVersion.value}...`);
+    const result = await installDxvk(props.gameName, dxvkSelectedVersion.value);
+    notify?.success('DXVK 安装完成', result);
+    await loadDxvkState();
   } catch (e) {
-    await showMessage(`DXVK 安装失败: ${e}`, { title: '错误', kind: 'error' });
+    notify?.error('DXVK 安装失败', `${e}`);
   } finally {
     isDxvkBusy.value = false;
   }
@@ -335,16 +490,24 @@ const doInstallDxvk = async () => {
 
 const doUninstallDxvk = async () => {
   if (isDxvkBusy.value) return;
+  const confirmed = await askConfirm('确定要从当前 Prefix 中卸载 DXVK 吗？', { title: 'DXVK', kind: 'warning' });
+  if (!confirmed) return;
   try {
     isDxvkBusy.value = true;
     const result = await uninstallDxvk(props.gameName);
-    await showMessage(result, { title: 'DXVK', kind: 'info' });
-    await loadPrefixState();
+    notify?.success('DXVK 卸载完成', result);
+    await loadDxvkState();
   } catch (e) {
-    await showMessage(`DXVK 卸载失败: ${e}`, { title: '错误', kind: 'error' });
+    notify?.error('DXVK 卸载失败', `${e}`);
   } finally {
     isDxvkBusy.value = false;
   }
+};
+
+const formatFileSize = (bytes: number): string => {
+  if (bytes <= 0) return '';
+  if (bytes < 1048576) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1048576).toFixed(1)} MB`;
 };
 
 // Tabs（参考 Lutris 风格：5个标签页）
@@ -398,6 +561,9 @@ const loadConfig = async () => {
     }
 
     config.other = normalized.other || {};
+    // 恢复系统选项
+    selectedGpuIndex.value = typeof config.other.gpuIndex === 'number' ? config.other.gpuIndex : -1;
+    gameLang.value = typeof config.other.gameLang === 'string' ? config.other.gameLang : '';
     hasLoadedConfig.value = true;
     // Note: configName is NOT set from file, but from props
   } catch (e) {
@@ -433,7 +599,7 @@ const resetToDefault = async () => {
     await apiResetGameBackground(props.gameName);
     // 重置配置为默认值
     await apiSaveGameConfig(props.gameName, {
-      basic: { gamePreset: 'GIMI', backgroundType: 'Image' },
+      basic: { gamePreset: 'GIMI', runtimeEnv: 'wine' },
       threeDMigoto: {},
       other: {}
     } as any);
@@ -443,14 +609,6 @@ const resetToDefault = async () => {
     console.error('Reset failed:', e);
   } finally {
     isLoading.value = false;
-  }
-};
-
-const handleBgTypeChange = async () => {
-  await saveConfig();
-  // Refresh global state if this is the active game
-  if (appSettings.currentConfigName === props.gameName) {
-    await loadGames();
   }
 };
 
@@ -472,19 +630,11 @@ const selectIcon = async () => {
 
 const selectBackground = async () => {
   try {
-    const isVideo = config.basic.backgroundType === 'Video';
-    const filters = isVideo
-      ? [{ name: 'Videos', extensions: ['mp4', 'webm', 'ogg', 'mov'] }]
-      : [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp', 'ico', 'avif'] }];
-
-    const file = await openFileDialog({
-      multiple: false,
-      filters
-    });
-
+    const filters = [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp', 'ico', 'avif'] }];
+    const file = await openFileDialog({ multiple: false, filters });
     if (file) {
-      await apiSetGameBackground(props.gameName, file, config.basic.backgroundType || 'Image');
-      await loadGames(); // Refresh
+      await apiSetGameBackground(props.gameName, file, 'Image');
+      await loadGames();
     }
   } catch (e) {
     console.error(e);
@@ -737,12 +887,52 @@ watch(() => props.modelValue, (val) => {
     loadWineState();
     loadJadeiteState();
     loadPrefixState();
+    loadDxvkState();
   } else {
     // Only save when current modal session loaded successfully.
     if (hasLoadedConfig.value) {
       saveConfig();
       saveWineConfig();
     }
+  }
+});
+
+// 切换游戏时重新加载配置，确保每个游戏的设置独立
+watch(() => props.gameName, async (newGame, oldGame) => {
+  if (!newGame || newGame === oldGame) return;
+  // 先保存旧游戏的配置
+  if (oldGame && hasLoadedConfig.value && props.modelValue) {
+    await saveConfig();
+    await saveWineConfig();
+  }
+  // 加载新游戏的配置
+  if (props.modelValue) {
+    configName.value = newGame;
+    hasLoadedConfig.value = false;
+    loadConfig();
+    loadWineState();
+    loadJadeiteState();
+    loadPrefixState();
+    loadDxvkState();
+  }
+});
+
+// 组件下载进度事件监听
+onMounted(async () => {
+  unlistenComponentDl = await listenEvent('component-download-progress', (event: any) => {
+    const data = event.payload as ComponentDlProgress;
+    if (data.phase === 'done') {
+      componentDlProgress.value = null;
+    } else {
+      componentDlProgress.value = data;
+    }
+  });
+});
+
+onUnmounted(() => {
+  if (unlistenComponentDl) {
+    unlistenComponentDl();
+    unlistenComponentDl = null;
   }
 });
 
@@ -804,6 +994,7 @@ defineExpose({
           <div class="scroll-content">
             <!-- ==================== Tab 1: 游戏信息 ==================== -->
             <div v-if="activeTab === 'info'" class="tab-pane">
+              <!-- 配置名称 -->
               <div class="setting-group">
                 <div class="setting-label">配置名称</div>
                 <input v-model="configName" type="text" class="custom-input" placeholder="输入配置名称..." />
@@ -814,6 +1005,22 @@ defineExpose({
                 </div>
               </div>
 
+              <!-- 运行环境 -->
+              <div class="setting-group">
+                <div class="setting-label">运行环境</div>
+                <el-select v-model="config.basic.runtimeEnv" placeholder="选择运行环境" class="custom-select" @change="saveConfig">
+                  <el-option label="Wine / Proton" value="wine" />
+                  <el-option label="Steam (Proton)" value="steam" />
+                  <el-option label="Linux 原生" value="linux" />
+                </el-select>
+                <div class="info-sub" style="margin-top:6px;">
+                  <template v-if="config.basic.runtimeEnv === 'wine'">使用 Wine 或 Proton 运行 Windows 游戏，需在"运行环境"标签页配置 Wine 版本。</template>
+                  <template v-else-if="config.basic.runtimeEnv === 'steam'">通过 Steam 启动游戏，使用 Steam 内置的 Proton 兼容层。</template>
+                  <template v-else>直接以 Linux 原生方式运行，无需兼容层。</template>
+                </div>
+              </div>
+
+              <!-- 游戏预设 -->
               <div class="setting-group">
                 <div class="setting-label">游戏预设</div>
                 <el-select v-model="config.basic.gamePreset" placeholder="Select" class="custom-select" @change="saveConfig">
@@ -821,23 +1028,16 @@ defineExpose({
                 </el-select>
               </div>
 
+              <!-- 图标 & 背景 -->
               <div class="setting-group">
                 <div class="setting-label">游戏图标</div>
                 <button class="action-btn" @click="selectIcon">选择图标</button>
               </div>
 
               <div class="setting-group">
-                <div class="setting-label">背景设置</div>
-                <div style="margin-bottom: 10px;">
-                  <el-radio-group v-model="config.basic.backgroundType" @change="handleBgTypeChange">
-                    <el-radio value="Image" label="Image">图片</el-radio>
-                    <el-radio value="Video" label="Video">视频</el-radio>
-                  </el-radio-group>
-                </div>
+                <div class="setting-label">背景图片</div>
                 <div class="button-row">
-                  <button class="action-btn" @click="selectBackground">
-                    {{ config.basic.backgroundType === 'Video' ? '选择背景视频' : '选择背景图片' }}
-                  </button>
+                  <button class="action-btn" @click="selectBackground">选择背景图片</button>
                 </div>
               </div>
             </div>
@@ -898,9 +1098,9 @@ defineExpose({
 
             <!-- ==================== Tab 3: 运行环境 ==================== -->
             <div v-if="activeTab === 'runtime'" class="tab-pane">
-              <!-- Wine/Proton 版本选择 -->
+              <!-- Wine/Proton 本地已安装版本 -->
               <div class="setting-group">
-                <div class="setting-label">Wine 版本</div>
+                <div class="setting-label">Wine / Proton 版本（本地已安装）</div>
                 <el-select v-model="selectedWineVersionId" placeholder="选择 Wine/Proton 版本..." class="custom-select" filterable style="width: 100%">
                   <el-option-group
                     v-for="group in [
@@ -923,20 +1123,119 @@ defineExpose({
                   <span class="badge">{{ variantLabel(selectedWineVersion.variant) }}</span>
                   <span class="wine-path">{{ selectedWineVersion.path }}</span>
                 </div>
+                <div class="info-sub" style="margin-top:6px;">
+                  共检测到 {{ wineVersions.length }} 个本地 Wine/Proton 版本。
+                </div>
               </div>
 
-              <!-- DXVK -->
+              <!-- 远程 Proton 版本下载 -->
               <div class="setting-group">
-                <div class="setting-label">DXVK</div>
-                <div class="info-text" v-if="prefixInfo?.config?.dxvk">
-                  <span :class="prefixInfo.config.dxvk.enabled ? 'text-ok' : 'text-muted'">
-                    {{ prefixInfo.config.dxvk.enabled ? `✓ 已启用 (${prefixInfo.config.dxvk.version || '未知版本'})` : '未启用' }}
-                  </span>
+                <div class="setting-label">下载 Proton 版本</div>
+                <div class="button-row" style="margin-bottom:10px;">
+                  <button class="action-btn" @click="doFetchRemoteProton" :disabled="isProtonFetching">
+                    {{ isProtonFetching ? '获取中...' : '获取可用版本' }}
+                  </button>
                 </div>
-                <div class="flex-row" style="align-items:flex-end; gap:8px; margin-top:6px;">
-                  <input v-model="dxvkVersion" type="text" class="custom-input" placeholder="版本号，如 2.5.3" style="flex:1" />
-                  <button class="action-btn highlight" @click="doInstallDxvk" :disabled="isDxvkBusy" style="flex:0 0 auto">安装</button>
-                  <button class="action-btn" @click="doUninstallDxvk" :disabled="isDxvkBusy" style="flex:0 0 auto">卸载</button>
+
+                <div v-if="remoteProtonVersions.length > 0" class="version-list">
+                  <div v-for="rv in remoteProtonVersions" :key="rv.tag" class="version-item">
+                    <div class="version-info">
+                      <span class="version-tag">{{ rv.tag }}</span>
+                      <span class="badge" :class="'badge-' + variantBadgeClass(rv.variant)" style="margin-left:6px;">{{ rv.variant }}</span>
+                      <span v-if="rv.file_size > 0" class="text-muted" style="margin-left:8px;">{{ formatFileSize(rv.file_size) }}</span>
+                    </div>
+                    <div class="version-action">
+                      <span v-if="rv.installed" class="text-ok" style="font-size:13px;">✓ 已安装</span>
+                      <button v-else class="action-btn highlight" style="padding:4px 12px; font-size:12px;"
+                        @click="doDownloadProton(rv)"
+                        :disabled="isProtonDownloading">
+                        {{ isProtonDownloading && protonDownloadTag === rv.tag ? '下载中...' : '下载' }}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="info-sub">
+                  点击"获取可用版本"从 GitHub 获取 GE-Proton 等版本列表。
+                </div>
+
+                <!-- 组件下载进度条 -->
+                <div v-if="componentDlProgress" class="component-dl-progress">
+                  <div class="component-dl-header">
+                    <span class="component-dl-name">{{ componentDlProgress.component }}</span>
+                    <span class="component-dl-phase">
+                      {{ componentDlProgress.phase === 'downloading' ? '下载中' : componentDlProgress.phase === 'extracting' ? '解压中...' : componentDlProgress.phase }}
+                    </span>
+                    <span v-if="componentDlProgress.total > 0 && componentDlProgress.phase === 'downloading'" class="component-dl-pct">
+                      {{ Math.round(componentDlProgress.downloaded / componentDlProgress.total * 100) }}%
+                    </span>
+                  </div>
+                  <div class="component-dl-track">
+                    <div class="component-dl-fill" :class="{ 'component-dl-extracting': componentDlProgress.phase === 'extracting' }"
+                      :style="{ width: componentDlProgress.total > 0 ? Math.round(componentDlProgress.downloaded / componentDlProgress.total * 100) + '%' : '100%' }">
+                    </div>
+                  </div>
+                  <div v-if="componentDlProgress.total > 0 && componentDlProgress.phase === 'downloading'" class="component-dl-size">
+                    {{ formatFileSize(componentDlProgress.downloaded) }} / {{ formatFileSize(componentDlProgress.total) }}
+                  </div>
+                </div>
+              </div>
+
+              <!-- DXVK 版本管理 -->
+              <div class="setting-group">
+                <div class="setting-label">DXVK (DirectX → Vulkan)</div>
+
+                <!-- DXVK 未安装警告 -->
+                <div v-if="dxvkInstalledStatus && !dxvkInstalledStatus.installed" class="dxvk-warning">
+                  ⚠ DXVK 未安装。DirectX 9/10/11 游戏需要 DXVK 才能正常渲染，建议在下方选择版本并安装。
+                </div>
+
+                <!-- 当前安装状态 -->
+                <div class="info-card" style="margin-bottom: 10px;">
+                  <div v-if="dxvkInstalledStatus" class="info-grid" style="grid-template-columns: 100px 1fr;">
+                    <span class="info-key">安装状态</span>
+                    <span :class="dxvkInstalledStatus.installed ? 'text-ok' : 'text-err'">
+                      {{ dxvkInstalledStatus.installed ? '✓ 已安装' : '✗ 未安装' }}
+                    </span>
+                    <template v-if="dxvkInstalledStatus.installed">
+                      <span class="info-key">检测版本</span>
+                      <span class="info-val">{{ dxvkInstalledStatus.version || '未知（无本地缓存可比对）' }}</span>
+                      <span class="info-key">DLL 文件</span>
+                      <span class="info-val">{{ dxvkInstalledStatus.dlls_found.join(', ') }}</span>
+                    </template>
+                  </div>
+                  <div v-else class="text-muted" style="font-size:13px">加载中...</div>
+                </div>
+
+                <!-- 版本选择 -->
+                <div class="flex-row" style="align-items:flex-end; gap:8px; margin-top:8px;">
+                  <div style="flex:1">
+                    <select v-model="dxvkSelectedVersion" class="custom-input" style="width:100%">
+                      <option value="" disabled>选择 DXVK 版本...</option>
+                      <option v-for="v in dxvkVersionList" :key="v.version" :value="v.version">
+                        {{ v.version }}
+                        {{ v.isLocal ? ' [本地]' : '' }}
+                        {{ v.fileSize > 0 ? ` (${formatFileSize(v.fileSize)})` : '' }}
+                      </option>
+                    </select>
+                  </div>
+                  <button class="action-btn" @click="doFetchDxvkVersions" :disabled="isDxvkFetching" style="flex:0 0 auto; white-space:nowrap;">
+                    {{ isDxvkFetching ? '获取中...' : '刷新列表' }}
+                  </button>
+                </div>
+
+                <!-- 操作按钮 -->
+                <div class="button-row" style="margin-top:8px;">
+                  <button class="action-btn highlight" @click="doInstallDxvk" :disabled="isDxvkBusy || !dxvkSelectedVersion">
+                    {{ isDxvkBusy ? '安装中...' : '安装 / 切换版本' }}
+                  </button>
+                  <button class="action-btn delete" @click="doUninstallDxvk" :disabled="isDxvkBusy || !dxvkInstalledStatus?.installed">
+                    卸载 DXVK
+                  </button>
+                </div>
+
+                <!-- 本地缓存信息 -->
+                <div v-if="dxvkLocalVersions.length > 0" class="info-sub" style="margin-top:8px;">
+                  本地已缓存 {{ dxvkLocalVersions.length }} 个版本：{{ dxvkLocalVersions.map(v => v.version).join(', ') }}
                 </div>
               </div>
 
@@ -1101,6 +1400,57 @@ defineExpose({
                 </div>
               </div>
 
+              <!-- GPU 选择（多显卡切换） -->
+              <div class="setting-group">
+                <div class="setting-label">指定显卡</div>
+                <div v-if="displayInfo && displayInfo.gpus.length > 0">
+                  <select v-model="selectedGpuIndex" class="custom-input" style="width:100%">
+                    <option value="-1">自动（系统默认）</option>
+                    <option v-for="gpu in displayInfo.gpus" :key="gpu.index" :value="gpu.index">
+                      GPU {{ gpu.index }}: {{ gpu.name }} ({{ gpu.driver }})
+                    </option>
+                  </select>
+                  <div class="info-sub" style="margin-top:6px;">
+                    <template v-if="selectedGpuIndex === -1">使用系统默认 GPU。</template>
+                    <template v-else>
+                      将通过环境变量
+                      <template v-if="displayInfo.gpus[selectedGpuIndex]?.driver === 'nvidia'">
+                        <code>__NV_PRIME_RENDER_OFFLOAD=1</code> + <code>__GLX_VENDOR_LIBRARY_NAME=nvidia</code>
+                      </template>
+                      <template v-else>
+                        <code>DRI_PRIME={{ selectedGpuIndex }}</code>
+                      </template>
+                      指定使用此显卡启动游戏。
+                    </template>
+                  </div>
+                </div>
+                <div v-else class="info-sub">未检测到多个 GPU，无需手动指定。</div>
+              </div>
+
+              <!-- 语言设置 -->
+              <div class="setting-group">
+                <div class="setting-label">游戏语言</div>
+                <select v-model="gameLang" class="custom-input" style="width:100%">
+                  <option value="">跟随系统</option>
+                  <option value="zh_CN">简体中文 (zh_CN)</option>
+                  <option value="zh_TW">繁体中文 (zh_TW)</option>
+                  <option value="en_US">English (en_US)</option>
+                  <option value="ja_JP">日本語 (ja_JP)</option>
+                  <option value="ko_KR">한국어 (ko_KR)</option>
+                  <option value="de_DE">Deutsch (de_DE)</option>
+                  <option value="fr_FR">Français (fr_FR)</option>
+                  <option value="es_ES">Español (es_ES)</option>
+                  <option value="pt_BR">Português (pt_BR)</option>
+                  <option value="ru_RU">Русский (ru_RU)</option>
+                  <option value="th_TH">ไทย (th_TH)</option>
+                  <option value="vi_VN">Tiếng Việt (vi_VN)</option>
+                  <option value="id_ID">Bahasa Indonesia (id_ID)</option>
+                </select>
+                <div class="info-sub" style="margin-top:6px;">
+                  设置 <code>LANG</code> 环境变量，部分游戏会根据此值自动切换语言。
+                </div>
+              </div>
+
               <!-- 沙盒设置 -->
               <div class="setting-group">
                 <div class="setting-label">沙盒设置</div>
@@ -1121,7 +1471,7 @@ defineExpose({
 
               <!-- 保存 -->
               <div class="button-row">
-                <button class="action-btn highlight" @click="saveWineConfig">保存系统选项</button>
+                <button class="action-btn highlight" @click="saveSystemOptions">保存系统选项</button>
               </div>
             </div>
           </div>
@@ -1389,6 +1739,16 @@ defineExpose({
 .text-ok { color: #67c23a; }
 .text-err { color: #f56c6c; }
 .text-muted { color: rgba(255, 255, 255, 0.4); }
+.dxvk-warning {
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: #fbbf24;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
 
 .info-text {
   font-size: 13px;
@@ -1423,6 +1783,11 @@ defineExpose({
   font-size: 11px;
   white-space: nowrap;
 }
+.badge-ge { background: rgba(168, 85, 247, 0.2); color: #c084fc; }
+.badge-dw { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+.badge-wine { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+.badge-tkg { background: rgba(34, 197, 94, 0.2); color: #4ade80; }
+.badge-default { background: rgba(156, 163, 175, 0.2); color: #9ca3af; }
 
 .wine-path {
   color: rgba(255, 255, 255, 0.4);
@@ -1478,6 +1843,46 @@ defineExpose({
   font-family: monospace;
 }
 
+/* 版本列表（Proton 下载等） */
+.version-list {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.version-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.version-item:last-child {
+  border-bottom: none;
+}
+
+.version-item:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.version-info {
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.version-tag {
+  font-weight: 500;
+}
+
+.version-action {
+  flex-shrink: 0;
+}
+
 /* Transitions */
 .modal-fade-enter-active,
 .modal-fade-leave-active {
@@ -1524,5 +1929,59 @@ defineExpose({
   to {
     transform: rotate(360deg);
   }
+}
+
+/* 组件下载进度条 */
+.component-dl-progress {
+  margin-top: 10px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.component-dl-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+.component-dl-name {
+  color: rgba(255, 255, 255, 0.85);
+  font-weight: 500;
+}
+.component-dl-phase {
+  color: rgba(255, 255, 255, 0.5);
+}
+.component-dl-pct {
+  margin-left: auto;
+  color: #F7CE46;
+  font-weight: 600;
+}
+.component-dl-track {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.component-dl-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #F7CE46, #f59e0b);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+.component-dl-fill.component-dl-extracting {
+  background: linear-gradient(90deg, #60a5fa, #3b82f6);
+  animation: pulse-extract 1.5s ease-in-out infinite;
+}
+@keyframes pulse-extract {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.component-dl-size {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
+  margin-top: 4px;
+  text-align: right;
 }
 </style>

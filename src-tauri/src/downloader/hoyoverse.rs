@@ -176,6 +176,7 @@ pub fn is_hoyoverse_api(url: &str) -> bool {
 }
 
 /// 根据游戏 preset 返回 biz_prefix
+#[allow(dead_code)]
 pub fn biz_prefix_for_preset(preset: &str) -> &str {
     match preset {
         "SRMI" => "hkrpg_",
@@ -187,6 +188,7 @@ pub fn biz_prefix_for_preset(preset: &str) -> &str {
 }
 
 /// 读取本地版本（从 .version 文件或 launcherDownloadConfig.json）
+#[allow(dead_code)]
 pub fn read_local_version(game_folder: &std::path::Path) -> Option<String> {
     // 优先读取 .version
     let version_file = game_folder.join(".version");

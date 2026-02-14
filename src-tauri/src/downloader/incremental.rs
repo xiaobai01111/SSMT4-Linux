@@ -1,6 +1,7 @@
 use crate::downloader::cdn::{self, LauncherInfo, ResourceIndex};
 use crate::downloader::fetcher;
 use crate::downloader::progress::DownloadProgress;
+use crate::utils::file_manager::safe_join_remote;
 use crate::utils::hash_verify;
 use reqwest::Client;
 use std::path::{Path, PathBuf};
@@ -42,7 +43,13 @@ pub async fn update_game_full(
             return Err("Update cancelled".to_string());
         }
 
-        let file_path = game_folder.join(&file.dest);
+        let file_path = match safe_join_remote(game_folder, &file.dest) {
+            Ok(p) => p,
+            Err(e) => {
+                warn!("跳过不安全的清单路径: {} ({})", file.dest, e);
+                continue;
+            }
+        };
 
         // Check MD5
         let current_md5 = hash_verify::md5_file(&file_path).await.unwrap_or_default();
@@ -272,17 +279,30 @@ pub async fn ensure_hpatchz_public() -> Result<PathBuf, String> {
     ensure_hpatchz().await
 }
 
+/// hpatchz 允许的 SHA256 白名单（多版本兼容）
+/// 新版本发布时在此追加哈希即可
+const HPATCHZ_ALLOWED_SHA256: &[&str] = &[
+    // 如需固定版本，请在此填入已知的 SHA256 哈希（小写十六进制）
+    // 例如: "a1b2c3d4e5f6..."
+    // 留空数组时将降级为仅做基本大小校验并记录警告
+];
+
+/// hpatchz 最小合理大小（字节），低于此值视为损坏/截断
+const HPATCHZ_MIN_SIZE: u64 = 100_000; // ~100KB
+
 async fn ensure_hpatchz() -> Result<PathBuf, String> {
     let tools_dir = crate::utils::file_manager::get_tools_dir();
     let hpatchz_path = tools_dir.join("hpatchz");
 
     if hpatchz_path.exists() {
+        // 已存在时也做完整性检查
+        verify_hpatchz_integrity(&hpatchz_path).await?;
         return Ok(hpatchz_path);
     }
 
     crate::utils::file_manager::ensure_dir(&tools_dir)?;
 
-    // Primary: GitHub
+    // Primary: GitHub（固定来源）
     let github_url = "https://github.com/AXiX-official/hpatchz-release/releases/latest/download/hpatchz-linux-x64";
     // Fallback: Gitee
     let gitee_url = "https://gitee.com/tiz/LutheringLaves/raw/main/tools/hpatchz";
@@ -296,6 +316,9 @@ async fn ensure_hpatchz() -> Result<PathBuf, String> {
         warn!("GitHub download failed, trying gitee...");
         fetcher::download_simple(&client, gitee_url, &hpatchz_path).await?;
     }
+
+    // 下载后执行前：完整性校验
+    verify_hpatchz_integrity(&hpatchz_path).await?;
 
     // chmod +x
     #[cfg(unix)]
@@ -313,6 +336,53 @@ async fn ensure_hpatchz() -> Result<PathBuf, String> {
     Ok(hpatchz_path)
 }
 
+/// 验证 hpatchz 二进制完整性
+async fn verify_hpatchz_integrity(path: &Path) -> Result<(), String> {
+    let meta = std::fs::metadata(path)
+        .map_err(|e| format!("无法读取 hpatchz 元数据: {}", e))?;
+
+    // 1. 大小校验
+    if meta.len() < HPATCHZ_MIN_SIZE {
+        std::fs::remove_file(path).ok();
+        return Err(format!(
+            "hpatchz 文件异常（大小 {} 字节，低于最小阈值 {}），已删除",
+            meta.len(), HPATCHZ_MIN_SIZE
+        ));
+    }
+
+    // 2. SHA256 哈希校验
+    if !HPATCHZ_ALLOWED_SHA256.is_empty() {
+        let actual_hash = crate::utils::hash_verify::sha256_file(path).await?;
+        if !HPATCHZ_ALLOWED_SHA256.iter().any(|&h| h == actual_hash) {
+            std::fs::remove_file(path).ok();
+            return Err(format!(
+                "hpatchz SHA256 校验失败（实际: {}），不在允许列表中，已删除",
+                actual_hash
+            ));
+        }
+        info!("hpatchz SHA256 校验通过: {}", actual_hash);
+    } else {
+        // 白名单为空时降级为警告
+        warn!(
+            "hpatchz 未配置 SHA256 白名单，跳过哈希校验（大小: {} 字节）。建议在 HPATCHZ_ALLOWED_SHA256 中固定哈希。",
+            meta.len()
+        );
+    }
+
+    // 3. ELF 魔数校验（Linux 可执行文件基本验证）
+    #[cfg(unix)]
+    {
+        let header = std::fs::read(path)
+            .map_err(|e| format!("无法读取 hpatchz: {}", e))?;
+        if header.len() < 4 || &header[..4] != b"\x7fELF" {
+            std::fs::remove_file(path).ok();
+            return Err("hpatchz 不是有效的 ELF 可执行文件，已删除".to_string());
+        }
+    }
+
+    Ok(())
+}
+
 async fn merge_temp_to_game(temp_folder: &Path, game_folder: &Path) -> Result<(), String> {
     let walker = walkdir::WalkDir::new(temp_folder);
     for entry in walker.into_iter().filter_map(|e| e.ok()) {
@@ -321,7 +391,8 @@ async fn merge_temp_to_game(temp_folder: &Path, game_folder: &Path) -> Result<()
                 .path()
                 .strip_prefix(temp_folder)
                 .map_err(|e| format!("Path strip error: {}", e))?;
-            let dest = game_folder.join(relative);
+            let rel_str = relative.to_string_lossy();
+            let dest = safe_join_remote(game_folder, &rel_str)?;
 
             if let Some(parent) = dest.parent() {
                 tokio::fs::create_dir_all(parent).await.ok();

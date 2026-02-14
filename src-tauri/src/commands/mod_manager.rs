@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager};
-use tracing::info;
+use tracing::{info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModInfo {
@@ -65,15 +65,21 @@ fn resolve_game_path(app: &AppHandle, game_name: &str) -> Result<PathBuf, String
     let config_dirs: Vec<PathBuf> = {
         let mut dirs = Vec::new();
         // 用户可写目录优先
-        dirs.push(crate::utils::file_manager::get_global_games_dir().join(game_name));
+        if let Ok(p) = crate::utils::file_manager::safe_join(&crate::utils::file_manager::get_global_games_dir(), game_name) {
+            dirs.push(p);
+        }
         if let Ok(resource_dir) = app.path().resource_dir() {
-            dirs.push(resource_dir.join("resources").join("Games").join(game_name));
+            let res_games = resource_dir.join("resources").join("Games");
+            if let Ok(p) = crate::utils::file_manager::safe_join(&res_games, game_name) {
+                dirs.push(p);
+            }
         }
         // 开发模式回退
-        let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dev_games = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("resources")
-            .join("Games")
-            .join(game_name);
+            .join("Games");
+        let dev_path = crate::utils::file_manager::safe_join(&dev_games, game_name)
+            .unwrap_or_else(|_| dev_games.join("__invalid__"));
         if dev_path.exists() {
             dirs.push(dev_path);
         }
@@ -95,7 +101,7 @@ fn resolve_game_path(app: &AppHandle, game_name: &str) -> Result<PathBuf, String
 
     // 回退：使用全局游戏目录
     let games_dir = crate::utils::file_manager::get_global_games_dir();
-    Ok(games_dir.join(game_name))
+    crate::utils::file_manager::safe_join(&games_dir, game_name)
 }
 
 fn extract_game_path_from_config(data: &Value) -> Option<PathBuf> {
@@ -173,7 +179,7 @@ fn scan_dir_recursive(
             .map(|entries| {
                 entries
                     .flatten()
-                    .any(|e| e.path().extension().map_or(false, |ext| ext == "ini"))
+                    .any(|e| e.path().extension().is_some_and(|ext| ext == "ini"))
             })
             .unwrap_or(false);
 
@@ -261,6 +267,11 @@ fn find_group_icon(group_dir: &Path) -> Option<String> {
     None
 }
 
+/// 路径安全校验：委托给公共 safe_join
+fn safe_join(root: &Path, user_path: &str) -> Result<PathBuf, String> {
+    crate::utils::file_manager::safe_join(root, user_path)
+}
+
 #[tauri::command]
 pub fn toggle_mod(
     app: AppHandle,
@@ -269,7 +280,8 @@ pub fn toggle_mod(
     enable: bool,
 ) -> Result<String, String> {
     let game_path = resolve_game_path(&app, game_name)?;
-    let mod_path = game_path.join("Mods").join(mod_relative_path);
+    let mods_dir = game_path.join("Mods");
+    let mod_path = safe_join(&mods_dir, mod_relative_path)?;
 
     if !mod_path.exists() {
         return Err(format!("Mod path not found: {}", mod_path.display()));
@@ -285,12 +297,10 @@ pub fn toggle_mod(
 
     let new_name = if enable {
         name.trim_start_matches("DISABLED").trim_start().to_string()
+    } else if name.starts_with("DISABLED") {
+        name.clone()
     } else {
-        if name.starts_with("DISABLED") {
-            name.clone()
-        } else {
-            format!("DISABLED {}", name)
-        }
+        format!("DISABLED {}", name)
     };
 
     if new_name == name {
@@ -369,8 +379,8 @@ pub fn rename_mod_group(
 ) -> Result<(), String> {
     let game_path = resolve_game_path(&app, game_name)?;
     let mods_dir = game_path.join("Mods");
-    let old_path = mods_dir.join(old_group);
-    let new_path = mods_dir.join(new_group);
+    let old_path = safe_join(&mods_dir, old_group)?;
+    let new_path = safe_join(&mods_dir, new_group)?;
 
     if !old_path.exists() {
         return Err(format!("Group not found: {}", old_group));
@@ -385,7 +395,8 @@ pub fn rename_mod_group(
 #[tauri::command]
 pub fn delete_mod_group(app: AppHandle, game_name: &str, group_name: &str) -> Result<(), String> {
     let game_path = resolve_game_path(&app, game_name)?;
-    let group_dir = game_path.join("Mods").join(group_name);
+    let mods_dir = game_path.join("Mods");
+    let group_dir = safe_join(&mods_dir, group_name)?;
     if group_dir.exists() {
         trash::delete(&group_dir).map_err(|e| format!("Failed to delete group: {}", e))?;
         info!("Deleted mod group: {}", group_name);
@@ -401,7 +412,8 @@ pub fn set_mod_group_icon(
     icon_path: &str,
 ) -> Result<(), String> {
     let game_path = resolve_game_path(&app, game_name)?;
-    let group_dir = game_path.join("Mods").join(group_path);
+    let mods_dir = game_path.join("Mods");
+    let group_dir = safe_join(&mods_dir, group_path)?;
     let dest = group_dir.join("icon.png");
     std::fs::copy(icon_path, &dest).map_err(|e| format!("Failed to copy icon: {}", e))?;
     Ok(())
@@ -410,7 +422,8 @@ pub fn set_mod_group_icon(
 #[tauri::command]
 pub fn delete_mod(app: AppHandle, game_name: &str, mod_relative_path: &str) -> Result<(), String> {
     let game_path = resolve_game_path(&app, game_name)?;
-    let mod_path = game_path.join("Mods").join(mod_relative_path);
+    let mods_dir = game_path.join("Mods");
+    let mod_path = safe_join(&mods_dir, mod_relative_path)?;
     if mod_path.exists() {
         trash::delete(&mod_path).map_err(|e| format!("Failed to delete mod: {}", e))?;
         info!("Deleted mod: {}", mod_relative_path);
@@ -427,7 +440,7 @@ pub fn move_mod_to_group(
 ) -> Result<(), String> {
     let game_path = resolve_game_path(&app, game_name)?;
     let mods_dir = game_path.join("Mods");
-    let src = mods_dir.join(mod_id);
+    let src = safe_join(&mods_dir, mod_id)?;
 
     let mod_name = src
         .file_name()
@@ -438,7 +451,7 @@ pub fn move_mod_to_group(
     let target_dir = if new_group.is_empty() || new_group == "Root" {
         mods_dir.clone()
     } else {
-        mods_dir.join(new_group)
+        safe_join(&mods_dir, new_group)?
     };
     crate::utils::file_manager::ensure_dir(&target_dir)?;
 
@@ -468,7 +481,8 @@ pub fn open_mod_group_folder(
     group_path: &str,
 ) -> Result<(), String> {
     let game_path = resolve_game_path(&app, game_name)?;
-    let group_dir = game_path.join("Mods").join(group_path);
+    let mods_dir = game_path.join("Mods");
+    let group_dir = safe_join(&mods_dir, group_path)?;
     if !group_dir.exists() {
         return Err("Group folder does not exist".to_string());
     }
@@ -582,16 +596,17 @@ pub fn install_mod_archive(
         .to_string_lossy()
         .to_lowercase();
 
+    let mods_dir = game_path.join("Mods");
     let base_dir = if target_group.is_empty() {
-        game_path.join("Mods")
+        mods_dir.clone()
     } else {
-        game_path.join("Mods").join(target_group)
+        safe_join(&mods_dir, target_group)?
     };
 
     let target_dir = if target_name.is_empty() {
         base_dir.clone()
     } else {
-        base_dir.join(target_name)
+        safe_join(&base_dir, target_name)?
     };
     crate::utils::file_manager::ensure_dir(&target_dir)?;
 
@@ -615,14 +630,38 @@ fn install_from_zip(archive_path: &Path, target_dir: &Path) -> Result<(), String
     let mut archive =
         zip::ZipArchive::new(file).map_err(|e| format!("Failed to read zip: {}", e))?;
 
+    std::fs::create_dir_all(target_dir).ok();
+    let canonical_root = target_dir.canonicalize().unwrap_or_else(|_| target_dir.to_path_buf());
+
     for i in 0..archive.len() {
         let mut file = archive
             .by_index(i)
             .map_err(|e| format!("Failed to read zip entry: {}", e))?;
-        let name = file.name().to_string();
-        let dest = target_dir.join(&name);
 
-        if name.ends_with('/') {
+        // 防止 Zip Slip 路径穿越：使用 enclosed_name 过滤 ../ 等恶意路径
+        let safe_name = match file.enclosed_name() {
+            Some(name) => name.to_path_buf(),
+            None => {
+                warn!("跳过不安全的 zip 条目: {}", file.name());
+                continue;
+            }
+        };
+        let dest = target_dir.join(&safe_name);
+
+        // 二次校验：canonicalize 后必须位于目标根目录内
+        if let Ok(canon) = dest.canonicalize().or_else(|_| {
+            dest.parent()
+                .and_then(|p| p.canonicalize().ok())
+                .map(|p| p.join(dest.file_name().unwrap_or_default()))
+                .ok_or(std::io::Error::other("no parent"))
+        }) {
+            if !canon.starts_with(&canonical_root) {
+                warn!("跳过路径穿越条目: {} -> {}", file.name(), canon.display());
+                continue;
+            }
+        }
+
+        if safe_name.to_string_lossy().ends_with('/') {
             std::fs::create_dir_all(&dest).ok();
         } else {
             if let Some(parent) = dest.parent() {

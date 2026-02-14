@@ -6,27 +6,7 @@ import {
   scanGames as apiScanGames,
   convertFileSrc,
   showMessage,
-  getVideoServerPort,
 } from './api'
-
-// 视频流服务器端口
-let videoServerPort = 0;
-async function ensureVideoPort() {
-  if (videoServerPort === 0) {
-    try {
-      videoServerPort = await getVideoServerPort();
-      console.log('[BG] 视频服务器端口:', videoServerPort);
-    } catch (e) {
-      console.error('[BG] 获取视频服务器端口失败:', e);
-    }
-  }
-  return videoServerPort;
-}
-
-function getVideoStreamUrl(filePath: string): string {
-  if (videoServerPort === 0) return '';
-  return `http://127.0.0.1:${videoServerPort}/${encodeURIComponent(filePath)}`;
-}
 
 // Global UI State
 export const isDrawerOpen = ref(false);
@@ -133,7 +113,6 @@ async function initDefaultBackground() {
 
 export async function loadGames() {
   try {
-    await ensureVideoPort();
     const games = await apiScanGames();
     console.log('Scanned games:', games);
 
@@ -146,7 +125,7 @@ export async function loadGames() {
         displayName: g.displayName || g.name,
         iconPath: g.iconPath ? convertFileSrc(g.iconPath) + `?t=${timestamp}` : '',
         bgPath: g.bgPath ? convertFileSrc(g.bgPath) + `?t=${timestamp}` : '',
-        bgVideoPath: g.bgVideoPath ? getVideoStreamUrl(g.bgVideoPath) : undefined,
+        bgVideoPath: g.bgVideoPath ? convertFileSrc(g.bgVideoPath) + `?t=${timestamp}` : undefined,
         bgVideoRawPath: g.bgVideoPath || undefined,
         bgType: g.bgType || BGType.Image,
         showSidebar: g.showSidebar,

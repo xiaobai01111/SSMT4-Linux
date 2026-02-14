@@ -1,11 +1,13 @@
 use crate::configs::database as db;
+use crate::utils::file_manager::safe_join;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 use tauri::Manager;
-use tracing::info;
+use tracing::{info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct GameConfig {
     #[serde(flatten)]
     pub data: Value,
@@ -185,13 +187,10 @@ pub fn update_game_background(
 
 #[tauri::command]
 pub async fn get_3dmigoto_latest_release(game_preset: String) -> Result<Value, String> {
-    let repo_url = match game_preset.as_str() {
-        "SRMI" => "https://api.github.com/repos/SilentNightSound/SR-Model-Importer/releases/latest",
-        "WWMI" => "https://api.github.com/repos/SpectrumQT/WWMI/releases/latest",
-        "ZZMI" => "https://api.github.com/repos/leotorrez/ZZ-Model-Importer/releases/latest",
-        "HIMI" => "https://api.github.com/repos/SilentNightSound/HI-Model-Importer/releases/latest",
-        _ => "https://api.github.com/repos/SilentNightSound/GI-Model-Importer/releases/latest",
-    };
+    let default_repo = "https://api.github.com/repos/SilentNightSound/GI-Model-Importer/releases/latest";
+    let repo_url = crate::configs::game_presets::get_preset(&game_preset)
+        .and_then(|p| p.migoto_repo_api.as_deref())
+        .unwrap_or(default_repo);
 
     let client = reqwest::Client::new();
     let resp = client
@@ -251,7 +250,7 @@ pub async fn install_3dmigoto_update(
 
     let zip_path = cache_dir.join("3dmigoto_update.zip");
 
-    // Download
+    // 流式下载到临时文件，避免大包全量驻留内存
     let client = reqwest::Client::new();
     let resp = client
         .get(&download_url)
@@ -260,29 +259,60 @@ pub async fn install_3dmigoto_update(
         .await
         .map_err(|e| format!("Download failed: {}", e))?;
 
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("Failed to read download: {}", e))?;
-
-    std::fs::write(&zip_path, &bytes).map_err(|e| format!("Failed to save zip: {}", e))?;
+    {
+        use futures_util::StreamExt;
+        use tokio::io::AsyncWriteExt;
+        let mut stream = resp.bytes_stream();
+        let mut file = tokio::fs::File::create(&zip_path)
+            .await
+            .map_err(|e| format!("Failed to create zip file: {}", e))?;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| format!("Failed to read download stream: {}", e))?;
+            file.write_all(&chunk).await
+                .map_err(|e| format!("Failed to write zip chunk: {}", e))?;
+        }
+        file.flush().await.map_err(|e| format!("Failed to flush zip: {}", e))?;
+    }
 
     // Extract
     let file = std::fs::File::open(&zip_path).map_err(|e| format!("Failed to open zip: {}", e))?;
     let mut archive =
         zip::ZipArchive::new(file).map_err(|e| format!("Failed to read zip: {}", e))?;
 
+    let canonical_root = game_dir.canonicalize().unwrap_or_else(|_| game_dir.to_path_buf());
+
     for i in 0..archive.len() {
         let mut file = archive
             .by_index(i)
             .map_err(|e| format!("Failed to read zip entry: {}", e))?;
-        let name = file.name().to_string();
 
-        if name.ends_with('/') {
-            let dir = game_dir.join(&name);
-            std::fs::create_dir_all(&dir).ok();
+        // 防止 Zip Slip 路径穿越：使用 enclosed_name 过滤 ../ 等恶意路径
+        let safe_name = match file.enclosed_name() {
+            Some(name) => name.to_path_buf(),
+            None => {
+                warn!("跳过不安全的 zip 条目: {}", file.name());
+                continue;
+            }
+        };
+        let dest = game_dir.join(&safe_name);
+
+        // 二次校验：canonicalize 后必须位于目标根目录内
+        if let Ok(canon) = dest.canonicalize().or_else(|_| {
+            // 文件尚不存在时，校验父目录
+            dest.parent()
+                .and_then(|p| p.canonicalize().ok())
+                .map(|p| p.join(dest.file_name().unwrap_or_default()))
+                .ok_or(std::io::Error::other("no parent"))
+        }) {
+            if !canon.starts_with(&canonical_root) {
+                warn!("跳过路径穿越条目: {} -> {}", file.name(), canon.display());
+                continue;
+            }
+        }
+
+        if safe_name.to_string_lossy().ends_with('/') {
+            std::fs::create_dir_all(&dest).ok();
         } else {
-            let dest = game_dir.join(&name);
             if let Some(parent) = dest.parent() {
                 std::fs::create_dir_all(parent).ok();
             }
@@ -328,7 +358,7 @@ fn get_resource_games_dirs(app: &tauri::AppHandle) -> Result<Vec<PathBuf>, Strin
 }
 
 fn find_game_dir_by_logic_name(games_dir: &std::path::Path, game_name: &str) -> Option<PathBuf> {
-    let direct = games_dir.join(game_name);
+    let direct = safe_join(games_dir, game_name).ok()?;
     if direct.exists() {
         return Some(direct);
     }
@@ -380,7 +410,7 @@ fn get_game_dir(app: &tauri::AppHandle, game_name: &str) -> Result<PathBuf, Stri
         return Ok(found);
     }
 
-    Ok(user_games_dir.join(game_name))
+    safe_join(&user_games_dir, game_name)
 }
 
 fn get_writable_game_dir(app: &tauri::AppHandle, game_name: &str) -> Result<PathBuf, String> {
@@ -410,7 +440,7 @@ fn get_writable_game_dir(app: &tauri::AppHandle, game_name: &str) -> Result<Path
         return Ok(dst_dir);
     }
 
-    let dst_dir = user_games_dir.join(game_name);
+    let dst_dir = safe_join(&user_games_dir, game_name)?;
     crate::utils::file_manager::ensure_dir(&dst_dir)?;
     Ok(dst_dir)
 }

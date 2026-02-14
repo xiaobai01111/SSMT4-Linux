@@ -25,16 +25,13 @@
     "shell:allow-open",
     "fs:default",
     {
-      "identifier": "fs:allow-read-file",
-      "allow": [{ "path": "**" }]
-    },
-    {
-      "identifier": "fs:allow-write-file",
-      "allow": [{ "path": "**" }]
-    },
-    {
       "identifier": "fs:allow-exists",
-      "allow": [{ "path": "**" }]
+      "allow": [
+        { "path": "$APP/**" },
+        { "path": "$APPCONFIG/**" },
+        { "path": "$LOCALDATA/**" },
+        { "path": "$RESOURCE/**" }
+      ]
     }
   ]
 }

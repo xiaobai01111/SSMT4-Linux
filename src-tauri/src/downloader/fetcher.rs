@@ -114,7 +114,9 @@ pub async fn download_with_resume(
         file.write_all(&chunk)
             .await
             .map_err(|e| format!("Write error: {}", e))?;
-        downloaded_bytes += chunk.len() as u64;
+        let _n = chunk.len() as u64;
+        downloaded_bytes += _n;
+        let _ = downloaded_bytes; // 保留变量用于断点续传计算
 
         if let Some(cb) = progress_callback {
             cb(chunk.len() as u64);
@@ -136,6 +138,9 @@ pub async fn download_with_resume(
 
 /// Simple non-resumable download for small files (tools, etc.)
 pub async fn download_simple(client: &Client, url: &str, dest: &Path) -> Result<(), String> {
+    use futures_util::StreamExt;
+    use tokio::io::AsyncWriteExt;
+
     info!("Downloading {} -> {}", url, dest.display());
 
     if let Some(parent) = dest.parent() {
@@ -155,12 +160,20 @@ pub async fn download_simple(client: &Client, url: &str, dest: &Path) -> Result<
         return Err(format!("HTTP {}: {}", resp.status(), url));
     }
 
-    let bytes = resp
-        .bytes()
+    let mut file = tokio::fs::File::create(dest)
         .await
-        .map_err(|e| format!("Failed to read response: {}", e))?;
+        .map_err(|e| format!("Failed to create file: {}", e))?;
 
-    tokio::fs::write(dest, &bytes)
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Failed to read response: {}", e))?;
+        file.write_all(&chunk)
+            .await
+            .map_err(|e| format!("Failed to write file: {}", e))?;
+    }
+    file.flush()
         .await
-        .map_err(|e| format!("Failed to write file: {}", e))
+        .map_err(|e| format!("Failed to flush file: {}", e))?;
+
+    Ok(())
 }
