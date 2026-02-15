@@ -278,10 +278,10 @@ pub async fn start_game(
         cmd.current_dir(game_dir);
     }
 
-    // Launch — 临时继承 stderr 以便调试（正式版应改回 Stdio::null()）
+    // Launch — 不捕获 stdout/stderr，避免长时间运行累积内存
     let mut child = cmd
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|e| format!("Failed to launch game: {}", e))?;
 

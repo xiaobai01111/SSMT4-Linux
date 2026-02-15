@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Project specific ignores
+packaging/
+pkg/
+src-tauri/target/release/bundle/

@@ -335,16 +335,22 @@ const saveWineConfig = async () => {
     await saveConfig();
   } catch (e) {
     console.error('Failed to save wine config:', e);
+    notify?.error('保存失败', `Wine 配置保存失败: ${e}`);
   }
 };
 
 const saveSystemOptions = async () => {
-  // 保存 GPU 和语言到 config.other
-  config.other.gpuIndex = selectedGpuIndex.value;
-  config.other.gameLang = gameLang.value;
-  await saveConfig();
-  // 同步保存 Proton 设置（沙盒等）
-  await saveWineConfig();
+  try {
+    // 保存 GPU 和语言到 config.other
+    config.other.gpuIndex = selectedGpuIndex.value;
+    config.other.gameLang = gameLang.value;
+    await saveConfig();
+    // 同步保存 Proton 设置（沙盒等）
+    await saveWineConfig();
+    notify?.success('保存成功', '系统选项已保存');
+  } catch (e) {
+    notify?.error('保存失败', `系统选项保存失败: ${e}`);
+  }
 };
 
 const addCustomEnv = () => {
@@ -597,8 +603,10 @@ const saveInfoMetaSection = async () => {
     await saveInfoMetaRaw(props.gameName);
     syncInfoConfigToLegacyState();
     await loadJadeiteState();
+    notify?.success('保存成功', '游戏信息已保存');
   } catch (e) {
     console.error('[GameInfoV2] save meta failed:', e);
+    notify?.error('保存失败', `游戏信息保存失败: ${e}`);
   }
 };
 
@@ -609,12 +617,18 @@ const saveInfoRuntimeSection = async () => {
     syncInfoConfigToLegacyState();
   } catch (e) {
     console.error('[GameInfoV2] save runtime failed:', e);
+    notify?.error('保存失败', `运行环境保存失败: ${e}`);
   }
 };
 
 const saveRuntimeTabSettings = async () => {
-  await saveInfoRuntimeSection();
-  await saveWineConfig();
+  try {
+    await saveInfoRuntimeSection();
+    await saveWineConfig();
+    notify?.success('保存成功', '运行环境配置已保存');
+  } catch (e) {
+    notify?.error('保存失败', `运行环境配置保存失败: ${e}`);
+  }
 };
 
 const onInfoPresetChange = (presetId: string) => {
@@ -779,8 +793,10 @@ const resetToDefault = async () => {
     await loadConfig();
     await loadInfoConfig();
     await loadGames();
+    notify?.success('重置成功', '游戏配置已恢复默认');
   } catch (e) {
     console.error('Reset failed:', e);
+    notify?.error('重置失败', `${e}`);
   } finally {
     isLoading.value = false;
   }
@@ -797,9 +813,11 @@ const selectIcon = async () => {
       await apiSetGameIcon(props.gameName, file);
       await loadInfoConfig();
       await loadGames();
+      notify?.success('图标已更新', '游戏图标设置成功');
     }
   } catch (e) {
     console.error(e);
+    notify?.error('图标设置失败', `${e}`);
   }
 };
 
@@ -811,9 +829,11 @@ const selectBackground = async () => {
       await apiSetGameBackground(props.gameName, file, infoConfig.value.assets.backgroundType);
       await loadInfoConfig();
       await loadGames();
+      notify?.success('背景已更新', '背景图片设置成功');
     }
   } catch (e) {
     console.error(e);
+    notify?.error('背景设置失败', `${e}`);
   }
 };
 
@@ -824,8 +844,10 @@ const resetBackgroundToDefault = async () => {
     await apiResetGameBackground(props.gameName);
     await loadInfoConfig();
     await loadGames();
+    notify?.success('恢复成功', '图标和背景已恢复默认');
   } catch (e) {
     console.error('[GameInfoV2] reset background failed:', e);
+    notify?.error('恢复失败', `${e}`);
   }
 };
 
@@ -1050,9 +1072,11 @@ const createNewConfig = async () => {
       switchToGame(newGame);
     }
 
+    notify?.success('创建成功', `配置 "${configName.value}" 已创建`);
     await close();
   } catch (e) {
     console.error(t('gamesettingsmodal.log.configCreateFailed', { error: e }));
+    notify?.error('创建失败', `${e}`);
   } finally {
     isLoading.value = false;
   }
@@ -1074,9 +1098,11 @@ const deleteCurrentConfig = async () => {
 
     // Refresh games list and close
     await loadGames();
+    notify?.success('删除成功', `配置 "${props.gameName}" 已删除`);
     await close();
   } catch (e) {
     console.error('Failed to delete config:', e);
+    notify?.error('删除失败', `${e}`);
   } finally {
     isLoading.value = false;
   }
