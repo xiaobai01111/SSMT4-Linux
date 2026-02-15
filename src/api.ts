@@ -52,6 +52,101 @@ export interface GameConfig {
   other: any;
 }
 
+export type RuntimeEnv = 'wine' | 'steam' | 'linux';
+export type GameBackgroundType = 'Image';
+
+export interface GameInfoMeta {
+  displayName: string;
+  gamePreset: string;
+}
+
+export interface GameInfoRuntime {
+  runtimeEnv: RuntimeEnv;
+}
+
+export interface GameInfoAssets {
+  backgroundType: GameBackgroundType;
+  iconFile?: string | null;
+  backgroundFile?: string | null;
+}
+
+export interface GameInfoConfigV2 {
+  schemaVersion: number;
+  gameName: string;
+  meta: GameInfoMeta;
+  runtime: GameInfoRuntime;
+  assets: GameInfoAssets;
+  readOnly: boolean;
+  warningCode?: string | null;
+}
+
+export interface PresetCatalogItem {
+  id: string;
+  label: string;
+  displayNameEn: string;
+  legacyIds: string[];
+  defaultFolder: string;
+  supportedDownload: boolean;
+  supportedProtection: boolean;
+  supported3dmigoto: boolean;
+}
+
+export interface GameInfoMetaPatch {
+  displayName?: string;
+  gamePreset?: string;
+}
+
+export interface GameInfoRuntimePatch {
+  runtimeEnv?: RuntimeEnv;
+}
+
+export interface GameInfoAssetsPatch {
+  backgroundType?: GameBackgroundType;
+  iconFile?: string;
+  backgroundFile?: string;
+}
+
+export interface ValidateNameResult {
+  valid: boolean;
+  code: string;
+  message: string;
+}
+
+export interface MigrateResult {
+  success: boolean;
+  migrated: boolean;
+  code: string;
+  message: string;
+}
+
+export interface RenamePair {
+  from: string;
+  to: string;
+}
+
+export interface GameKeyMigrationStatus {
+  needed: boolean;
+  done: boolean;
+  reason: string;
+}
+
+export interface GameKeyMigrationPreview {
+  needed: boolean;
+  dbRenames: RenamePair[];
+  gameDirRenames: RenamePair[];
+  prefixDirRenames: RenamePair[];
+  configFilesToUpdate: number;
+  conflicts: string[];
+}
+
+export interface GameKeyMigrationResult {
+  success: boolean;
+  migrated: boolean;
+  message: string;
+  backupDir?: string | null;
+  conflicts: string[];
+}
+
 export interface ModScanResult {
   mods: any[];
   groups: any[];
@@ -325,6 +420,52 @@ export async function saveGameConfig(gameName: string, config: GameConfig): Prom
   return invoke('save_game_config', { gameName, config });
 }
 
+export async function listGamePresetsForInfo(): Promise<PresetCatalogItem[]> {
+  return invoke<PresetCatalogItem[]>('list_game_presets_for_info');
+}
+
+export async function loadGameInfoV2(gameName: string): Promise<GameInfoConfigV2> {
+  return invoke<GameInfoConfigV2>('load_game_info_v2', { gameName });
+}
+
+export async function saveGameInfoMeta(gameName: string, patch: GameInfoMetaPatch): Promise<void> {
+  return invoke('save_game_info_meta', { gameName, patch });
+}
+
+export async function saveGameInfoRuntime(gameName: string, patch: GameInfoRuntimePatch): Promise<void> {
+  return invoke('save_game_info_runtime', { gameName, patch });
+}
+
+export async function saveGameInfoAssets(gameName: string, patch: GameInfoAssetsPatch): Promise<void> {
+  return invoke('save_game_info_assets', { gameName, patch });
+}
+
+export async function validateGameConfigName(
+  name: string,
+  currentGameName?: string | null,
+): Promise<ValidateNameResult> {
+  return invoke<ValidateNameResult>('validate_game_config_name', {
+    name,
+    currentGameName: currentGameName ?? null,
+  });
+}
+
+export async function migrateGameConfigToV2(gameName: string): Promise<MigrateResult> {
+  return invoke<MigrateResult>('migrate_game_config_to_v2', { gameName });
+}
+
+export async function getGameKeyMigrationStatus(): Promise<GameKeyMigrationStatus> {
+  return invoke<GameKeyMigrationStatus>('get_game_key_migration_status');
+}
+
+export async function previewGameKeyMigration(): Promise<GameKeyMigrationPreview> {
+  return invoke<GameKeyMigrationPreview>('preview_game_key_migration');
+}
+
+export async function executeGameKeyMigration(): Promise<GameKeyMigrationResult> {
+  return invoke<GameKeyMigrationResult>('execute_game_key_migration');
+}
+
 export async function createNewConfig(newName: string, config: GameConfig): Promise<void> {
   return invoke('create_new_config', { newName, config });
 }
@@ -363,6 +504,10 @@ export async function setGameBackground(
 
 export async function setGameIcon(gameName: string, filePath: string): Promise<void> {
   return invoke('set_game_icon', { gameName, filePath });
+}
+
+export async function resetGameIcon(gameName: string): Promise<void> {
+  return invoke('reset_game_icon', { gameName });
 }
 
 export async function resetGameBackground(gameName: string): Promise<void> {
@@ -685,6 +830,8 @@ export interface GameLauncherApiInfo {
   launcherApi?: string;
   launcherDownloadApi?: string;
   defaultFolder?: string;
+  servers?: Array<{ id: string; label: string; launcherApi: string; bizPrefix?: string }>;
+  audioLanguages?: Array<{ code: string; label: string }>;
   supported: boolean;
 }
 

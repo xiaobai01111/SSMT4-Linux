@@ -66,7 +66,7 @@ pub async fn get_game_state(
 
     // HoYoverse 分支
     if hoyoverse::is_hoyoverse_api(&launcher_api) {
-        let biz = biz_prefix.as_deref().unwrap_or("hkrpg_");
+        let biz = require_hoyoverse_biz_prefix(biz_prefix.as_deref())?;
         return get_game_state_hoyoverse(&launcher_api, &game_path, biz).await;
     }
 
@@ -146,7 +146,7 @@ pub async fn download_game(
 
         // HoYoverse 分支
         if hoyoverse::is_hoyoverse_api(&launcher_api) {
-            let biz = biz_prefix.as_deref().unwrap_or("hkrpg_");
+            let biz = require_hoyoverse_biz_prefix(biz_prefix.as_deref())?;
             let game_pkg = hoyoverse::fetch_game_packages(&launcher_api, biz).await?;
             hoyoverse_download::download_game(app, &game_pkg, &game_path, &langs, cancel_token.clone())
                 .await?;
@@ -209,7 +209,7 @@ pub async fn update_game(
 
         // HoYoverse 分支
         if hoyoverse::is_hoyoverse_api(&launcher_api) {
-            let biz = biz_prefix.as_deref().unwrap_or("hkrpg_");
+            let biz = require_hoyoverse_biz_prefix(biz_prefix.as_deref())?;
             let game_pkg = hoyoverse::fetch_game_packages(&launcher_api, biz).await?;
             let local_version = get_local_version_internal(&game_path)
                 .ok_or("未找到本地版本，请使用全量下载".to_string())?;
@@ -308,7 +308,7 @@ pub async fn verify_game_files(
 
         // HoYoverse 分支
         if hoyoverse::is_hoyoverse_api(&launcher_api) {
-            let biz = biz_prefix.as_deref().unwrap_or("hkrpg_");
+            let biz = require_hoyoverse_biz_prefix(biz_prefix.as_deref())?;
             let game_pkg = hoyoverse::fetch_game_packages(&launcher_api, biz).await?;
             return hoyoverse_download::verify_game(app, &game_pkg, &game_path, cancel_token.clone())
                 .await;
@@ -369,6 +369,31 @@ pub fn get_local_version(game_folder: String) -> Result<Option<String>, String> 
 }
 
 fn get_local_version_internal(game_folder: &Path) -> Option<String> {
+    // 兼容不同目录结构：先看当前目录，再向上探测几级父目录。
+    for probe in version_probe_dirs(game_folder, 3) {
+        if let Some(version) = read_local_version_from_dir(&probe) {
+            return Some(version);
+        }
+    }
+    None
+}
+
+fn version_probe_dirs(game_folder: &Path, max_parent_depth: usize) -> Vec<PathBuf> {
+    let mut probes = Vec::new();
+    let mut current = Some(game_folder.to_path_buf());
+
+    for _ in 0..=max_parent_depth {
+        let Some(path) = current else { break };
+        if !probes.iter().any(|p: &PathBuf| p == &path) {
+            probes.push(path.clone());
+        }
+        current = path.parent().map(|p| p.to_path_buf());
+    }
+
+    probes
+}
+
+fn read_local_version_from_dir(game_folder: &Path) -> Option<String> {
     // 优先读取 .version (HoYoverse)
     let version_file = game_folder.join(".version");
     if version_file.exists() {
@@ -379,6 +404,7 @@ fn get_local_version_internal(game_folder: &Path) -> Option<String> {
             }
         }
     }
+
     // 回退到 launcherDownloadConfig.json (Kuro Games)
     let config_path = game_folder.join("launcherDownloadConfig.json");
     if !config_path.exists() {
@@ -395,6 +421,7 @@ fn get_local_version_internal(game_folder: &Path) -> Option<String> {
 #[tauri::command]
 pub fn get_game_launcher_api(game_preset: String) -> Result<serde_json::Value, String> {
     use crate::configs::game_presets;
+    let game_preset = crate::configs::game_identity::to_canonical_or_keep(&game_preset);
 
     let Some(preset) = game_presets::get_preset(&game_preset) else {
         return Ok(serde_json::json!({ "supported": false }));
@@ -403,6 +430,8 @@ pub fn get_game_launcher_api(game_preset: String) -> Result<serde_json::Value, S
     let mut obj = serde_json::json!({
         "supported": preset.supported,
         "defaultFolder": preset.default_folder,
+        "servers": preset.download_servers,
+        "audioLanguages": preset.audio_languages,
     });
 
     if let Some(ref api) = preset.launcher_api {
@@ -418,6 +447,7 @@ pub fn get_game_launcher_api(game_preset: String) -> Result<serde_json::Value, S
 /// 返回游戏默认安装目录（自动跟随软件数据目录 dataDir）
 #[tauri::command]
 pub fn get_default_game_folder(game_name: String) -> Result<String, String> {
+    let game_name = crate::configs::game_identity::to_canonical_or_keep(&game_name);
     let game_dir = crate::utils::file_manager::get_global_games_dir().join(&game_name);
     Ok(game_dir.to_string_lossy().to_string())
 }
@@ -466,6 +496,17 @@ fn get_snowbreak_policy(settings: &State<'_, StdMutex<AppConfig>>) -> snowbreak:
         .ok()
         .map(|cfg| snowbreak::SourcePolicy::from_str(&cfg.snowbreak_source_policy))
         .unwrap_or(snowbreak::SourcePolicy::OfficialFirst)
+}
+
+fn require_hoyoverse_biz_prefix<'a>(biz_prefix: Option<&'a str>) -> Result<&'a str, String> {
+    let Some(raw) = biz_prefix else {
+        return Err("HoYoverse 下载缺少 biz_prefix，请在游戏预设服务器配置中提供".to_string());
+    };
+    let biz = raw.trim();
+    if biz.is_empty() {
+        return Err("HoYoverse 下载缺少 biz_prefix，请在游戏预设服务器配置中提供".to_string());
+    }
+    Ok(biz)
 }
 
 /// HoYoverse 游戏状态检测

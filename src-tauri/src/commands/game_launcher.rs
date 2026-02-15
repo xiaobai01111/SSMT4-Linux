@@ -14,6 +14,7 @@ pub async fn start_game(
     game_exe_path: String,
     wine_version_id: String,
 ) -> Result<String, String> {
+    let game_name = crate::configs::game_identity::to_canonical_or_keep(&game_name);
     let game_exe = PathBuf::from(&game_exe_path);
     if !game_exe.exists() {
         return Err(format!("Game executable not found: {}", game_exe_path));
@@ -196,10 +197,16 @@ pub async fn start_game(
     }
 
     // 检测 jadeite 补丁（HoYoverse 游戏反作弊包装器）
-    let is_hoyoverse = matches!(game_preset.as_str(), "GIMI" | "SRMI" | "ZZMI" | "HIMI");
+    let is_hoyoverse = matches!(
+        game_preset.as_str(),
+        "GenshinImpact" | "HonkaiStarRail" | "ZenlessZoneZero" | "HonkaiImpact3rd"
+    );
     let jadeite_exe = if is_hoyoverse {
-        let game_root = game_exe.parent().and_then(|p| p.parent());
-        game_root.map(|r| r.join("patch").join("jadeite.exe")).filter(|p| p.exists())
+        // 使用与 install_jadeite 相同的 resolve_patch_dir（从配置读取 gameFolder）
+        super::jadeite::resolve_patch_dir(&game_name)
+            .ok()
+            .map(|d| d.join("jadeite.exe"))
+            .filter(|p| p.exists())
     } else {
         None
     };
@@ -271,10 +278,10 @@ pub async fn start_game(
         cmd.current_dir(game_dir);
     }
 
-    // Launch — 不捕获 stdout/stderr，避免长时间运行累积内存
+    // Launch — 临时继承 stderr 以便调试（正式版应改回 Stdio::null()）
     let mut child = cmd
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
         .spawn()
         .map_err(|e| format!("Failed to launch game: {}", e))?;
 
@@ -451,7 +458,8 @@ fn is_tos_risk_acknowledged() -> bool {
 }
 
 fn resolve_game_preset(game_name: &str) -> String {
-    let Some(content) = db::get_game_config(game_name) else {
+    let game_name = crate::configs::game_identity::to_canonical_or_keep(game_name);
+    let Some(content) = db::get_game_config(&game_name) else {
         return game_name.to_string();
     };
 
@@ -459,7 +467,7 @@ fn resolve_game_preset(game_name: &str) -> String {
         return game_name.to_string();
     };
 
-    extract_game_preset_from_config(&data).unwrap_or_else(|| game_name.to_string())
+    extract_game_preset_from_config(&data).unwrap_or(game_name)
 }
 
 fn extract_game_preset_from_config(data: &Value) -> Option<String> {
@@ -469,7 +477,7 @@ fn extract_game_preset_from_config(data: &Value) -> Option<String> {
         .or_else(|| data.get("LogicName"))
         .or_else(|| data.get("gamePreset"))
         .and_then(|v| v.as_str())
-        .map(|s| s.trim().to_string())
+        .map(crate::configs::game_identity::to_canonical_or_keep)
         .filter(|s| !s.is_empty())
 }
 

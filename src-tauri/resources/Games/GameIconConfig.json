@@ -1,27 +1,27 @@
 {
   "GameIconSettingList": [
     {
-      "GameName": "WWMI",
+      "GameName": "WutheringWaves",
       "Show": true
     },
     {
-      "GameName": "GIMI",
+      "GameName": "GenshinImpact",
       "Show": true
     },
     {
-      "GameName": "SRMI",
+      "GameName": "HonkaiStarRail",
       "Show": true
     },
     {
-      "GameName": "HIMI",
+      "GameName": "HonkaiImpact3rd",
       "Show": true
     },
     {
-      "GameName": "ZZMI",
+      "GameName": "ZenlessZoneZero",
       "Show": true
     },
     {
-      "GameName": "EFMI",
+      "GameName": "SnowbreakContainmentZone",
       "Show": true
     }
   ]

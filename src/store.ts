@@ -71,6 +71,10 @@ const defaultSettings: AppSettings = {
 export const appSettings = reactive<AppSettings>({ ...defaultSettings })
 export const gamesList = reactive<GameInfo[]>([])
 
+const canonicalGameKey = (value: string): string => {
+  return value.trim();
+}
+
 // Initial load
 let isInitialized = false;
 let _settingsLoadedResolve: () => void;
@@ -83,6 +87,7 @@ async function loadSettings() {
     const loaded = await apiLoadSettings()
     console.log('Loaded settings from backend:', loaded);
     Object.assign(appSettings, loaded)
+    appSettings.currentConfigName = canonicalGameKey(appSettings.currentConfigName)
     setTimeout(() => {
       isInitialized = true;
     }, 100);
@@ -125,7 +130,7 @@ export async function loadGames() {
         displayName: g.displayName || g.name,
         iconPath: g.iconPath ? convertFileSrc(g.iconPath) + `?t=${timestamp}` : '',
         bgPath: g.bgPath ? convertFileSrc(g.bgPath) + `?t=${timestamp}` : '',
-        bgVideoPath: g.bgVideoPath ? convertFileSrc(g.bgVideoPath) + `?t=${timestamp}` : undefined,
+        bgVideoPath: undefined,  // 视频不再通过 asset 协议，由 switchToGame 按需加载 Blob URL
         bgVideoRawPath: g.bgVideoPath || undefined,
         bgType: g.bgType || BGType.Image,
         showSidebar: g.showSidebar,
@@ -156,17 +161,8 @@ export async function loadGames() {
 
 export function switchToGame(game: GameInfo) {
   appSettings.currentConfigName = game.name;
-
-  // 使用 game.bgType 来决定显示类型
-  const useVideo = game.bgType === BGType.Video;
-
-  if (useVideo && game.bgVideoPath) {
-    appSettings.bgType = BGType.Video;
-    appSettings.bgVideo = game.bgVideoPath;
-  } else {
-    appSettings.bgType = BGType.Image;
-    appSettings.bgImage = game.bgPath || defaultBgPath;
-  }
+  appSettings.bgType = BGType.Image;
+  appSettings.bgImage = game.bgPath || defaultBgPath;
 }
 
 // Initial load

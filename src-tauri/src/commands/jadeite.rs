@@ -7,6 +7,7 @@ const JADEITE_API_URL: &str =
 /// 获取 jadeite 最新版本信息
 #[tauri::command]
 pub async fn get_jadeite_status(game_name: String) -> Result<serde_json::Value, String> {
+    let game_name = crate::configs::game_identity::to_canonical_or_keep(&game_name);
     let patch_dir = resolve_patch_dir(&game_name)?;
     let exe_path = patch_dir.join("jadeite.exe");
     let version_path = patch_dir.join(".version");
@@ -28,6 +29,7 @@ pub async fn get_jadeite_status(game_name: String) -> Result<serde_json::Value, 
 /// 下载并安装最新版 jadeite
 #[tauri::command]
 pub async fn install_jadeite(_app: tauri::AppHandle, game_name: String) -> Result<String, String> {
+    let game_name = crate::configs::game_identity::to_canonical_or_keep(&game_name);
     let patch_dir = resolve_patch_dir(&game_name)?;
     std::fs::create_dir_all(&patch_dir)
         .map_err(|e| format!("创建 patch 目录失败: {}", e))?;
@@ -130,21 +132,28 @@ pub async fn install_jadeite(_app: tauri::AppHandle, game_name: String) -> Resul
     Ok(format!("jadeite {} 安装成功", version_str))
 }
 
-/// 解析 patch 目录路径（游戏根目录/patch/）
-fn resolve_patch_dir(game_name: &str) -> Result<PathBuf, String> {
-    let config_json = crate::configs::database::get_game_config(game_name)
+/// 解析 patch 目录路径（gameRoot/patch/）
+///
+/// gameFolder 是游戏数据子目录（如 .../HonkaiStarRail/StarRail），
+/// 取其父目录作为游戏根目录（.../HonkaiStarRail），与 prefix 保持一致。
+pub fn resolve_patch_dir(game_name: &str) -> Result<PathBuf, String> {
+    let game_name = crate::configs::game_identity::to_canonical_or_keep(game_name);
+    let config_json = crate::configs::database::get_game_config(&game_name)
         .ok_or_else(|| format!("未找到游戏 {} 的配置", game_name))?;
     let data: serde_json::Value = serde_json::from_str(&config_json)
         .map_err(|e| format!("解析游戏配置失败: {}", e))?;
+
     let game_folder = data
         .pointer("/other/gameFolder")
         .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
         .ok_or("游戏配置中未设置 gameFolder")?;
 
-    let game_folder_path = PathBuf::from(game_folder);
-    let game_root = game_folder_path
+    let game_root = PathBuf::from(game_folder)
         .parent()
-        .ok_or("无法获取游戏根目录")?;
+        .ok_or("无法获取游戏根目录（gameFolder 的父目录）")?
+        .to_path_buf();
 
     Ok(game_root.join("patch"))
 }

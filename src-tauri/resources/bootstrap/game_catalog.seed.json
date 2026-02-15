@@ -1,0 +1,235 @@
+{
+  "identities": [
+    {
+      "canonicalKey": "WutheringWaves",
+      "displayNameEn": "Wuthering Waves",
+      "legacyAliases": ["WWMI", "WuWa"]
+    },
+    {
+      "canonicalKey": "GenshinImpact",
+      "displayNameEn": "Genshin Impact",
+      "legacyAliases": ["GIMI"]
+    },
+    {
+      "canonicalKey": "HonkaiStarRail",
+      "displayNameEn": "Honkai: Star Rail",
+      "legacyAliases": ["SRMI"]
+    },
+    {
+      "canonicalKey": "ZenlessZoneZero",
+      "displayNameEn": "Zenless Zone Zero",
+      "legacyAliases": ["ZZMI"]
+    },
+    {
+      "canonicalKey": "HonkaiImpact3rd",
+      "displayNameEn": "Honkai Impact 3rd",
+      "legacyAliases": ["HIMI"]
+    },
+    {
+      "canonicalKey": "SnowbreakContainmentZone",
+      "displayNameEn": "Snowbreak: Containment Zone",
+      "legacyAliases": ["EFMI"]
+    }
+  ],
+  "presets": [
+    {
+      "id": "WutheringWaves",
+      "legacyIds": ["WWMI", "WuWa"],
+      "displayNameEn": "Wuthering Waves",
+      "supported": true,
+      "defaultFolder": "Wuthering Waves Game",
+      "launcherApi": "https://prod-cn-alicdn-gamestarter.kurogame.com/launcher/game/G152/10003_Y8xXrXk65DqFHEDgApn3cpK5lfczpFx5/index.json",
+      "launcherDownloadApi": "https://prod-cn-alicdn-gamestarter.kurogame.com/launcher/launcher/10003_Y8xXrXk65DqFHEDgApn3cpK5lfczpFx5/G152/index.json",
+      "downloadServers": [
+        {
+          "id": "cn",
+          "label": "国服",
+          "launcherApi": "https://prod-cn-alicdn-gamestarter.kurogame.com/launcher/game/G152/10003_Y8xXrXk65DqFHEDgApn3cpK5lfczpFx5/index.json",
+          "bizPrefix": ""
+        },
+        {
+          "id": "global",
+          "label": "国际服",
+          "launcherApi": "https://prod-alicdn-gamestarter.kurogame.com/launcher/game/G153/50004_obOHXFrFanqsaIEOmuKroCcbZkQRBC7c/index.json",
+          "bizPrefix": ""
+        }
+      ],
+      "audioLanguages": [],
+      "migotoRepoApi": "https://api.github.com/repos/SpectrumQT/WWMI/releases/latest",
+      "telemetryServers": ["pc.crashsight.wetest.net"],
+      "telemetryDlls": []
+    },
+    {
+      "id": "HonkaiStarRail",
+      "legacyIds": ["SRMI"],
+      "displayNameEn": "Honkai: Star Rail",
+      "supported": true,
+      "defaultFolder": "StarRail",
+      "downloadServers": [
+        {
+          "id": "cn",
+          "label": "国服",
+          "launcherApi": "https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1",
+          "bizPrefix": "hkrpg_"
+        },
+        {
+          "id": "global",
+          "label": "国际服",
+          "launcherApi": "https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8",
+          "bizPrefix": "hkrpg_"
+        }
+      ],
+      "audioLanguages": [
+        { "code": "zh-cn", "label": "中文" },
+        { "code": "en-us", "label": "English" },
+        { "code": "ja-jp", "label": "日本語" },
+        { "code": "ko-kr", "label": "한국어" }
+      ],
+      "migotoRepoApi": "https://api.github.com/repos/SilentNightSound/SR-Model-Importer/releases/latest",
+      "telemetryServers": [
+        "log-upload.mihoyo.com",
+        "uspider.yuanshen.com",
+        "log-upload-os.hoyoverse.com",
+        "overseauspider.yuanshen.com",
+        "sg-public-data-api.hoyoverse.com",
+        "public-data-api.mihoyo.com"
+      ],
+      "telemetryDlls": [
+        "StarRail_Data/Plugins/x86_64/Telemetry.dll",
+        "StarRail_Data/Plugins/x86_64/telemetry.dll"
+      ]
+    },
+    {
+      "id": "ZenlessZoneZero",
+      "legacyIds": ["ZZMI"],
+      "displayNameEn": "Zenless Zone Zero",
+      "supported": true,
+      "defaultFolder": "ZenlessZoneZero",
+      "downloadServers": [
+        {
+          "id": "cn",
+          "label": "国服",
+          "launcherApi": "https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1",
+          "bizPrefix": "nap_"
+        },
+        {
+          "id": "global",
+          "label": "国际服",
+          "launcherApi": "https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8",
+          "bizPrefix": "nap_"
+        }
+      ],
+      "audioLanguages": [
+        { "code": "zh-cn", "label": "中文" },
+        { "code": "en-us", "label": "English" },
+        { "code": "ja-jp", "label": "日本語" },
+        { "code": "ko-kr", "label": "한국어" }
+      ],
+      "migotoRepoApi": "https://api.github.com/repos/leotorrez/ZZ-Model-Importer/releases/latest",
+      "telemetryServers": [
+        "log-upload.mihoyo.com",
+        "uspider.yuanshen.com",
+        "log-upload-os.hoyoverse.com",
+        "overseauspider.yuanshen.com",
+        "sg-public-data-api.hoyoverse.com",
+        "public-data-api.mihoyo.com"
+      ],
+      "telemetryDlls": [
+        "ZenlessZoneZero_Data/Plugins/x86_64/Telemetry.dll",
+        "ZenlessZoneZero_Data/Plugins/x86_64/telemetry.dll"
+      ]
+    },
+    {
+      "id": "GenshinImpact",
+      "legacyIds": ["GIMI"],
+      "displayNameEn": "Genshin Impact",
+      "supported": true,
+      "defaultFolder": "GenshinImpact",
+      "downloadServers": [
+        {
+          "id": "cn",
+          "label": "国服",
+          "launcherApi": "https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1",
+          "bizPrefix": "hk4e_"
+        },
+        {
+          "id": "global",
+          "label": "国际服",
+          "launcherApi": "https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8",
+          "bizPrefix": "hk4e_"
+        }
+      ],
+      "audioLanguages": [
+        { "code": "zh-cn", "label": "中文" },
+        { "code": "en-us", "label": "English" },
+        { "code": "ja-jp", "label": "日本語" },
+        { "code": "ko-kr", "label": "한국어" }
+      ],
+      "migotoRepoApi": "https://api.github.com/repos/SilentNightSound/GI-Model-Importer/releases/latest",
+      "telemetryServers": [
+        "log-upload.mihoyo.com",
+        "uspider.yuanshen.com",
+        "log-upload-os.hoyoverse.com",
+        "overseauspider.yuanshen.com",
+        "sg-public-data-api.hoyoverse.com",
+        "public-data-api.mihoyo.com"
+      ],
+      "telemetryDlls": [
+        "GenshinImpact_Data/Plugins/x86_64/Telemetry.dll",
+        "GenshinImpact_Data/Plugins/x86_64/telemetry.dll",
+        "YuanShen_Data/Plugins/x86_64/Telemetry.dll",
+        "YuanShen_Data/Plugins/x86_64/telemetry.dll"
+      ]
+    },
+    {
+      "id": "HonkaiImpact3rd",
+      "legacyIds": ["HIMI"],
+      "displayNameEn": "Honkai Impact 3rd",
+      "supported": true,
+      "defaultFolder": "HonkaiImpact3rd",
+      "downloadServers": [
+        {
+          "id": "cn",
+          "label": "国服",
+          "launcherApi": "https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1",
+          "bizPrefix": "bh3_"
+        },
+        {
+          "id": "global",
+          "label": "国际服",
+          "launcherApi": "https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8",
+          "bizPrefix": "bh3_"
+        }
+      ],
+      "audioLanguages": [],
+      "migotoRepoApi": "https://api.github.com/repos/SilentNightSound/HI-Model-Importer/releases/latest",
+      "telemetryServers": [
+        "log-upload.mihoyo.com",
+        "uspider.yuanshen.com",
+        "log-upload-os.hoyoverse.com",
+        "overseauspider.yuanshen.com",
+        "sg-public-data-api.hoyoverse.com",
+        "public-data-api.mihoyo.com"
+      ],
+      "telemetryDlls": []
+    },
+    {
+      "id": "SnowbreakContainmentZone",
+      "legacyIds": ["EFMI"],
+      "displayNameEn": "Snowbreak: Containment Zone",
+      "supported": true,
+      "defaultFolder": "SnowbreakContainmentZone",
+      "downloadServers": [
+        {
+          "id": "global",
+          "label": "国际服",
+          "launcherApi": "snowbreak://manifest",
+          "bizPrefix": ""
+        }
+      ],
+      "audioLanguages": [],
+      "telemetryServers": [],
+      "telemetryDlls": []
+    }
+  ]
+}

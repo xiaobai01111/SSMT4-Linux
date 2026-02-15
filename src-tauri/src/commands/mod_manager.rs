@@ -52,8 +52,9 @@ pub struct ModWatcher {
 }
 
 fn resolve_game_path(app: &AppHandle, game_name: &str) -> Result<PathBuf, String> {
+    let game_name = crate::configs::game_identity::to_canonical_or_keep(game_name);
     // 1) 优先从 SQLite 读取（save_game_config 的落盘位置）
-    if let Some(content) = crate::configs::database::get_game_config(game_name) {
+    if let Some(content) = crate::configs::database::get_game_config(&game_name) {
         if let Ok(data) = serde_json::from_str::<Value>(&content) {
             if let Some(path) = extract_game_path_from_config(&data) {
                 return Ok(path);
@@ -65,12 +66,20 @@ fn resolve_game_path(app: &AppHandle, game_name: &str) -> Result<PathBuf, String
     let config_dirs: Vec<PathBuf> = {
         let mut dirs = Vec::new();
         // 用户可写目录优先
-        if let Ok(p) = crate::utils::file_manager::safe_join(&crate::utils::file_manager::get_global_games_dir(), game_name) {
+        if let Ok(p) = crate::utils::file_manager::safe_join(&crate::utils::file_manager::get_global_games_dir(), &game_name) {
             dirs.push(p);
+        }
+        for alias in crate::configs::game_identity::legacy_aliases_for_canonical(&game_name) {
+            if let Ok(p) = crate::utils::file_manager::safe_join(
+                &crate::utils::file_manager::get_global_games_dir(),
+                &alias,
+            ) {
+                dirs.push(p);
+            }
         }
         if let Ok(resource_dir) = app.path().resource_dir() {
             let res_games = resource_dir.join("resources").join("Games");
-            if let Ok(p) = crate::utils::file_manager::safe_join(&res_games, game_name) {
+            if let Ok(p) = crate::utils::file_manager::safe_join(&res_games, &game_name) {
                 dirs.push(p);
             }
         }
@@ -78,7 +87,7 @@ fn resolve_game_path(app: &AppHandle, game_name: &str) -> Result<PathBuf, String
         let dev_games = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("resources")
             .join("Games");
-        let dev_path = crate::utils::file_manager::safe_join(&dev_games, game_name)
+        let dev_path = crate::utils::file_manager::safe_join(&dev_games, &game_name)
             .unwrap_or_else(|_| dev_games.join("__invalid__"));
         if dev_path.exists() {
             dirs.push(dev_path);
@@ -101,7 +110,7 @@ fn resolve_game_path(app: &AppHandle, game_name: &str) -> Result<PathBuf, String
 
     // 回退：使用全局游戏目录
     let games_dir = crate::utils::file_manager::get_global_games_dir();
-    crate::utils::file_manager::safe_join(&games_dir, game_name)
+    crate::utils::file_manager::safe_join(&games_dir, &game_name)
 }
 
 fn extract_game_path_from_config(data: &Value) -> Option<PathBuf> {

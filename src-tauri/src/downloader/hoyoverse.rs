@@ -175,16 +175,19 @@ pub fn is_hoyoverse_api(url: &str) -> bool {
     url.contains("mihoyo.com") || url.contains("hoyoverse.com")
 }
 
-/// 根据游戏 preset 返回 biz_prefix
+/// 根据游戏 preset 从配置中心读取 biz_prefix（无硬编码）
 #[allow(dead_code)]
-pub fn biz_prefix_for_preset(preset: &str) -> &str {
-    match preset {
-        "SRMI" => "hkrpg_",
-        "GIMI" => "hk4e_",
-        "ZZMI" => "nap_",
-        "HIMI" => "bh3_",
-        _ => "",
-    }
+pub fn biz_prefix_for_preset(preset: &str) -> Option<String> {
+    let canonical = crate::configs::game_identity::to_canonical_or_keep(preset);
+    let preset = crate::configs::game_presets::get_preset(&canonical)?;
+    preset.download_servers.iter().find_map(|server| {
+        let biz = server.biz_prefix.trim();
+        if biz.is_empty() {
+            None
+        } else {
+            Some(biz.to_string())
+        }
+    })
 }
 
 /// 读取本地版本（从 .version 文件或 launcherDownloadConfig.json）

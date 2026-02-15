@@ -16,16 +16,9 @@ pub struct GameInfo {
     pub show_sidebar: bool,
 }
 
-fn get_chinese_display_name(folder_name: &str) -> &str {
-    match folder_name {
-        "GIMI" => "原神",
-        "SRMI" => "崩坏：星穹铁道",
-        "ZZMI" => "绝区零",
-        "WWMI" => "鸣潮",
-        "HIMI" => "崩坏3",
-        "EFMI" => "尘白禁区",
-        _ => folder_name,
-    }
+fn get_default_display_name(game_key: &str) -> String {
+    crate::configs::game_identity::display_name_en_for_key(game_key)
+        .unwrap_or_else(|| game_key.to_string())
 }
 
 #[tauri::command]
@@ -76,8 +69,8 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
                 .as_ref()
                 .and_then(|v| v.get("LogicName").or_else(|| v.get("GamePreset")))
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| folder_name.clone());
+                .map(crate::configs::game_identity::to_canonical_or_keep)
+                .unwrap_or_else(|| crate::configs::game_identity::to_canonical_or_keep(&folder_name));
 
             all_dir_names.insert(game_id.clone());
 
@@ -171,7 +164,7 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
         }
         // 回退：使用内置中文名映射
         if display_name.is_empty() {
-            display_name = get_chinese_display_name(&game_id).to_string();
+            display_name = get_default_display_name(&game_id);
         }
 
         // 首次运行：如果 SQLite 中没有该游戏配置，从文件迁移
@@ -211,6 +204,7 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
     for db_name in &db_names {
         if !all_dir_names.contains(db_name.as_str()) {
             crate::configs::database::delete_game_config(db_name);
+            crate::configs::database::delete_game_config_v2(db_name);
             info!("已清理过期游戏配置: {}", db_name);
         }
     }
@@ -246,17 +240,21 @@ pub fn set_game_visibility(
     hidden: bool,
 ) -> Result<(), String> {
     let _ = app;
+    let game_name = crate::configs::game_identity::to_canonical_or_keep(&game_name);
     let games_dir = get_user_games_dir()?;
     let hidden_path = games_dir.join("hidden_games.json");
 
     let mut hidden_games = load_hidden_games(&games_dir);
 
     if hidden {
-        if !hidden_games.contains(&game_name) {
+        if !hidden_games
+            .iter()
+            .any(|item| item.eq_ignore_ascii_case(&game_name))
+        {
             hidden_games.push(game_name);
         }
     } else {
-        hidden_games.retain(|g| g != &game_name);
+        hidden_games.retain(|g| !g.eq_ignore_ascii_case(&game_name));
     }
 
     let content = serde_json::to_string_pretty(&hidden_games)
@@ -366,8 +364,8 @@ pub fn list_game_templates(app: tauri::AppHandle) -> Result<Vec<GameTemplateInfo
             .as_ref()
             .and_then(|v| v.get("LogicName").or_else(|| v.get("GamePreset")))
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| name.clone());
+            .map(crate::configs::game_identity::to_canonical_or_keep)
+            .unwrap_or_else(|| crate::configs::game_identity::to_canonical_or_keep(&name));
 
         let display_name = config_data
             .as_ref()
@@ -376,7 +374,7 @@ pub fn list_game_templates(app: tauri::AppHandle) -> Result<Vec<GameTemplateInfo
                     .and_then(|d| d.as_str())
                     .map(|s| s.to_string())
             })
-            .unwrap_or_else(|| get_chinese_display_name(&game_id).to_string());
+            .unwrap_or_else(|| get_default_display_name(&game_id));
 
         // 用 gameId 检查 Games 目录下是否已存在
         let already_exists = find_game_dir_by_logic_name(&games_dir, &game_id).is_some();
@@ -405,10 +403,17 @@ fn find_game_dir_by_logic_name(
     games_dir: &std::path::Path,
     target_id: &str,
 ) -> Option<std::path::PathBuf> {
+    let target_id = crate::configs::game_identity::to_canonical_or_keep(target_id);
     // 1. 直接匹配文件夹名
-    let direct = games_dir.join(target_id);
+    let direct = games_dir.join(&target_id);
     if direct.exists() {
         return Some(direct);
+    }
+    for alias in crate::configs::game_identity::legacy_aliases_for_canonical(&target_id) {
+        let alias_dir = games_dir.join(alias);
+        if alias_dir.exists() {
+            return Some(alias_dir);
+        }
     }
     // 2. 扫描所有子文件夹的 Config.json
     if let Ok(entries) = std::fs::read_dir(games_dir) {
@@ -426,7 +431,11 @@ fn find_game_dir_by_logic_name(
                         .get("LogicName")
                         .or_else(|| data.get("GamePreset"))
                         .and_then(|v| v.as_str());
-                    if ln == Some(target_id) {
+                    if ln
+                        .map(crate::configs::game_identity::to_canonical_or_keep)
+                        .as_deref()
+                        == Some(target_id.as_str())
+                    {
                         return Some(entry.path());
                     }
                 }
@@ -458,9 +467,9 @@ pub fn import_game_template(
             v.get("LogicName")
                 .or_else(|| v.get("GamePreset"))
                 .and_then(|x| x.as_str())
-                .map(|s| s.to_string())
+                .map(crate::configs::game_identity::to_canonical_or_keep)
         })
-        .unwrap_or_else(|| template_name.clone());
+        .unwrap_or_else(|| crate::configs::game_identity::to_canonical_or_keep(&template_name));
 
     let _ = app;
     let games_dir = get_user_games_dir()?;
@@ -513,11 +522,16 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()
 }
 
 fn load_hidden_games(games_dir: &Path) -> Vec<String> {
+    use std::collections::BTreeSet;
     let hidden_path = games_dir.join("hidden_games.json");
     if hidden_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&hidden_path) {
             if let Ok(games) = serde_json::from_str::<Vec<String>>(&content) {
-                return games;
+                let mut result = BTreeSet::new();
+                for game in games {
+                    result.insert(crate::configs::game_identity::to_canonical_or_keep(&game));
+                }
+                return result.into_iter().collect();
             }
         }
     }

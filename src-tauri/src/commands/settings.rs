@@ -298,6 +298,10 @@ fn normalize_settings(cfg: &mut AppConfig) {
     cfg.locale = normalize_locale(&cfg.locale);
     cfg.snowbreak_source_policy =
         normalize_snowbreak_source_policy(&cfg.snowbreak_source_policy, "official_first");
+    if !cfg.current_config_name.trim().is_empty() && cfg.current_config_name != "Default" {
+        cfg.current_config_name =
+            crate::configs::game_identity::to_canonical_or_keep(&cfg.current_config_name);
+    }
 
     if cfg.content_opacity.is_nan() {
         cfg.content_opacity = 0.0;

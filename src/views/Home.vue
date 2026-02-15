@@ -95,8 +95,8 @@ const resolve3dmigotoDir = async (): Promise<string | null> => {
 
   const data = await loadGameConfig(gameName);
   let installDir = data.threeDMigoto?.installDir;
-  if (!installDir && appSettings.cacheDir) {
-    installDir = await joinPath(appSettings.cacheDir, '3Dmigoto', gameName);
+  if (!installDir && appSettings.dataDir) {
+    installDir = await joinPath(appSettings.dataDir, '3Dmigoto', gameName);
   }
   return installDir || null;
 };
@@ -298,8 +298,8 @@ const launchGame = async () => {
       }
 
       let gamePath = data.threeDMigoto?.installDir;
-      if (!gamePath && appSettings.cacheDir) {
-        gamePath = await joinPath(appSettings.cacheDir, '3Dmigoto', gameName);
+      if (!gamePath && appSettings.dataDir) {
+        gamePath = await joinPath(appSettings.dataDir, '3Dmigoto', gameName);
       }
 
       const gameExePath = data.other?.gamePath || '';

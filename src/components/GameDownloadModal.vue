@@ -3,6 +3,8 @@ import { ref, watch, computed } from 'vue';
 import {
   getGameState,
   getDefaultGameFolder,
+  getGameLauncherApi,
+  listGamePresetsForInfo,
   getGameProtectionInfo,
   applyGameProtection,
   checkGameProtectionStatus,
@@ -13,6 +15,7 @@ import {
   loadGameConfig,
   saveGameConfig,
   type GameState,
+  type PresetCatalogItem,
 } from '../api';
 import { appSettings } from '../store';
 import { dlState, isActiveFor, fireDownload, fireVerify, cancelActive } from '../downloadStore';
@@ -68,76 +71,53 @@ const protectionStatusClass = computed(() => {
   return protectionApplied.value ? 'enabled' : 'disabled';
 });
 
-const getProtectionPreset = () => gamePreset.value || props.gameName;
+const canonicalPreset = (value: string): string => {
+  return value.trim();
+};
 
-// HoYoverse 四语言包
-const HOYO_AUDIO_LANGS: AudioLangOption[] = [
-  { code: 'zh-cn', label: '中文' },
-  { code: 'en-us', label: 'English' },
-  { code: 'ja-jp', label: '日本語' },
-  { code: 'ko-kr', label: '한국어' },
-];
+const getProtectionPreset = () => canonicalPreset(gamePreset.value || props.gameName);
 
-// 已知游戏的 launcher API 配置
+const normalizePathForCompare = (value: string): string =>
+  value.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/$/, '');
+
+const trimFolderPart = (value: string): string =>
+  value.trim().replace(/^[\\/]+|[\\/]+$/g, '');
+
+const parentDir = (value: string): string => {
+  const normalized = normalizePathForCompare(value);
+  const idx = normalized.lastIndexOf('/');
+  if (idx <= 0) return '';
+  return normalized.slice(0, idx);
+};
+
+const findPresetCatalog = (catalog: PresetCatalogItem[], key: string): PresetCatalogItem | null => {
+  const target = key.trim().toLowerCase();
+  if (!target) return null;
+  return (
+    catalog.find(
+      (item) =>
+        item.id.trim().toLowerCase() === target ||
+        item.legacyIds.some((alias) => alias.trim().toLowerCase() === target),
+    ) || null
+  );
+};
+
 interface LauncherApiConfig {
   defaultFolder: string;
   servers: ServerOption[];
   audioLanguages?: AudioLangOption[];
 }
-const KNOWN_LAUNCHER_APIS: Record<string, LauncherApiConfig> = {
-  'WWMI': {
-    defaultFolder: 'Wuthering Waves Game',
-    servers: [
-      { id: 'cn', label: '国服', launcherApi: 'https://prod-cn-alicdn-gamestarter.kurogame.com/launcher/game/G152/10003_Y8xXrXk65DqFHEDgApn3cpK5lfczpFx5/index.json', bizPrefix: '' },
-      { id: 'global', label: '国际服', launcherApi: 'https://prod-alicdn-gamestarter.kurogame.com/launcher/game/G153/50004_obOHXFrFanqsaIEOmuKroCcbZkQRBC7c/index.json', bizPrefix: '' },
-    ],
-  },
-  'WuWa': {
-    defaultFolder: 'Wuthering Waves Game',
-    servers: [
-      { id: 'cn', label: '国服', launcherApi: 'https://prod-cn-alicdn-gamestarter.kurogame.com/launcher/game/G152/10003_Y8xXrXk65DqFHEDgApn3cpK5lfczpFx5/index.json', bizPrefix: '' },
-      { id: 'global', label: '国际服', launcherApi: 'https://prod-alicdn-gamestarter.kurogame.com/launcher/game/G153/50004_obOHXFrFanqsaIEOmuKroCcbZkQRBC7c/index.json', bizPrefix: '' },
-    ],
-  },
-  'SRMI': {
-    defaultFolder: 'StarRail',
-    servers: [
-      { id: 'cn', label: '国服', launcherApi: 'https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1', bizPrefix: 'hkrpg_' },
-      { id: 'global', label: '国际服', launcherApi: 'https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8', bizPrefix: 'hkrpg_' },
-    ],
-    audioLanguages: HOYO_AUDIO_LANGS,
-  },
-  'ZZMI': {
-    defaultFolder: 'ZenlessZoneZero',
-    servers: [
-      { id: 'cn', label: '国服', launcherApi: 'https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1', bizPrefix: 'nap_' },
-      { id: 'global', label: '国际服', launcherApi: 'https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8', bizPrefix: 'nap_' },
-    ],
-    audioLanguages: HOYO_AUDIO_LANGS,
-  },
-  'GIMI': {
-    defaultFolder: 'GenshinImpact',
-    servers: [
-      { id: 'cn', label: '国服', launcherApi: 'https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1', bizPrefix: 'hk4e_' },
-      { id: 'global', label: '国际服', launcherApi: 'https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8', bizPrefix: 'hk4e_' },
-    ],
-    audioLanguages: HOYO_AUDIO_LANGS,
-  },
-  'HIMI': {
-    defaultFolder: 'HonkaiImpact3rd',
-    servers: [
-      { id: 'cn', label: '国服', launcherApi: 'https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1', bizPrefix: 'bh3_' },
-      { id: 'global', label: '国际服', launcherApi: 'https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8', bizPrefix: 'bh3_' },
-      { id: 'sea', label: '东南亚服', launcherApi: 'https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8', bizPrefix: 'bh3_' },
-      { id: 'tw', label: '台服', launcherApi: 'https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8', bizPrefix: 'bh3_' },
-    ],
-  },
-  'EFMI': {
-    defaultFolder: 'SnowbreakContainmentZone',
-    servers: [
-      { id: 'global', label: '国际服', launcherApi: 'snowbreak://manifest', bizPrefix: '' },
-    ],
-  },
+
+const isHoyoverseApi = (api: string): boolean =>
+  api.includes('mihoyo.com') || api.includes('hoyoverse.com');
+
+const currentBizPrefix = (): string => (selectedServer.value?.bizPrefix || '').trim();
+
+const ensureBizPrefixReady = (): boolean => {
+  if (!isHoyoverseApi(launcherApi.value)) return true;
+  if (currentBizPrefix()) return true;
+  error.value = '当前 HoYoverse 服务器缺少 biz_prefix，请检查游戏预设配置';
+  return false;
 };
 
 const close = () => {
@@ -200,11 +180,11 @@ const loadState = async () => {
   statusMsg.value = '正在加载配置...';
 
   // 1. 先尝试从 Config.json 读取 GamePreset，失败则直接用 gameName
-  let preset = props.gameName;
+  let preset = canonicalPreset(props.gameName);
   let savedFolder = '';
   try {
     const config = await loadGameConfig(props.gameName);
-    preset = (config as any).GamePreset || config.basic?.gamePreset || props.gameName;
+    preset = canonicalPreset((config as any).GamePreset || config.basic?.gamePreset || props.gameName);
     // 恢复之前保存的下载配置（保存在 config.other 下）
     const other = config.other || {};
     launcherApi.value = other.launcherApi || '';
@@ -217,8 +197,20 @@ const loadState = async () => {
   await refreshProtectionStatus();
 
   // 2. 检测是否支持自动下载
-  const knownApi = KNOWN_LAUNCHER_APIS[preset] || KNOWN_LAUNCHER_APIS[props.gameName];
-  isSupported.value = !!knownApi;
+  const launcherInfo = await getGameLauncherApi(preset);
+  const knownApi: LauncherApiConfig | null = launcherInfo.supported
+    ? {
+        defaultFolder: launcherInfo.defaultFolder || '',
+        servers: (launcherInfo.servers || []).map((s) => ({
+          id: s.id,
+          label: s.label,
+          launcherApi: s.launcherApi,
+          bizPrefix: s.bizPrefix || '',
+        })),
+        audioLanguages: launcherInfo.audioLanguages,
+      }
+    : null;
+  isSupported.value = !!knownApi && knownApi.servers.length > 0;
 
   // 设置可用服务器列表
   availableServers.value = knownApi?.servers || [];
@@ -233,7 +225,7 @@ const loadState = async () => {
   }
   console.log('[GameDownload] isSupported =', isSupported.value, ', servers =', availableServers.value.length);
 
-  if (!knownApi) {
+  if (!knownApi || knownApi.servers.length === 0) {
     statusMsg.value = '';
     return;
   }
@@ -246,11 +238,39 @@ const loadState = async () => {
   // 4. 始终从后端获取最新默认目录（跟随 dataDir 变化）
   try {
     const baseDir = await getDefaultGameFolder(props.gameName);
-    const defaultFolder = baseDir + '/' + knownApi.defaultFolder;
+    const defaultFolderPart = trimFolderPart(knownApi.defaultFolder);
+    const defaultFolder = defaultFolderPart ? `${baseDir}/${defaultFolderPart}` : baseDir;
+    const defaultNorm = normalizePathForCompare(defaultFolder);
+
+    let legacyDefaults = new Set<string>();
+    try {
+      const catalog = await listGamePresetsForInfo();
+      const presetCatalog = findPresetCatalog(catalog, preset);
+      if (presetCatalog?.legacyIds?.length) {
+        const gamesRoot = parentDir(baseDir);
+        for (const alias of presetCatalog.legacyIds) {
+          const aliasKey = alias.trim();
+          if (!aliasKey || !gamesRoot) continue;
+          const legacyBase = `${gamesRoot}/${aliasKey}`;
+          const legacyFolder = defaultFolderPart ? `${legacyBase}/${defaultFolderPart}` : legacyBase;
+          legacyDefaults.add(normalizePathForCompare(legacyFolder));
+        }
+      }
+    } catch (e) {
+      console.warn('[GameDownload] listGamePresetsForInfo failed:', e);
+    }
+
+    const savedNorm = normalizePathForCompare(savedFolder);
+    const looksLikeOldDefault =
+      !!savedNorm && (savedNorm.includes('/.local/share/ssmt4/') || legacyDefaults.has(savedNorm));
+
     // 仅当用户没有手动设置过自定义目录时，使用默认路径
     // 判断依据：savedFolder 为空，或 savedFolder 是旧的默认路径格式
-    if (!savedFolder || savedFolder.includes('/.local/share/ssmt4/') || savedFolder === defaultFolder) {
+    if (!savedFolder || looksLikeOldDefault || savedNorm === defaultNorm) {
       gameFolder.value = defaultFolder;
+      if (savedNorm && savedNorm !== defaultNorm) {
+        await saveDownloadConfig();
+      }
     } else {
       gameFolder.value = savedFolder;
     }
@@ -284,11 +304,12 @@ const checkState = async () => {
     error.value = '请先配置启动器 API 和游戏安装目录';
     return;
   }
+  if (!ensureBizPrefixReady()) return;
   isChecking.value = true;
   error.value = '';
   statusMsg.value = '正在检查游戏状态...';
   try {
-    const biz = selectedServer.value?.bizPrefix || undefined;
+    const biz = currentBizPrefix() || undefined;
     gameState.value = await getGameState(launcherApi.value, gameFolder.value, biz);
     await refreshProtectionStatus();
     statusMsg.value = '';
@@ -303,6 +324,7 @@ const checkState = async () => {
 const startDownload = async () => {
   if (!launcherApi.value || !gameFolder.value) return;
   if (dlState.active) return;
+  if (!ensureBizPrefixReady()) return;
   if (!(await ensureRiskAcknowledged())) return;
   error.value = '';
 
@@ -312,7 +334,7 @@ const startDownload = async () => {
     launcherApi: launcherApi.value,
     gameFolder: gameFolder.value,
     languages: selectedLanguages.value.length > 0 ? [...selectedLanguages.value] : undefined,
-    bizPrefix: selectedServer.value?.bizPrefix || undefined,
+    bizPrefix: currentBizPrefix() || undefined,
     isUpdate: gameState.value?.state === 'needupdate',
   });
 };
@@ -320,13 +342,14 @@ const startDownload = async () => {
 const startVerify = async () => {
   if (!launcherApi.value || !gameFolder.value) return;
   if (dlState.active) return;
+  if (!ensureBizPrefixReady()) return;
 
   fireVerify({
     gameName: props.gameName,
     displayName: props.displayName,
     launcherApi: launcherApi.value,
     gameFolder: gameFolder.value,
-    bizPrefix: selectedServer.value?.bizPrefix || undefined,
+    bizPrefix: currentBizPrefix() || undefined,
   });
 };
 
