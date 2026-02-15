@@ -1,6 +1,6 @@
 [package]
 name = "SSMT4-linux"
-version = "0.0.1-beta"
+version = "0.0.5-beta"
 description = "SSMT4 - 3Dmigoto Toolbox for Linux"
 authors = ["you"]
 edition = "2021"

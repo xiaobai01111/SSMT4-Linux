@@ -17,6 +17,7 @@ import {
   getGameProtectionInfo,
   joinPath,
   listenEvent,
+  getGameWineConfig,
 } from '../api'
 import GameSettingsModal from '../components/GameSettingsModal.vue'
 import GameDownloadModal from '../components/GameDownloadModal.vue'
@@ -303,7 +304,14 @@ const launchGame = async () => {
       }
 
       const gameExePath = data.other?.gamePath || '';
-      const wineVersionId = data.other?.wineVersionId || '';
+      // wineVersionId 优先从 wine config 读取，回退到 config.other
+      let wineVersionId = data.other?.wineVersionId || '';
+      if (!wineVersionId) {
+        try {
+          const wineConfig = await getGameWineConfig(gameName);
+          wineVersionId = wineConfig.wine_version_id || '';
+        } catch { /* ignore */ }
+      }
 
       // Check 3Dmigoto Integrity（非强制，用户可选择无 Mod 启动）
       const safe = await check3dmigotoIntegrity(gameName, gamePath || '');

@@ -15,8 +15,12 @@ pub fn load_settings(config: State<'_, Mutex<AppConfig>>) -> Result<AppConfig, S
     };
     normalize_settings(&mut loaded);
 
-    // 同步全局 dataDir
-    apply_data_dir(&loaded);
+    // 仅同步内存中的 dataDir（不创建符号链接，符号链接仅在 save_settings 时创建）
+    if loaded.data_dir.is_empty() {
+        app_config::clear_custom_data_dir();
+    } else {
+        app_config::set_custom_data_dir(std::path::PathBuf::from(&loaded.data_dir));
+    }
 
     let mut state = config.lock().map_err(|e| e.to_string())?;
     *state = loaded.clone();

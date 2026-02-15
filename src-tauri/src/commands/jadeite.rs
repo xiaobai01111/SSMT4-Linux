@@ -134,8 +134,8 @@ pub async fn install_jadeite(_app: tauri::AppHandle, game_name: String) -> Resul
 
 /// 解析 patch 目录路径（gameRoot/patch/）
 ///
-/// gameFolder 是游戏数据子目录（如 .../HonkaiStarRail/StarRail），
-/// 取其父目录作为游戏根目录（.../HonkaiStarRail），与 prefix 保持一致。
+/// 优先从 gameFolder（游戏数据子目录）的父目录推导游戏根目录，
+/// 回退到 gamePath（可执行文件）向上两级推导。
 pub fn resolve_patch_dir(game_name: &str) -> Result<PathBuf, String> {
     let game_name = crate::configs::game_identity::to_canonical_or_keep(game_name);
     let config_json = crate::configs::database::get_game_config(&game_name)
@@ -143,17 +143,27 @@ pub fn resolve_patch_dir(game_name: &str) -> Result<PathBuf, String> {
     let data: serde_json::Value = serde_json::from_str(&config_json)
         .map_err(|e| format!("解析游戏配置失败: {}", e))?;
 
-    let game_folder = data
-        .pointer("/other/gameFolder")
+    // 优先：gameFolder 的父目录
+    if let Some(game_folder) = data.pointer("/other/gameFolder")
         .and_then(|v| v.as_str())
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
-        .ok_or("游戏配置中未设置 gameFolder")?;
+    {
+        if let Some(game_root) = PathBuf::from(game_folder).parent() {
+            return Ok(game_root.join("patch"));
+        }
+    }
 
-    let game_root = PathBuf::from(game_folder)
-        .parent()
-        .ok_or("无法获取游戏根目录（gameFolder 的父目录）")?
-        .to_path_buf();
+    // 回退：gamePath 向上两级（exe → 数据子目录 → 游戏根目录）
+    if let Some(game_path) = data.pointer("/other/gamePath")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        if let Some(game_root) = PathBuf::from(game_path).parent().and_then(|p| p.parent()) {
+            return Ok(game_root.join("patch"));
+        }
+    }
 
-    Ok(game_root.join("patch"))
+    Err("游戏配置中未设置 gameFolder 或 gamePath，无法确定 patch 目录".to_string())
 }

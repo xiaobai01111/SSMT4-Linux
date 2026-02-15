@@ -43,19 +43,9 @@ pub fn setup(_app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             .map_err(|e| format!("创建关键目录失败 {}: {}", dir.display(), e))?;
     }
 
-    // 3. 如果已设置自定义数据目录，创建符号链接 + Games 子目录
-    //    ~/.local/share/ssmt4 -> 自定义目录
-    if !data_dir_str.is_empty() {
-        let custom_dir = std::path::PathBuf::from(&data_dir_str);
-        if let Err(e) = utils::file_manager::setup_data_dir_symlink(&custom_dir) {
-            tracing::error!("设置数据目录符号链接失败: {}", e);
-        }
-        // Games 子目录为非关键目录，失败降级记录
-        let games_dir = utils::file_manager::get_global_games_dir();
-        if let Err(e) = utils::file_manager::ensure_dir(&games_dir) {
-            tracing::warn!("创建 Games 目录失败（非关键，继续启动）: {} — {}", games_dir.display(), e);
-        }
-    }
+    // 3. 符号链接和 Games 目录不在启动时创建
+    //    仅在用户显式保存设置（save_settings）时才创建/更新符号链接
+    //    这样新用户首次启动不会产生未经确认的符号链接
 
     let data_dir = configs::app_config::get_app_data_dir();
     tracing::info!("Config dir: {}", config_dir.display());
