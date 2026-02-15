@@ -19,8 +19,9 @@ pub fn scan_wine_versions(
 
 #[tauri::command]
 pub fn get_game_wine_config(game_id: &str) -> Result<GameWineConfig, String> {
-    let prefix_config = prefix::load_prefix_config(game_id).ok();
-    let prefix_dir = prefix::get_prefix_dir(game_id);
+    let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
+    let prefix_config = prefix::load_prefix_config(&game_id).ok();
+    let prefix_dir = prefix::get_prefix_dir(&game_id);
 
     Ok(GameWineConfig {
         game_id: game_id.to_string(),
@@ -41,18 +42,19 @@ pub fn set_game_wine_config(
     wine_version_id: &str,
     proton_settings: ProtonSettings,
 ) -> Result<(), String> {
-    if prefix::prefix_exists(game_id) {
-        let mut config = prefix::load_prefix_config(game_id)?;
+    let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
+    if prefix::prefix_exists(&game_id) {
+        let mut config = prefix::load_prefix_config(&game_id)?;
         config.wine_version_id = wine_version_id.to_string();
         config.proton_settings = proton_settings;
-        prefix::save_prefix_config(game_id, &config)?;
+        prefix::save_prefix_config(&game_id, &config)?;
     } else {
         let config = PrefixConfig {
             wine_version_id: wine_version_id.to_string(),
             proton_settings,
             ..Default::default()
         };
-        prefix::create_prefix(game_id, &config)?;
+        prefix::create_prefix(&game_id, &config)?;
     }
     info!("Updated wine config for game {}", game_id);
     Ok(())
@@ -60,44 +62,50 @@ pub fn set_game_wine_config(
 
 #[tauri::command]
 pub fn create_prefix(game_id: &str, template_id: Option<String>) -> Result<String, String> {
+    let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
     let path = if let Some(tid) = template_id {
         let templates = prefix::list_templates()?;
         let template = templates
             .iter()
             .find(|t| t.id == tid)
             .ok_or_else(|| format!("Template '{}' not found", tid))?;
-        prefix::create_prefix_from_template(game_id, template)?
+        prefix::create_prefix_from_template(&game_id, template)?
     } else {
-        prefix::create_prefix(game_id, &PrefixConfig::default())?
+        prefix::create_prefix(&game_id, &PrefixConfig::default())?
     };
     Ok(path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
 pub fn delete_prefix(game_id: &str) -> Result<(), String> {
-    prefix::delete_prefix(game_id)
+    let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
+    prefix::delete_prefix(&game_id)
 }
 
 #[tauri::command]
 pub fn get_prefix_info(game_id: &str) -> Result<prefix::PrefixInfo, String> {
-    prefix::get_prefix_info(game_id)
+    let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
+    prefix::get_prefix_info(&game_id)
 }
 
 #[tauri::command]
 pub async fn install_dxvk(game_id: &str, version: &str) -> Result<String, String> {
-    let pfx_dir = prefix::get_prefix_pfx_dir(game_id);
+    let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
+    let pfx_dir = prefix::get_prefix_pfx_dir(&game_id);
     graphics::install_dxvk(&pfx_dir, version).await
 }
 
 #[tauri::command]
 pub fn uninstall_dxvk(game_id: &str) -> Result<String, String> {
-    let pfx_dir = prefix::get_prefix_pfx_dir(game_id);
+    let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
+    let pfx_dir = prefix::get_prefix_pfx_dir(&game_id);
     graphics::uninstall_dxvk(&pfx_dir)
 }
 
 #[tauri::command]
 pub async fn install_vkd3d(game_id: &str, version: &str) -> Result<String, String> {
-    let pfx_dir = prefix::get_prefix_pfx_dir(game_id);
+    let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
+    let pfx_dir = prefix::get_prefix_pfx_dir(&game_id);
     graphics::install_vkd3d(&pfx_dir, version).await
 }
 
@@ -108,10 +116,11 @@ pub fn check_vulkan() -> Result<graphics::VulkanInfo, String> {
 
 #[tauri::command]
 pub async fn install_runtime(game_id: &str, component: &str) -> Result<String, String> {
-    let pfx_dir = prefix::get_prefix_pfx_dir(game_id);
+    let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
+    let pfx_dir = prefix::get_prefix_pfx_dir(&game_id);
 
     // Find wine executable from prefix config
-    let mut config = prefix::load_prefix_config(game_id)?;
+    let mut config = prefix::load_prefix_config(&game_id)?;
     let versions = detector::scan_all_versions(&[]);
     let wine_version = versions
         .iter()
@@ -122,7 +131,7 @@ pub async fn install_runtime(game_id: &str, component: &str) -> Result<String, S
 
     if !config.installed_runtimes.iter().any(|r| r == component) {
         config.installed_runtimes.push(component.to_string());
-        prefix::save_prefix_config(game_id, &config)?;
+        prefix::save_prefix_config(&game_id, &config)?;
     }
 
     Ok(result)
@@ -135,7 +144,8 @@ pub fn list_available_runtimes() -> Result<Vec<runtime::RuntimeComponent>, Strin
 
 #[tauri::command]
 pub fn get_installed_runtimes(game_id: &str) -> Result<Vec<String>, String> {
-    let config = prefix::load_prefix_config(game_id)?;
+    let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
+    let config = prefix::load_prefix_config(&game_id)?;
     Ok(config.installed_runtimes)
 }
 
@@ -227,7 +237,8 @@ pub fn scan_local_dxvk() -> Result<Vec<graphics::DxvkLocalVersion>, String> {
 
 #[tauri::command]
 pub fn detect_dxvk_status(game_id: &str) -> Result<graphics::DxvkInstalledStatus, String> {
-    let pfx_dir = prefix::get_prefix_pfx_dir(game_id);
+    let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
+    let pfx_dir = prefix::get_prefix_pfx_dir(&game_id);
     Ok(graphics::detect_installed_dxvk(&pfx_dir))
 }
 

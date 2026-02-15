@@ -1,4 +1,5 @@
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
+use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -32,6 +33,34 @@ fn init_tables(conn: &Connection) {
             config    TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS game_configs_v2 (
+            game_name      TEXT PRIMARY KEY,
+            schema_version INTEGER NOT NULL,
+            config_json    TEXT NOT NULL,
+            updated_at     TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS game_key_aliases (
+            alias_key     TEXT PRIMARY KEY,
+            canonical_key TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS game_identities (
+            canonical_key TEXT PRIMARY KEY,
+            display_name_en TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS game_presets (
+            id         TEXT PRIMARY KEY,
+            preset_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS migration_meta (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS hash_cache (
             file_path TEXT PRIMARY KEY,
             file_size INTEGER NOT NULL,
@@ -41,6 +70,163 @@ fn init_tables(conn: &Connection) {
         ",
     )
     .expect("创建数据库表失败");
+    ensure_game_catalog_seed(conn);
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SeedCatalog {
+    identities: Vec<SeedIdentity>,
+    presets: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SeedIdentity {
+    canonical_key: String,
+    display_name_en: String,
+    #[serde(default)]
+    legacy_aliases: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct IdentityRecord {
+    pub canonical_key: String,
+    pub display_name_en: String,
+    pub legacy_aliases: Vec<String>,
+}
+
+const GAME_CATALOG_SEED_JSON: &str =
+    include_str!("../../resources/bootstrap/game_catalog.seed.json");
+
+fn ensure_game_catalog_seed(conn: &Connection) {
+    let seed = match serde_json::from_str::<SeedCatalog>(GAME_CATALOG_SEED_JSON) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("解析游戏目录种子失败: {}", e);
+            return;
+        }
+    };
+
+    for identity in seed.identities {
+        if identity.canonical_key.trim().is_empty() {
+            continue;
+        }
+        if let Err(e) = conn.execute(
+            "INSERT OR IGNORE INTO game_identities (canonical_key, display_name_en) VALUES (?1, ?2)",
+            params![identity.canonical_key.trim(), identity.display_name_en.trim()],
+        ) {
+            tracing::warn!(
+                "写入 game_identities 失败: key={}, err={}",
+                identity.canonical_key,
+                e
+            );
+        }
+
+        for alias in identity.legacy_aliases {
+            let alias = alias.trim();
+            if alias.is_empty() {
+                continue;
+            }
+            if let Err(e) = conn.execute(
+                "INSERT OR IGNORE INTO game_key_aliases (alias_key, canonical_key) VALUES (?1, ?2)",
+                params![alias, identity.canonical_key.trim()],
+            ) {
+                tracing::warn!(
+                    "写入 game_key_aliases 失败: alias={}, canonical={}, err={}",
+                    alias,
+                    identity.canonical_key,
+                    e
+                );
+            }
+        }
+    }
+
+    for preset in seed.presets {
+        let Some(id) = preset
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+        else {
+            continue;
+        };
+
+        let Ok(json) = serde_json::to_string_pretty(&preset) else {
+            continue;
+        };
+
+        if let Err(e) = conn.execute(
+            "INSERT OR IGNORE INTO game_presets (id, preset_json, updated_at) VALUES (?1, ?2, datetime('now'))",
+            params![id, json],
+        ) {
+            tracing::warn!("写入 game_presets 失败: id={}, err={}", id, e);
+        }
+    }
+}
+
+fn resolve_canonical_key_with_conn(conn: &Connection, input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Ok(found) = conn.query_row(
+        "SELECT canonical_key FROM game_identities WHERE lower(canonical_key) = lower(?1) LIMIT 1",
+        params![trimmed],
+        |row| row.get::<_, String>(0),
+    ) {
+        return Some(found);
+    }
+
+    conn.query_row(
+        "SELECT canonical_key FROM game_key_aliases WHERE lower(alias_key) = lower(?1) LIMIT 1",
+        params![trimmed],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+}
+
+fn canonical_key_with_conn(conn: &Connection, input: &str) -> String {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    resolve_canonical_key_with_conn(conn, trimmed).unwrap_or_else(|| trimmed.to_string())
+}
+
+fn canonical_key(input: &str) -> String {
+    let conn = DB.lock().unwrap();
+    canonical_key_with_conn(&conn, input)
+}
+
+fn lookup_candidates(input: &str) -> Vec<String> {
+    let raw = input.trim().to_string();
+    if raw.is_empty() {
+        return Vec::new();
+    }
+
+    let conn = DB.lock().unwrap();
+    let canonical = canonical_key_with_conn(&conn, &raw);
+    let mut result = Vec::new();
+    result.push(canonical.clone());
+    if !raw.eq_ignore_ascii_case(&canonical) {
+        result.push(raw);
+    }
+
+    if let Ok(mut stmt) =
+        conn.prepare("SELECT alias_key FROM game_key_aliases WHERE lower(canonical_key) = lower(?1)")
+    {
+        if let Ok(rows) = stmt.query_map(params![canonical], |row| row.get::<_, String>(0)) {
+            for alias in rows.filter_map(|r| r.ok()) {
+                if !result.iter().any(|item| item.eq_ignore_ascii_case(&alias)) {
+                    result.push(alias);
+                }
+            }
+        }
+    }
+
+    result
 }
 
 // ============================
@@ -85,6 +271,110 @@ pub fn get_all_settings() -> Vec<(String, String)> {
 // ============================
 
 pub fn get_game_config(game_name: &str) -> Option<String> {
+    let candidates = lookup_candidates(game_name);
+    let conn = DB.lock().unwrap();
+    for key in candidates {
+        if let Ok(content) = conn.query_row(
+            "SELECT config FROM game_configs WHERE game_name = ?1",
+            params![key],
+            |row| row.get(0),
+        ) {
+            return Some(content);
+        }
+    }
+    None
+}
+
+pub fn set_game_config(game_name: &str, config_json: &str) {
+    let canonical = canonical_key(game_name);
+    let conn = DB.lock().unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO game_configs (game_name, config) VALUES (?1, ?2)",
+        params![&canonical, config_json],
+    )
+    .unwrap_or_else(|e| {
+        tracing::error!("写入 game_configs 失败: game={}, err={}", canonical, e);
+        0
+    });
+}
+
+pub fn delete_game_config(game_name: &str) {
+    let keys = lookup_candidates(game_name);
+    let conn = DB.lock().unwrap();
+    for key in keys {
+        conn.execute("DELETE FROM game_configs WHERE game_name = ?1", params![key])
+            .unwrap_or_else(|e| {
+                tracing::error!("删除 game_configs 失败: game={}, err={}", game_name, e);
+                0
+            });
+    }
+}
+
+pub fn list_game_names() -> Vec<String> {
+    use std::collections::BTreeSet;
+    let conn = DB.lock().unwrap();
+    let mut stmt = conn.prepare("SELECT game_name FROM game_configs").unwrap();
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0)).unwrap();
+    let mut names = BTreeSet::new();
+    for name in rows.filter_map(|r| r.ok()) {
+        names.insert(canonical_key_with_conn(&conn, &name));
+    }
+    names.into_iter().collect()
+}
+
+pub fn list_game_names_raw() -> Vec<String> {
+    let conn = DB.lock().unwrap();
+    let mut stmt = conn.prepare("SELECT game_name FROM game_configs").unwrap();
+    let rows = stmt.query_map([], |row| row.get(0)).unwrap();
+    rows.filter_map(|r| r.ok()).collect()
+}
+
+pub fn get_game_config_v2(game_name: &str) -> Option<String> {
+    let candidates = lookup_candidates(game_name);
+    let conn = DB.lock().unwrap();
+    for key in candidates {
+        if let Ok(content) = conn.query_row(
+            "SELECT config_json FROM game_configs_v2 WHERE game_name = ?1",
+            params![key],
+            |row| row.get(0),
+        ) {
+            return Some(content);
+        }
+    }
+    None
+}
+
+pub fn set_game_config_v2(game_name: &str, schema_version: u32, config_json: &str) {
+    let canonical = canonical_key(game_name);
+    let conn = DB.lock().unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO game_configs_v2 (game_name, schema_version, config_json, updated_at) VALUES (?1, ?2, ?3, datetime('now'))",
+        params![&canonical, schema_version, config_json],
+    )
+    .unwrap_or_else(|e| {
+        tracing::error!(
+            "写入 game_configs_v2 失败: game={}, version={}, err={}",
+            canonical,
+            schema_version,
+            e
+        );
+        0
+    });
+}
+
+pub fn delete_game_config_v2(game_name: &str) {
+    let keys = lookup_candidates(game_name);
+    let conn = DB.lock().unwrap();
+    for key in keys {
+        conn.execute("DELETE FROM game_configs_v2 WHERE game_name = ?1", params![key])
+            .unwrap_or_else(|e| {
+                tracing::error!("删除 game_configs_v2 失败: game={}, err={}", game_name, e);
+                0
+            });
+    }
+}
+
+pub fn get_game_config_exact(game_name: &str) -> Option<String> {
     let conn = DB.lock().unwrap();
     conn.query_row(
         "SELECT config FROM game_configs WHERE game_name = ?1",
@@ -94,7 +384,7 @@ pub fn get_game_config(game_name: &str) -> Option<String> {
     .ok()
 }
 
-pub fn set_game_config(game_name: &str, config_json: &str) {
+pub fn set_game_config_exact(game_name: &str, config_json: &str) {
     let conn = DB.lock().unwrap();
     conn.execute(
         "INSERT OR REPLACE INTO game_configs (game_name, config) VALUES (?1, ?2)",
@@ -106,23 +396,235 @@ pub fn set_game_config(game_name: &str, config_json: &str) {
     });
 }
 
-pub fn delete_game_config(game_name: &str) {
+pub fn list_game_names_v2_raw() -> Vec<String> {
+    let conn = DB.lock().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT game_name FROM game_configs_v2")
+        .unwrap();
+    let rows = stmt.query_map([], |row| row.get(0)).unwrap();
+    rows.filter_map(|r| r.ok()).collect()
+}
+
+pub fn get_game_config_v2_exact(game_name: &str) -> Option<String> {
+    let conn = DB.lock().unwrap();
+    conn.query_row(
+        "SELECT config_json FROM game_configs_v2 WHERE game_name = ?1",
+        params![game_name],
+        |row| row.get(0),
+    )
+    .ok()
+}
+
+pub fn set_game_config_v2_exact(game_name: &str, schema_version: u32, config_json: &str) {
     let conn = DB.lock().unwrap();
     conn.execute(
-        "DELETE FROM game_configs WHERE game_name = ?1",
-        params![game_name],
+        "INSERT OR REPLACE INTO game_configs_v2 (game_name, schema_version, config_json, updated_at) VALUES (?1, ?2, ?3, datetime('now'))",
+        params![game_name, schema_version, config_json],
     )
     .unwrap_or_else(|e| {
-        tracing::error!("删除 game_configs 失败: game={}, err={}", game_name, e);
+        tracing::error!(
+            "写入 game_configs_v2 失败: game={}, version={}, err={}",
+            game_name,
+            schema_version,
+            e
+        );
         0
     });
 }
 
-pub fn list_game_names() -> Vec<String> {
+#[allow(dead_code)]
+pub fn has_game_config_exact(game_name: &str) -> bool {
     let conn = DB.lock().unwrap();
-    let mut stmt = conn.prepare("SELECT game_name FROM game_configs").unwrap();
-    let rows = stmt.query_map([], |row| row.get(0)).unwrap();
+    conn.query_row(
+        "SELECT 1 FROM game_configs WHERE game_name = ?1 LIMIT 1",
+        params![game_name],
+        |_row| Ok(()),
+    )
+    .is_ok()
+        || conn
+            .query_row(
+                "SELECT 1 FROM game_configs_v2 WHERE game_name = ?1 LIMIT 1",
+                params![game_name],
+                |_row| Ok(()),
+            )
+            .is_ok()
+}
+
+pub fn get_migration_meta(key: &str) -> Option<String> {
+    let conn = DB.lock().unwrap();
+    conn.query_row(
+        "SELECT value FROM migration_meta WHERE key = ?1",
+        params![key],
+        |row| row.get(0),
+    )
+    .ok()
+}
+
+pub fn set_migration_meta(key: &str, value: &str) {
+    let conn = DB.lock().unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO migration_meta (key, value) VALUES (?1, ?2)",
+        params![key, value],
+    )
+    .unwrap_or_else(|e| {
+        tracing::error!("写入 migration_meta 失败: key={}, err={}", key, e);
+        0
+    });
+}
+
+pub fn set_game_key_alias(alias_key: &str, canonical_key: &str) {
+    let conn = DB.lock().unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO game_key_aliases (alias_key, canonical_key) VALUES (?1, ?2)",
+        params![alias_key, canonical_key],
+    )
+    .unwrap_or_else(|e| {
+        tracing::error!(
+            "写入 game_key_aliases 失败: alias={}, canonical={}, err={}",
+            alias_key,
+            canonical_key,
+            e
+        );
+        0
+    });
+}
+
+pub fn resolve_game_key_or_alias(input: &str) -> Option<String> {
+    let conn = DB.lock().unwrap();
+    resolve_canonical_key_with_conn(&conn, input)
+}
+
+pub fn list_aliases_for_canonical(canonical: &str) -> Vec<String> {
+    let conn = DB.lock().unwrap();
+    let canonical = canonical_key_with_conn(&conn, canonical);
+    let mut stmt = match conn
+        .prepare("SELECT alias_key FROM game_key_aliases WHERE lower(canonical_key) = lower(?1)")
+    {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+
+    let rows = match stmt.query_map(params![canonical], |row| row.get::<_, String>(0)) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
     rows.filter_map(|r| r.ok()).collect()
+}
+
+pub fn display_name_en_for_key(input: &str) -> Option<String> {
+    let conn = DB.lock().unwrap();
+    let canonical = canonical_key_with_conn(&conn, input);
+    if canonical.is_empty() {
+        return None;
+    }
+    conn.query_row(
+        "SELECT display_name_en FROM game_identities WHERE lower(canonical_key) = lower(?1) LIMIT 1",
+        params![canonical],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+}
+
+pub fn list_identity_records() -> Vec<IdentityRecord> {
+    let conn = DB.lock().unwrap();
+    let mut stmt = match conn.prepare("SELECT canonical_key, display_name_en FROM game_identities") {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    let rows = match stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    }) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut list = Vec::new();
+    for (canonical_key, display_name_en) in rows.filter_map(|r| r.ok()) {
+        let legacy_aliases = conn
+            .prepare("SELECT alias_key FROM game_key_aliases WHERE lower(canonical_key) = lower(?1)")
+            .ok()
+            .and_then(|mut stmt| {
+                stmt.query_map(params![canonical_key.clone()], |row| row.get::<_, String>(0))
+                    .ok()
+                    .map(|rows| rows.filter_map(|r| r.ok()).collect::<Vec<String>>())
+            })
+            .unwrap_or_default();
+        list.push(IdentityRecord {
+            canonical_key,
+            display_name_en,
+            legacy_aliases,
+        });
+    }
+    list
+}
+
+pub fn list_game_preset_rows() -> Vec<(String, String)> {
+    let conn = DB.lock().unwrap();
+    let mut stmt = match conn.prepare("SELECT id, preset_json FROM game_presets") {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    let rows = match stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    }) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    rows.filter_map(|r| r.ok()).collect()
+}
+
+pub fn rename_game_keys(renames: &[(String, String)]) -> Result<(), String> {
+    let mut conn = DB.lock().unwrap();
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("开始数据库事务失败: {}", e))?;
+
+    for (from, to) in renames {
+        tx.execute(
+            "UPDATE game_configs SET game_name = ?2 WHERE game_name = ?1",
+            params![from, to],
+        )
+        .map_err(|e| format!("更新 game_configs {} -> {} 失败: {}", from, to, e))?;
+
+        tx.execute(
+            "UPDATE game_configs_v2 SET game_name = ?2 WHERE game_name = ?1",
+            params![from, to],
+        )
+        .map_err(|e| format!("更新 game_configs_v2 {} -> {} 失败: {}", from, to, e))?;
+
+        tx.execute(
+            "INSERT OR REPLACE INTO game_key_aliases (alias_key, canonical_key) VALUES (?1, ?2)",
+            params![from, to],
+        )
+        .map_err(|e| format!("更新 game_key_aliases {} -> {} 失败: {}", from, to, e))?;
+    }
+
+    let current = tx
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'current_config_name'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|e| format!("读取 current_config_name 失败: {}", e))?;
+    if let Some(current_name) = current {
+        let mut updated = current_name.clone();
+        for (from, to) in renames {
+            if current_name.eq_ignore_ascii_case(from) {
+                updated = to.clone();
+                break;
+            }
+        }
+        if updated != current_name {
+            tx.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES ('current_config_name', ?1)",
+                params![updated],
+            )
+            .map_err(|e| format!("写入 current_config_name 失败: {}", e))?;
+        }
+    }
+
+    tx.commit().map_err(|e| format!("提交数据库事务失败: {}", e))
 }
 
 // ============================

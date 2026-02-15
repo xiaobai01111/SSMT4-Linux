@@ -70,6 +70,10 @@ fn get_compat_tools_dirs() -> Vec<PathBuf> {
         }
     };
 
+    // 优先扫描自定义数据目录下的 proton/
+    let data_proton = crate::configs::app_config::get_app_data_dir().join("proton");
+    try_add(data_proton);
+
     if let Some(steam) = get_steam_root() {
         try_add(steam.join("compatibilitytools.d"));
     }
@@ -296,7 +300,7 @@ fn scan_lutris_wine() -> Vec<WineVersion> {
     versions
 }
 
-/// 扫描 SSMT4 自己下载的 Wine runners（~/.local/share/ssmt4/runners/wine/）
+/// 扫描 SSMT4 自己下载的 Wine runners（<dataDir>/runners/wine/）
 fn scan_ssmt4_wine_runners() -> Vec<WineVersion> {
     let mut versions = Vec::new();
     let runners_dir = get_wine_runners_dir();
@@ -668,35 +672,21 @@ async fn fetch_github_releases(
     Ok(result)
 }
 
-/// 获取 Wine runners 安装目录（Lutris 风格）
+/// 获取 Wine runners 安装目录（跟随自定义数据目录）
 fn get_wine_runners_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_default();
-    PathBuf::from(&home)
-        .join(".local")
-        .join("share")
-        .join("ssmt4")
+    crate::configs::app_config::get_app_data_dir()
         .join("runners")
         .join("wine")
 }
 
-/// 获取 Proton 安装目录
+/// 获取 Proton 安装目录（优先自定义数据目录）
 fn get_proton_install_dir() -> PathBuf {
-    get_compat_tools_dirs()
-        .into_iter()
-        .next()
-        .unwrap_or_else(|| {
-            let home = std::env::var("HOME").unwrap_or_default();
-            PathBuf::from(&home)
-                .join(".local")
-                .join("share")
-                .join("Steam")
-                .join("compatibilitytools.d")
-        })
+    crate::configs::app_config::get_app_data_dir().join("proton")
 }
 
 /// 下载并安装 Wine/Proton 版本
-/// variant 为 "Wine-GE" / "Wine-Builds" 时安装到 wine runners 目录
-/// variant 为 "GE-Proton" / "DW-Proton" 时安装到 compatibilitytools.d
+/// variant 为 "Wine-GE" / "Wine-Builds" 时安装到 <dataDir>/runners/wine/
+/// variant 为 "GE-Proton" / "DW-Proton" 时安装到 <dataDir>/proton/
 pub async fn download_and_install_proton(
     download_url: &str,
     tag: &str,

@@ -229,10 +229,14 @@ export async function cancelActive() {
 function resolveGameExeName(gameName: string, launcherApi: string): string | null {
   const isCN = launcherApi.includes('mihoyo.com');
   switch (gameName) {
-    case 'SRMI': return 'StarRail.exe';
-    case 'GIMI': return isCN ? 'YuanShen.exe' : 'GenshinImpact.exe';
-    case 'ZZMI': return 'ZenlessZoneZero.exe';
-    case 'HIMI': return 'BH3.exe';
+    case 'HonkaiStarRail':
+      return 'StarRail.exe';
+    case 'GenshinImpact':
+      return isCN ? 'YuanShen.exe' : 'GenshinImpact.exe';
+    case 'ZenlessZoneZero':
+      return 'ZenlessZoneZero.exe';
+    case 'HonkaiImpact3rd':
+      return 'BH3.exe';
     default: return null;
   }
 }

@@ -5,7 +5,8 @@ use tracing::{info, warn};
 
 /// 从数据库的游戏配置中解析游戏根目录（gameFolder 的父目录）
 fn resolve_game_root_from_db(game_id: &str) -> Option<PathBuf> {
-    let config_json = crate::configs::database::get_game_config(game_id)?;
+    let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
+    let config_json = crate::configs::database::get_game_config(&game_id)?;
     let data: serde_json::Value = serde_json::from_str(&config_json).ok()?;
     let game_folder = data.pointer("/other/gameFolder")?.as_str()?;
     let game_folder_path = PathBuf::from(game_folder);
@@ -13,13 +14,72 @@ fn resolve_game_root_from_db(game_id: &str) -> Option<PathBuf> {
     game_folder_path.parent().map(|p| p.to_path_buf())
 }
 
+fn prefix_candidate_score(path: &Path) -> u32 {
+    let mut score = 0u32;
+    if path.join("prefix.json").exists() {
+        score += 1;
+    }
+    let pfx = path.join("pfx");
+    if pfx.exists() {
+        score += 2;
+        if pfx.join(".dxvk-version").exists() {
+            score += 3;
+        }
+    }
+    score
+}
+
+fn resolve_best_legacy_prefix(game_id: &str) -> Option<PathBuf> {
+    let canonical = file_manager::get_prefixes_dir().join(game_id);
+    let mut best_path: Option<PathBuf> = None;
+    let mut best_score = 0u32;
+
+    let mut candidates = vec![canonical.clone()];
+    for alias in crate::configs::game_identity::legacy_aliases_for_canonical(game_id) {
+        candidates.push(file_manager::get_prefixes_dir().join(alias));
+    }
+
+    for candidate in candidates {
+        if !candidate.exists() {
+            continue;
+        }
+        let score = prefix_candidate_score(&candidate);
+        if score >= best_score {
+            best_score = score;
+            best_path = Some(candidate);
+        }
+    }
+
+    best_path
+}
+
 pub fn get_prefix_dir(game_id: &str) -> PathBuf {
+    let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
     // 优先使用游戏安装目录下的 prefix/
-    if let Some(game_root) = resolve_game_root_from_db(game_id) {
-        return game_root.join("prefix");
+    if let Some(game_root) = resolve_game_root_from_db(&game_id) {
+        let preferred = game_root.join("prefix");
+        if preferred.exists() {
+            return preferred;
+        }
+        if let Some(legacy) = resolve_best_legacy_prefix(&game_id) {
+            return legacy;
+        }
+        return preferred;
     }
     // 回退到旧位置 (~/.config/ssmt4/prefixes/{game_id})
-    file_manager::get_prefixes_dir().join(game_id)
+    if let Some(best) = resolve_best_legacy_prefix(&game_id) {
+        let canonical_path = file_manager::get_prefixes_dir().join(&game_id);
+        if best != canonical_path && !canonical_path.exists() {
+            if let Some(parent) = canonical_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if std::fs::rename(&best, &canonical_path).is_ok() {
+                return canonical_path;
+            }
+        }
+        return best;
+    }
+    file_manager::get_prefixes_dir().join(&game_id)
 }
 
 pub fn get_prefix_pfx_dir(game_id: &str) -> PathBuf {

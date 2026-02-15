@@ -7,6 +7,7 @@ import {
   deleteGameConfigFolder as apiDeleteGameConfigFolder,
   setGameIcon as apiSetGameIcon,
   setGameBackground as apiSetGameBackground,
+  resetGameIcon as apiResetGameIcon,
   // updateGameBackground as apiUpdateGameBackground,
   resetGameBackground as apiResetGameBackground,
   get3dmigotoLatestRelease,
@@ -32,6 +33,7 @@ import {
   fetchDxvkVersions,
   fetchRemoteProton,
   downloadProton,
+  getLocalVersion,
   listenEvent,
   type WineVersion,
   type ProtonSettings,
@@ -43,10 +45,16 @@ import {
   type DxvkRemoteVersion,
   type DxvkInstalledStatus,
   type RemoteWineVersion,
+  type RuntimeEnv,
 } from '../api';
 import { loadGames, appSettings, gamesList, switchToGame } from '../store';
 import { useI18n } from 'vue-i18n';
 import { inject } from 'vue';
+import { useGameInfoEditor } from '../composables/useGameInfoEditor';
+import GameInfoProfileSection from './game-info/GameInfoProfileSection.vue';
+import GameInfoVersionSection from './game-info/GameInfoVersionSection.vue';
+import GameInfoPresetSection from './game-info/GameInfoPresetSection.vue';
+import GameInfoAssetsSection from './game-info/GameInfoAssetsSection.vue';
 
 const { t } = useI18n();
 const notify = inject<any>('notify');
@@ -65,6 +73,7 @@ interface GameConfig {
   basic: {
     gamePreset: string;
     runtimeEnv: 'wine' | 'steam' | 'linux';
+    backgroundType?: 'Image' | 'Video';
   };
   threeDMigoto: {
     installDir: string;
@@ -83,7 +92,7 @@ interface GameConfig {
 }
 
 const config = reactive<GameConfig>({
-  basic: { gamePreset: 'GIMI', runtimeEnv: 'wine' },
+  basic: { gamePreset: 'GenshinImpact', runtimeEnv: 'wine' },
   threeDMigoto: {
     installDir: '',
     targetExePath: '',
@@ -102,6 +111,24 @@ const config = reactive<GameConfig>({
 
 const configName = ref(''); // Separate UI state for the folder name
 
+const gameInfoEditor = useGameInfoEditor();
+const {
+  infoConfig,
+  presets: infoPresets,
+  loading: infoLoading,
+  saving: infoSaving,
+  dirty: infoDirty,
+  sectionErrors: infoSectionErrors,
+  nameValidation,
+  hasUnsavedChanges: hasUnsavedInfoChanges,
+  load: loadGameInfoState,
+  saveMeta: saveInfoMetaRaw,
+  saveRuntime: saveInfoRuntimeRaw,
+  validateName: validateInfoName,
+  setPreset: setInfoPreset,
+  setRuntimeEnv: setInfoRuntimeEnv,
+  markDirty: markInfoDirty,
+} = gameInfoEditor;
 
 const isLoading = ref(false);
 const hasLoadedConfig = ref(false);
@@ -115,6 +142,10 @@ const asString = (value: unknown, fallback = ''): string =>
 const asNumber = (value: unknown, fallback: number): number =>
   typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 
+const canonicalPreset = (value: string): string => {
+  return value.trim();
+};
+
 const normalizeLoadedConfig = (raw: unknown): GameConfig => {
   const root = isRecord(raw) ? raw : {};
   const basicRaw = isRecord(root.basic) ? root.basic : {};
@@ -126,7 +157,7 @@ const normalizeLoadedConfig = (raw: unknown): GameConfig => {
     asString(basicRaw.GamePreset) ||
     asString(root.GamePreset) ||
     asString(root.LogicName) ||
-    'GIMI';
+    'GenshinImpact';
 
   const runtimeEnvRaw =
     asString(basicRaw.runtimeEnv) || asString(root.runtimeEnv);
@@ -169,7 +200,7 @@ const normalizeLoadedConfig = (raw: unknown): GameConfig => {
 
   return {
     basic: {
-      gamePreset,
+      gamePreset: canonicalPreset(gamePreset),
       runtimeEnv,
     },
     threeDMigoto: {
@@ -360,7 +391,11 @@ const jadeiteStatus = ref<JadeiteStatus | null>(null);
 const isJadeiteInstalling = ref(false);
 const prefixInfo = ref<PrefixInfo | null>(null);
 
-const isHoyoverse = computed(() => ['GIMI', 'SRMI', 'ZZMI', 'HIMI'].includes(config.basic.gamePreset));
+const isHoyoverse = computed(() =>
+  ['GenshinImpact', 'HonkaiStarRail', 'ZenlessZoneZero', 'HonkaiImpact3rd'].includes(
+    config.basic.gamePreset,
+  ),
+);
 
 const loadJadeiteState = async () => {
   if (!props.gameName) return;
@@ -520,24 +555,160 @@ const tabs = computed(() => [
   { id: 'system', label: '系统选项' },
 ]);
 
-const presetOptions = computed(() => [
-  { label: `${t('games.GIMI')} (GIMI)`, value: 'GIMI' },
-  { label: `${t('games.HIMI')} (HIMI)`, value: 'HIMI' },
-  { label: `${t('games.SRMI')} (SRMI)`, value: 'SRMI' },
-  { label: `${t('games.ZZMI')} (ZZMI)`, value: 'ZZMI' },
-  { label: `${t('games.WWMI')} (WWMI)`, value: 'WWMI' },
-  { label: `${t('games.EFMI')} (EFMI)`, value: 'EFMI' },
-  { label: `${t('games.GF2')} (GF2)`, value: 'GF2' },
-  { label: `${t('games.IdentityV')} NeoX2`, value: 'IdentityVNeoX2' },
-  { label: `${t('games.IdentityV')} NeoX3`, value: 'IdentityVNeoX3' },
-  { label: 'AI LIMIT', value: 'AILIMIT' },
-  { label: `${t('games.DOAV')} (DOAV)`, value: 'DOAV' },
-  { label: 'MiSide', value: 'MiSide' },
-  { label: `${t('games.SnowBreak')} (SnowBreak)`, value: 'SnowBreak' },
-  { label: 'Strinova', value: 'Strinova' },
-  { label: `${t('games.Nioh2')} (Nioh2)`, value: 'Nioh2' },
-  { label: `${t('games.AEMI')} (AEMI)`, value: 'AEMI' },
-]);
+const syncInfoConfigToLegacyState = () => {
+  config.basic.gamePreset = infoConfig.value.meta.gamePreset || config.basic.gamePreset;
+  config.basic.runtimeEnv = infoConfig.value.runtime.runtimeEnv;
+  config.basic.backgroundType = infoConfig.value.assets.backgroundType;
+  config.other.displayName = infoConfig.value.meta.displayName;
+};
+
+const loadInfoConfig = async () => {
+  if (!props.gameName) return;
+  try {
+    await loadGameInfoState(props.gameName);
+    syncInfoConfigToLegacyState();
+  } catch (e) {
+    console.error('[GameInfoV2] load failed:', e);
+  }
+};
+
+const validateConfigNameNow = async () => {
+  if (!configName.value.trim()) return;
+  try {
+    await validateInfoName(configName.value, props.gameName);
+  } catch (e) {
+    console.error('[GameInfoV2] validate name failed:', e);
+  }
+};
+
+const onConfigNameInput = (value: string) => {
+  configName.value = value;
+  void validateConfigNameNow();
+};
+
+const onDisplayNameInput = (value: string) => {
+  infoConfig.value.meta.displayName = value;
+  markInfoDirty('meta');
+};
+
+const saveInfoMetaSection = async () => {
+  if (!props.gameName) return;
+  try {
+    await saveInfoMetaRaw(props.gameName);
+    syncInfoConfigToLegacyState();
+    await loadJadeiteState();
+  } catch (e) {
+    console.error('[GameInfoV2] save meta failed:', e);
+  }
+};
+
+const saveInfoRuntimeSection = async () => {
+  if (!props.gameName) return;
+  try {
+    await saveInfoRuntimeRaw(props.gameName);
+    syncInfoConfigToLegacyState();
+  } catch (e) {
+    console.error('[GameInfoV2] save runtime failed:', e);
+  }
+};
+
+const saveRuntimeTabSettings = async () => {
+  await saveInfoRuntimeSection();
+  await saveWineConfig();
+};
+
+const onInfoPresetChange = (presetId: string) => {
+  setInfoPreset(presetId);
+  config.basic.gamePreset = presetId;
+};
+
+const onInfoRuntimeEnvChange = (runtimeEnv: RuntimeEnv) => {
+  setInfoRuntimeEnv(runtimeEnv);
+  config.basic.runtimeEnv = runtimeEnv;
+};
+
+const infoReadonlyWarning = computed(() => {
+  if (!infoConfig.value.warningCode) return '';
+  return t('gamesettingsmodal.info.readonlyWarning', {
+    code: infoConfig.value.warningCode,
+  });
+});
+const infoPageReadOnly = true;
+const infoAssetsEditable = true;
+
+const localGameVersion = ref('');
+const versionLoading = ref(false);
+const versionError = ref('');
+
+const resolveGameFolderFromExePath = (exePath: string): string => {
+  const trimmed = exePath.trim();
+  if (!trimmed) return '';
+  const lastSlash = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+  if (lastSlash <= 0) return '';
+  return trimmed.slice(0, lastSlash);
+};
+
+const parentFolder = (path: string): string => {
+  const trimmed = path.trim().replace(/[\\/]+$/, '');
+  if (!trimmed) return '';
+  const lastSlash = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+  if (lastSlash <= 0) return '';
+  return trimmed.slice(0, lastSlash);
+};
+
+const collectVersionProbeFolders = (configuredFolder: string, gamePath: string): string[] => {
+  const probes: string[] = [];
+  const pushUnique = (value: string) => {
+    const normalized = value.trim().replace(/[\\/]+$/, '');
+    if (!normalized) return;
+    if (!probes.includes(normalized)) {
+      probes.push(normalized);
+    }
+  };
+
+  pushUnique(configuredFolder);
+  const exeDir = resolveGameFolderFromExePath(gamePath);
+  pushUnique(exeDir);
+
+  let current = exeDir;
+  for (let i = 0; i < 3; i += 1) {
+    current = parentFolder(current);
+    if (!current) break;
+    pushUnique(current);
+  }
+
+  return probes;
+};
+
+const refreshGameVersion = async () => {
+  const gameFolderFromConfig = typeof config.other?.gameFolder === 'string' ? config.other.gameFolder.trim() : '';
+  const gamePath = typeof config.other?.gamePath === 'string' ? config.other.gamePath : '';
+  const probeFolders = collectVersionProbeFolders(gameFolderFromConfig, gamePath);
+  if (probeFolders.length === 0) {
+    localGameVersion.value = '';
+    versionError.value = '';
+    return;
+  }
+  try {
+    versionLoading.value = true;
+    versionError.value = '';
+    localGameVersion.value = '';
+    for (const folder of probeFolders) {
+      const version = await getLocalVersion(folder);
+      if (version) {
+        localGameVersion.value = version;
+        break;
+      }
+    }
+  } catch (e) {
+    versionError.value = String(e);
+    localGameVersion.value = '';
+  } finally {
+    versionLoading.value = false;
+  }
+};
+
+const isBusy = computed(() => isLoading.value || infoLoading.value);
 
 // Load/Save Logic
 const loadConfig = async () => {
@@ -551,10 +722,10 @@ const loadConfig = async () => {
     config.threeDMigoto = normalized.threeDMigoto;
 
     // Default Logic for installDir if empty on first load (user requirement)
-    if (!config.threeDMigoto.installDir && appSettings.cacheDir) {
+    if (!config.threeDMigoto.installDir && appSettings.dataDir) {
       try {
-        // "SSMT Cache/3Dmigoto/GameName"
-        config.threeDMigoto.installDir = await joinPath(appSettings.cacheDir, '3Dmigoto', props.gameName);
+        // "SSMT Data/3Dmigoto/GameName"
+        config.threeDMigoto.installDir = await joinPath(appSettings.dataDir, '3Dmigoto', props.gameName);
       } catch (err) {
         console.error(t('gamesettingsmodal.error.failconstructdefaultpath'), err);
       }
@@ -564,6 +735,7 @@ const loadConfig = async () => {
     // 恢复系统选项
     selectedGpuIndex.value = typeof config.other.gpuIndex === 'number' ? config.other.gpuIndex : -1;
     gameLang.value = typeof config.other.gameLang === 'string' ? config.other.gameLang : '';
+    await refreshGameVersion();
     hasLoadedConfig.value = true;
     // Note: configName is NOT set from file, but from props
   } catch (e) {
@@ -595,15 +767,17 @@ const resetToDefault = async () => {
 
   try {
     isLoading.value = true;
+    await apiResetGameIcon(props.gameName);
     // 删除自定义背景文件
     await apiResetGameBackground(props.gameName);
     // 重置配置为默认值
     await apiSaveGameConfig(props.gameName, {
-      basic: { gamePreset: 'GIMI', runtimeEnv: 'wine' },
+      basic: { gamePreset: 'GenshinImpact', runtimeEnv: 'wine' },
       threeDMigoto: {},
       other: {}
     } as any);
     await loadConfig();
+    await loadInfoConfig();
     await loadGames();
   } catch (e) {
     console.error('Reset failed:', e);
@@ -621,6 +795,7 @@ const selectIcon = async () => {
 
     if (file) {
       await apiSetGameIcon(props.gameName, file);
+      await loadInfoConfig();
       await loadGames();
     }
   } catch (e) {
@@ -633,11 +808,24 @@ const selectBackground = async () => {
     const filters = [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp', 'ico', 'avif'] }];
     const file = await openFileDialog({ multiple: false, filters });
     if (file) {
-      await apiSetGameBackground(props.gameName, file, 'Image');
+      await apiSetGameBackground(props.gameName, file, infoConfig.value.assets.backgroundType);
+      await loadInfoConfig();
       await loadGames();
     }
   } catch (e) {
     console.error(e);
+  }
+};
+
+const resetBackgroundToDefault = async () => {
+  if (!props.gameName) return;
+  try {
+    await apiResetGameIcon(props.gameName);
+    await apiResetGameBackground(props.gameName);
+    await loadInfoConfig();
+    await loadGames();
+  } catch (e) {
+    console.error('[GameInfoV2] reset background failed:', e);
   }
 };
 
@@ -673,7 +861,15 @@ const open3dmigotoDir = async () => {
   }
 };
 
-const packageSupportedPresets = ['GIMI', 'HIMI', 'SRMI', 'ZZMI', 'WWMI', 'EFMI', 'AEMI'];
+const packageSupportedPresets = [
+  'GenshinImpact',
+  'HonkaiImpact3rd',
+  'HonkaiStarRail',
+  'ZenlessZoneZero',
+  'WutheringWaves',
+  'SnowbreakContainmentZone',
+  'AEMI',
+];
 const canUpdatePackage = computed(() => packageSupportedPresets.includes(config.basic.gamePreset));
 
 const check3DMigotoPackageUpdate = async () => {
@@ -800,6 +996,7 @@ const pickGameExe = async () => {
     });
     if (selected && typeof selected === 'string') {
       config.other.gamePath = selected;
+      await refreshGameVersion();
     }
   } catch (e) { console.error(e); }
 };
@@ -817,6 +1014,14 @@ const setDefaultDll = async () => {
 
 const createNewConfig = async () => {
   if (!configName.value) return;
+  const validation = await validateInfoName(configName.value, props.gameName);
+  if (!validation.valid) {
+    await showMessage(validation.message, {
+      title: t('gamesettingsmodal.message.error.title'),
+      kind: 'error',
+    });
+    return;
+  }
 
   const yes = await askConfirm(
     t('gamesettingsmodal.confirm.createConfig.message', { 
@@ -840,12 +1045,12 @@ const createNewConfig = async () => {
     await loadGames();
 
     // Switch to the newly created game
-    const newGame = gamesList.find(g => g.name === configName.value);
+    const newGame = gamesList.find(g => g.name === canonicalPreset(configName.value));
     if (newGame) {
       switchToGame(newGame);
     }
 
-    close();
+    await close();
   } catch (e) {
     console.error(t('gamesettingsmodal.log.configCreateFailed', { error: e }));
   } finally {
@@ -869,7 +1074,7 @@ const deleteCurrentConfig = async () => {
 
     // Refresh games list and close
     await loadGames();
-    close();
+    await close();
   } catch (e) {
     console.error('Failed to delete config:', e);
   } finally {
@@ -878,12 +1083,13 @@ const deleteCurrentConfig = async () => {
 };
 
 // Open/Close
-watch(() => props.modelValue, (val) => {
+watch(() => props.modelValue, async (val) => {
   if (val) {
     activeTab.value = 'info'; // Reset to first tab
     configName.value = props.gameName;
     hasLoadedConfig.value = false;
     loadConfig();
+    loadInfoConfig();
     loadWineState();
     loadJadeiteState();
     loadPrefixState();
@@ -891,8 +1097,8 @@ watch(() => props.modelValue, (val) => {
   } else {
     // Only save when current modal session loaded successfully.
     if (hasLoadedConfig.value) {
-      saveConfig();
-      saveWineConfig();
+      await saveConfig();
+      await saveWineConfig();
     }
   }
 });
@@ -910,6 +1116,7 @@ watch(() => props.gameName, async (newGame, oldGame) => {
     configName.value = newGame;
     hasLoadedConfig.value = false;
     loadConfig();
+    loadInfoConfig();
     loadWineState();
     loadJadeiteState();
     loadPrefixState();
@@ -936,7 +1143,14 @@ onUnmounted(() => {
   }
 });
 
-const close = () => {
+const close = async () => {
+  if (hasUnsavedInfoChanges.value) {
+    const discard = await askConfirm(t('gamesettingsmodal.info.unsavedPrompt'), {
+      title: t('gamesettingsmodal.info.unsavedTitle'),
+      kind: 'warning',
+    });
+    if (!discard) return;
+  }
   emit('update:modelValue', false);
 };
 
@@ -963,7 +1177,7 @@ defineExpose({
     <div v-if="modelValue" class="settings-overlay">
       <div class="settings-window">
         <!-- Loading Overlay -->
-        <div v-if="isLoading" class="loading-overlay">
+        <div v-if="isBusy" class="loading-overlay">
           <div class="spinner"></div>
           <div class="loading-text">{{ t('gamesettingsmodal.processing') }}</div>
         </div>
@@ -994,52 +1208,63 @@ defineExpose({
           <div class="scroll-content">
             <!-- ==================== Tab 1: 游戏信息 ==================== -->
             <div v-if="activeTab === 'info'" class="tab-pane">
-              <!-- 配置名称 -->
-              <div class="setting-group">
-                <div class="setting-label">配置名称</div>
-                <input v-model="configName" type="text" class="custom-input" placeholder="输入配置名称..." />
-                <div class="button-row">
-                  <button class="action-btn create" @click="createNewConfig">新建配置</button>
-                  <button class="action-btn delete" @click="deleteCurrentConfig">删除配置</button>
-                  <button class="action-btn" @click="resetToDefault">恢复默认</button>
-                </div>
+              <div v-if="infoConfig.readOnly || infoPageReadOnly" class="info-readonly-banner">
+                <template v-if="infoPageReadOnly">
+                  游戏信息页当前为只读展示模式（仅背景资源可修改）。
+                </template>
+                <template v-else>
+                {{ infoReadonlyWarning || t('gamesettingsmodal.info.readonlyGeneric') }}
+                </template>
               </div>
 
-              <!-- 运行环境 -->
-              <div class="setting-group">
-                <div class="setting-label">运行环境</div>
-                <el-select v-model="config.basic.runtimeEnv" placeholder="选择运行环境" class="custom-select" @change="saveConfig">
-                  <el-option label="Wine / Proton" value="wine" />
-                  <el-option label="Steam (Proton)" value="steam" />
-                  <el-option label="Linux 原生" value="linux" />
-                </el-select>
-                <div class="info-sub" style="margin-top:6px;">
-                  <template v-if="config.basic.runtimeEnv === 'wine'">使用 Wine 或 Proton 运行 Windows 游戏，需在"运行环境"标签页配置 Wine 版本。</template>
-                  <template v-else-if="config.basic.runtimeEnv === 'steam'">通过 Steam 启动游戏，使用 Steam 内置的 Proton 兼容层。</template>
-                  <template v-else>直接以 Linux 原生方式运行，无需兼容层。</template>
-                </div>
-              </div>
+              <GameInfoProfileSection
+                :config-name="configName"
+                :display-name="infoConfig.meta.displayName"
+                :name-validation="nameValidation"
+                :read-only="infoPageReadOnly"
+                :can-save="!infoConfig.readOnly && !infoPageReadOnly"
+                :dirty="infoDirty.meta"
+                :saving="infoSaving.meta"
+                :error="infoSectionErrors.meta"
+                @update:config-name="onConfigNameInput"
+                @update:display-name="onDisplayNameInput"
+                @validate-name="validateConfigNameNow"
+                @create="createNewConfig"
+                @delete="deleteCurrentConfig"
+                @reset="resetToDefault"
+                @save="saveInfoMetaSection"
+              />
 
-              <!-- 游戏预设 -->
-              <div class="setting-group">
-                <div class="setting-label">游戏预设</div>
-                <el-select v-model="config.basic.gamePreset" placeholder="Select" class="custom-select" @change="saveConfig">
-                  <el-option v-for="item in presetOptions" :key="item.value" :label="item.label" :value="item.value" />
-                </el-select>
-              </div>
+              <GameInfoVersionSection
+                :version="localGameVersion"
+                :game-path="config.other.gamePath || ''"
+                :loading="versionLoading"
+                :error="versionError"
+                @refresh="refreshGameVersion"
+              />
 
-              <!-- 图标 & 背景 -->
-              <div class="setting-group">
-                <div class="setting-label">游戏图标</div>
-                <button class="action-btn" @click="selectIcon">选择图标</button>
-              </div>
+              <GameInfoPresetSection
+                :model-value="infoConfig.meta.gamePreset"
+                :presets="infoPresets"
+                :read-only="infoPageReadOnly"
+                :can-save="!infoConfig.readOnly && !infoPageReadOnly"
+                :dirty="infoDirty.meta"
+                :saving="infoSaving.meta"
+                :error="infoSectionErrors.meta"
+                @update:model-value="onInfoPresetChange"
+                @save="saveInfoMetaSection"
+              />
 
-              <div class="setting-group">
-                <div class="setting-label">背景图片</div>
-                <div class="button-row">
-                  <button class="action-btn" @click="selectBackground">选择背景图片</button>
-                </div>
-              </div>
+              <GameInfoAssetsSection
+                :icon-file="infoConfig.assets.iconFile"
+                :background-file="infoConfig.assets.backgroundFile"
+                :read-only="infoConfig.readOnly || !infoAssetsEditable"
+                :saving="infoSaving.assets"
+                :error="infoSectionErrors.assets"
+                @select-icon="selectIcon"
+                @select-background="selectBackground"
+                @reset-background="resetBackgroundToDefault"
+              />
             </div>
 
             <!-- ==================== Tab 2: 游戏选项 ==================== -->
@@ -1098,6 +1323,25 @@ defineExpose({
 
             <!-- ==================== Tab 3: 运行环境 ==================== -->
             <div v-if="activeTab === 'runtime'" class="tab-pane">
+              <div class="setting-group">
+                <div class="setting-label">{{ t('gamesettingsmodal.info.runtimeEnv') }}</div>
+                <el-select
+                  :model-value="infoConfig.runtime.runtimeEnv"
+                  :placeholder="t('gamesettingsmodal.info.runtimeEnvPlaceholder')"
+                  class="custom-select"
+                  @update:model-value="(value: RuntimeEnv) => onInfoRuntimeEnvChange(value)"
+                >
+                  <el-option :label="t('gamesettingsmodal.info.runtimeWine')" value="wine" />
+                  <el-option :label="t('gamesettingsmodal.info.runtimeSteam')" value="steam" />
+                  <el-option :label="t('gamesettingsmodal.info.runtimeLinux')" value="linux" />
+                </el-select>
+                <div class="info-sub" style="margin-top:6px;">
+                  <template v-if="infoConfig.runtime.runtimeEnv === 'wine'">{{ t('gamesettingsmodal.info.runtimeWineHint') }}</template>
+                  <template v-else-if="infoConfig.runtime.runtimeEnv === 'steam'">{{ t('gamesettingsmodal.info.runtimeSteamHint') }}</template>
+                  <template v-else>{{ t('gamesettingsmodal.info.runtimeLinuxHint') }}</template>
+                </div>
+              </div>
+
               <!-- Wine/Proton 本地已安装版本 -->
               <div class="setting-group">
                 <div class="setting-label">Wine / Proton 版本（本地已安装）</div>
@@ -1198,7 +1442,7 @@ defineExpose({
                     </span>
                     <template v-if="dxvkInstalledStatus.installed">
                       <span class="info-key">检测版本</span>
-                      <span class="info-val">{{ dxvkInstalledStatus.version || '未知（无本地缓存可比对）' }}</span>
+                      <span class="info-val">{{ dxvkInstalledStatus.version || '未知' }}</span>
                       <span class="info-key">DLL 文件</span>
                       <span class="info-val">{{ dxvkInstalledStatus.dlls_found.join(', ') }}</span>
                     </template>
@@ -1285,7 +1529,7 @@ defineExpose({
 
               <!-- 保存 -->
               <div class="button-row">
-                <button class="action-btn highlight" @click="saveWineConfig">保存运行环境配置</button>
+                <button class="action-btn highlight" @click="saveRuntimeTabSettings">保存运行环境配置</button>
               </div>
             </div>
 
@@ -1629,6 +1873,16 @@ defineExpose({
 
 .setting-group {
   margin-bottom: 24px;
+}
+
+.info-readonly-banner {
+  margin-bottom: 16px;
+  border-radius: 6px;
+  border: 1px solid rgba(230, 162, 60, 0.45);
+  background: rgba(230, 162, 60, 0.15);
+  color: #e6a23c;
+  padding: 10px 12px;
+  font-size: 13px;
 }
 
 .setting-label {

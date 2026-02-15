@@ -125,17 +125,6 @@ onUnmounted(() => {
           class="bg-item"
           :style="{ backgroundImage: `url(${appSettings.bgImage})` }"
         ></div>
-
-        <!-- Video Background -->
-        <video 
-          v-if="appSettings.bgType === BGType.Video && appSettings.bgVideo" 
-          :key="appSettings.bgVideo"
-          :src="appSettings.bgVideo"
-          autoplay loop muted playsinline 
-          class="bg-item"
-          @error="(e: Event) => console.error('[BG] Video error:', (e.target as HTMLVideoElement)?.error)"
-          @loadeddata="(e: Event) => { console.log('[BG] Video loaded OK'); const v = e.target as HTMLVideoElement; v.play().catch(err => console.error('[BG] Play failed:', err)); }"
-        ></video>
       </transition-group>
     </div>
     

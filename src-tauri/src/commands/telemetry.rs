@@ -3,20 +3,26 @@ use tracing::{error, info, warn};
 
 use crate::configs::game_presets;
 
+fn canonical_preset(value: &str) -> String {
+    crate::configs::game_identity::to_canonical_or_keep(value)
+}
+
 // ============================================================
 // 遥测数据查询（配置驱动，从 game_presets 注册表获取）
 // ============================================================
 
 /// 根据游戏 preset 返回对应的遥测服务器列表
 fn get_telemetry_servers(game_preset: &str) -> Vec<String> {
-    game_presets::get_preset(game_preset)
+    let game_preset = canonical_preset(game_preset);
+    game_presets::get_preset(&game_preset)
         .map(|p| p.telemetry_servers.clone())
         .unwrap_or_default()
 }
 
 /// 根据游戏 preset 返回需要删除的遥测 DLL 路径
 fn get_telemetry_dlls(game_preset: &str) -> Vec<String> {
-    game_presets::get_preset(game_preset)
+    let game_preset = canonical_preset(game_preset);
+    game_presets::get_preset(&game_preset)
         .map(|p| p.telemetry_dlls.clone())
         .unwrap_or_default()
 }
@@ -104,13 +110,14 @@ pub fn check_game_protection_status_internal(
     game_preset: &str,
     game_path: Option<&str>,
 ) -> Result<serde_json::Value, String> {
+    let game_preset = canonical_preset(game_preset);
     let game_root = normalize_game_root(game_path);
 
-    let (telemetry_required, blocked, unblocked) = evaluate_telemetry_protection(game_preset);
+    let (telemetry_required, blocked, unblocked) = evaluate_telemetry_protection(&game_preset);
     let telemetry_all_blocked = !telemetry_required || unblocked.is_empty();
 
     let (files_required, removed, existing, files_error) =
-        evaluate_file_protection(game_preset, game_root.as_deref());
+        evaluate_file_protection(&game_preset, game_root.as_deref());
     let files_all_removed = !files_required || (existing.is_empty() && files_error.is_none());
 
     let supported = telemetry_required || files_required;
@@ -142,14 +149,14 @@ pub fn check_game_protection_status_internal(
             "allBlocked": telemetry_all_blocked,
             "blocked": blocked,
             "unblocked": unblocked,
-            "totalServers": get_telemetry_servers(game_preset).len(),
+            "totalServers": get_telemetry_servers(&game_preset).len(),
         },
         "files": {
             "required": files_required,
             "allRemoved": files_all_removed,
             "removed": removed,
             "existing": existing,
-            "totalFiles": get_telemetry_dlls(game_preset).len(),
+            "totalFiles": get_telemetry_dlls(&game_preset).len(),
             "error": files_error,
         }
     }))
@@ -160,6 +167,7 @@ pub fn check_game_protection_status(
     game_preset: String,
     game_path: Option<String>,
 ) -> Result<serde_json::Value, String> {
+    let game_preset = canonical_preset(&game_preset);
     check_game_protection_status_internal(&game_preset, game_path.as_deref())
 }
 
@@ -169,6 +177,7 @@ pub fn check_game_protection_status(
 
 #[tauri::command]
 pub fn check_telemetry_status(game_preset: String) -> Result<serde_json::Value, String> {
+    let game_preset = canonical_preset(&game_preset);
     let (supported, blocked, unblocked) = evaluate_telemetry_protection(&game_preset);
     if !supported {
         return Ok(serde_json::json!({
@@ -194,6 +203,7 @@ pub fn check_telemetry_status(game_preset: String) -> Result<serde_json::Value, 
 
 #[tauri::command]
 pub async fn disable_telemetry(game_preset: String) -> Result<serde_json::Value, String> {
+    let game_preset = canonical_preset(&game_preset);
     let servers = get_telemetry_servers(&game_preset);
     if servers.is_empty() {
         return Ok(serde_json::json!({
@@ -277,6 +287,7 @@ pub async fn disable_telemetry(game_preset: String) -> Result<serde_json::Value,
 
 #[tauri::command]
 pub async fn restore_telemetry(game_preset: String) -> Result<serde_json::Value, String> {
+    let game_preset = canonical_preset(&game_preset);
     let servers = get_telemetry_servers(&game_preset);
     if servers.is_empty() {
         return Ok(serde_json::json!({
@@ -392,6 +403,7 @@ pub fn remove_telemetry_files(
     game_preset: String,
     game_path: String,
 ) -> Result<serde_json::Value, String> {
+    let game_preset = canonical_preset(&game_preset);
     let dlls = get_telemetry_dlls(&game_preset);
     if dlls.is_empty() {
         return Ok(serde_json::json!({
@@ -437,6 +449,7 @@ pub async fn apply_game_protection(
     game_preset: String,
     game_path: String,
 ) -> Result<serde_json::Value, String> {
+    let game_preset = canonical_preset(&game_preset);
     let mut results = serde_json::Map::new();
 
     // 1. 屏蔽遥测服务器
@@ -462,13 +475,16 @@ pub async fn apply_game_protection(
 
 #[tauri::command]
 pub fn get_game_protection_info(game_preset: String) -> Result<serde_json::Value, String> {
+    let game_preset = canonical_preset(&game_preset);
     let servers = get_telemetry_servers(&game_preset);
     let dlls = get_telemetry_dlls(&game_preset);
 
     let category = match game_preset.as_str() {
-        "GIMI" | "SRMI" | "ZZMI" | "HIMI" => "HoYoverse",
-        "WWMI" | "WuWa" => "Kuro Games",
-        "EFMI" => "Seasun",
+        "GenshinImpact" | "HonkaiStarRail" | "ZenlessZoneZero" | "HonkaiImpact3rd" => {
+            "HoYoverse"
+        }
+        "WutheringWaves" => "Kuro Games",
+        "SnowbreakContainmentZone" => "Seasun",
         _ => "Unknown",
     };
 

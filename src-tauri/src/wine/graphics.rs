@@ -102,28 +102,52 @@ pub fn scan_local_dxvk_versions() -> Vec<DxvkLocalVersion> {
 /// 检测 Prefix 中已安装的 DXVK 版本
 pub fn detect_installed_dxvk(prefix_path: &Path) -> DxvkInstalledStatus {
     let system32 = prefix_path.join("drive_c").join("windows").join("system32");
+    let syswow64 = prefix_path.join("drive_c").join("windows").join("syswow64");
     let dxvk_dlls = ["d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll"];
     let mut found_dlls = Vec::new();
+    let marker_version = read_dxvk_version_marker(prefix_path);
 
     for dll in &dxvk_dlls {
-        let dll_path = system32.join(dll);
-        if dll_path.exists() {
-            if let Ok(meta) = std::fs::metadata(&dll_path) {
-                // DXVK DLL 通常 > 200KB，Wine 原版 < 100KB
-                if meta.len() > 200_000 {
-                    found_dlls.push(dll.to_string());
-                }
+        let mut matched = false;
+        let candidates = [system32.join(dll), syswow64.join(dll)];
+        for dll_path in &candidates {
+            if !dll_path.exists() {
+                continue;
             }
+            if looks_like_dxvk_dll(dll_path) {
+                matched = true;
+                break;
+            }
+        }
+        if matched {
+            found_dlls.push(dll.to_string());
         }
     }
 
-    let installed = !found_dlls.is_empty();
+    // 兼容历史安装：即便 DLL 检测失败，只要存在版本标记也视为已安装
+    let installed = !found_dlls.is_empty() || marker_version.is_some();
 
-    // 多级版本检测：标记文件 → strings 提取 → 文件大小比对
+    // 多级版本检测：标记文件 → 二进制搜索 → 文件大小比对
     let version = if installed {
-        read_dxvk_version_marker(prefix_path)
-            .or_else(|| extract_dxvk_version_from_dll(&system32))
-            .or_else(|| match_dxvk_version_by_size(&system32))
+        let v = marker_version.clone();
+        if v.is_some() {
+            info!("[DXVK] 版本来源: 标记文件 → {:?}", v);
+            v
+        } else {
+            let v = extract_dxvk_version_from_dirs(&[system32.clone(), syswow64.clone()]);
+            if v.is_some() {
+                info!("[DXVK] 版本来源: DLL 二进制搜索 → {:?}", v);
+                v
+            } else {
+                let v = match_dxvk_version_by_size(&[system32, syswow64]);
+                if v.is_some() {
+                    info!("[DXVK] 版本来源: 文件大小比对 → {:?}", v);
+                } else {
+                    warn!("[DXVK] 三层版本检测均失败（标记文件/二进制搜索/大小比对）prefix={}", prefix_path.display());
+                }
+                v
+            }
+        }
     } else {
         None
     };
@@ -133,6 +157,17 @@ pub fn detect_installed_dxvk(prefix_path: &Path) -> DxvkInstalledStatus {
         version,
         dlls_found: found_dlls,
     }
+}
+
+fn looks_like_dxvk_dll(path: &Path) -> bool {
+    // 首选二进制版本特征，最可靠
+    if extract_version_from_binary(path).is_some() {
+        return true;
+    }
+    // 回退大小特征：降低阈值，避免误判“已安装但不识别”
+    std::fs::metadata(path)
+        .map(|m| m.len() >= 120_000)
+        .unwrap_or(false)
 }
 
 /// 获取 DXVK 版本标记文件路径
@@ -161,47 +196,76 @@ fn remove_dxvk_version_marker(prefix_path: &Path) {
     let _ = std::fs::remove_file(&marker);
 }
 
-/// 用 strings 命令从 DLL 中提取 DXVK 版本号（如 "dxvk-2.5.3"）
-fn extract_dxvk_version_from_dll(system32: &Path) -> Option<String> {
-    let dll_path = system32.join("dxgi.dll");
-    if !dll_path.exists() {
-        return None;
-    }
-
-    let output = std::process::Command::new("strings")
-        .arg(&dll_path)
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // DXVK DLL 包含 "dxvk-X.Y.Z" 格式的版本字符串
-    for line in stdout.lines() {
-        let trimmed = line.trim();
-        if let Some(ver) = trimmed.strip_prefix("dxvk-") {
-            // 验证格式：数字.数字[.数字...]
-            if ver.chars().next().is_some_and(|c| c.is_ascii_digit())
-                && ver.contains('.')
-                && ver.len() <= 20
-            {
-                return Some(ver.to_string());
+/// 直接读取 DLL 二进制数据，搜索 "dxvk-X.Y.Z" 版本字符串
+///
+/// 不依赖外部 `strings` 命令，兼容所有 Linux 发行版。
+/// DXVK DLL 中嵌入了 ASCII 版本标识（如 "dxvk-2.5.3"），
+/// 扫描二进制内容匹配 `dxvk-` 前缀 + 语义版本号格式。
+fn extract_dxvk_version_from_dirs(dirs: &[PathBuf]) -> Option<String> {
+    for dir in dirs {
+        // 按优先级尝试多个 DLL（dxgi.dll 最常见）
+        for dll_name in &["dxgi.dll", "d3d11.dll", "d3d9.dll"] {
+            let dll_path = dir.join(dll_name);
+            if let Some(ver) = extract_version_from_binary(&dll_path) {
+                return Some(ver);
             }
         }
     }
     None
 }
 
+/// 从单个 PE 二进制文件中搜索 dxvk 版本字符串
+fn extract_version_from_binary(path: &Path) -> Option<String> {
+    let data = std::fs::read(path).ok()?;
+    let needle = b"dxvk-";
+
+    // 滑动窗口搜索 "dxvk-" 前缀
+    for i in 0..data.len().saturating_sub(needle.len()) {
+        if &data[i..i + needle.len()] != needle {
+            continue;
+        }
+
+        // 提取 "dxvk-" 之后的版本号部分（最多 20 字节）
+        let start = i + needle.len();
+        let end = (start + 20).min(data.len());
+        let candidate = &data[start..end];
+
+        // 版本号必须以数字开头
+        if candidate.is_empty() || !candidate[0].is_ascii_digit() {
+            continue;
+        }
+
+        // 收集有效的版本号字符：数字和点
+        let ver_bytes: Vec<u8> = candidate
+            .iter()
+            .take_while(|&&b| b.is_ascii_digit() || b == b'.')
+            .copied()
+            .collect();
+
+        let ver = String::from_utf8(ver_bytes).ok()?;
+
+        // 校验：至少包含一个点，不以点结尾
+        if ver.contains('.') && !ver.ends_with('.') && ver.len() >= 3 {
+            return Some(ver);
+        }
+    }
+    None
+}
+
 /// 通过 DLL 文件大小与本地缓存版本比对（兜底方案）
-fn match_dxvk_version_by_size(system32: &Path) -> Option<String> {
+fn match_dxvk_version_by_size(dirs: &[PathBuf]) -> Option<String> {
     let local_versions = scan_local_dxvk_versions();
     let reference_dll = "dxgi.dll";
 
-    let installed_size = std::fs::metadata(system32.join(reference_dll))
-        .ok()
-        .map(|m| m.len())?;
+    let mut installed_size = None;
+    for dir in dirs {
+        let path = dir.join(reference_dll);
+        if let Ok(meta) = std::fs::metadata(path) {
+            installed_size = Some(meta.len());
+            break;
+        }
+    }
+    let installed_size = installed_size?;
 
     for local in &local_versions {
         if !local.extracted {
@@ -375,37 +439,62 @@ pub async fn install_dxvk(prefix_path: &Path, dxvk_version: &str) -> Result<Stri
     let x64_dir = extract_dir.join("x64");
     let x32_dir = extract_dir.join("x32");
 
-    let dlls = ["d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll"];
+    if !x64_dir.exists() {
+        return Err(format!(
+            "DXVK 解压目录缺少 x64/: {}",
+            extract_dir.display()
+        ));
+    }
 
-    if x64_dir.exists() && system32.exists() {
-        for dll in &dlls {
-            let src = x64_dir.join(dll);
-            if src.exists() {
-                std::fs::copy(&src, system32.join(dll))
-                    .map_err(|e| format!("Failed to copy DXVK DLL {}: {}", dll, e))?;
+    // 目标目录不存在时自动创建（prefix 可能尚未被 Wine 初始化）
+    std::fs::create_dir_all(&system32)
+        .map_err(|e| format!("创建 system32 目录失败: {}", e))?;
+
+    let dlls = ["d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll"];
+    let mut copied: usize = 0;
+
+    for dll in &dlls {
+        let src = x64_dir.join(dll);
+        if src.exists() {
+            std::fs::copy(&src, system32.join(dll))
+                .map_err(|e| format!("Failed to copy DXVK DLL {}: {}", dll, e))?;
+            copied += 1;
+        }
+    }
+
+    // 32-bit DLLs（可选，syswow64 不存在时跳过）
+    if x32_dir.exists() {
+        if !syswow64.exists() {
+            std::fs::create_dir_all(&syswow64).ok();
+        }
+        if syswow64.exists() {
+            for dll in &dlls {
+                let src = x32_dir.join(dll);
+                if src.exists() {
+                    std::fs::copy(&src, syswow64.join(dll))
+                        .map_err(|e| format!("Failed to copy DXVK 32-bit DLL {}: {}", dll, e))?;
+                }
             }
         }
     }
 
-    if x32_dir.exists() && syswow64.exists() {
-        for dll in &dlls {
-            let src = x32_dir.join(dll);
-            if src.exists() {
-                std::fs::copy(&src, syswow64.join(dll))
-                    .map_err(|e| format!("Failed to copy DXVK 32-bit DLL {}: {}", dll, e))?;
-            }
-        }
+    if copied == 0 {
+        return Err(format!(
+            "DXVK {} 安装失败：x64 目录中未找到任何 DLL",
+            dxvk_version
+        ));
     }
 
     // 写入版本标记文件
     write_dxvk_version_marker(prefix_path, dxvk_version);
 
     info!(
-        "Installed DXVK {} to {}",
+        "Installed DXVK {} to {} ({} DLLs copied)",
         dxvk_version,
-        prefix_path.display()
+        prefix_path.display(),
+        copied
     );
-    Ok(format!("DXVK {} installed", dxvk_version))
+    Ok(format!("DXVK {} 安装完成（{} 个 DLL）", dxvk_version, copied))
 }
 
 pub fn uninstall_dxvk(prefix_path: &Path) -> Result<String, String> {
