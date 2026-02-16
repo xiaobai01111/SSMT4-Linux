@@ -195,8 +195,7 @@ pub fn get_recent_logs(lines: Option<usize>) -> Result<Vec<String>, String> {
         .filter(|e| e.path().extension().is_some_and(|ext| ext == "log"))
         .collect();
 
-    log_files
-        .sort_by_key(|e| std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok())));
+    log_files.sort_by_key(|e| std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok())));
 
     if let Some(latest) = log_files.first() {
         let content = std::fs::read_to_string(latest.path())
@@ -239,6 +238,47 @@ pub fn save_prefix_template(template: PrefixTemplate) -> Result<(), String> {
 // ============================================================
 
 #[tauri::command]
+pub fn get_proton_catalog() -> Result<crate::configs::proton_catalog::ProtonCatalog, String> {
+    crate::configs::proton_catalog::load_catalog_from_db()
+}
+
+#[tauri::command]
+pub fn save_proton_catalog(
+    catalog: crate::configs::proton_catalog::ProtonCatalog,
+) -> Result<(), String> {
+    crate::configs::proton_catalog::save_catalog_to_db(&catalog)
+}
+
+#[tauri::command]
+pub fn scan_local_proton_grouped(
+    settings: State<'_, Mutex<crate::configs::app_config::AppConfig>>,
+) -> Result<Vec<crate::configs::proton_catalog::ProtonFamilyLocalGroup>, String> {
+    let custom_paths = {
+        let s = settings.lock().map_err(|e| e.to_string())?;
+        s.custom_search_paths.clone()
+    };
+    crate::configs::proton_catalog::scan_local_grouped(&custom_paths)
+}
+
+#[tauri::command]
+pub async fn fetch_remote_proton_grouped(
+    settings: State<'_, Mutex<crate::configs::app_config::AppConfig>>,
+) -> Result<Vec<crate::configs::proton_catalog::ProtonFamilyRemoteGroup>, String> {
+    let (custom_paths, github_token) = {
+        let s = settings.lock().map_err(|e| e.to_string())?;
+        (s.custom_search_paths.clone(), s.github_token.clone())
+    };
+    let installed = detector::scan_all_versions(&custom_paths);
+    let catalog = crate::configs::proton_catalog::load_catalog_from_db()?;
+    crate::configs::proton_catalog::fetch_remote_by_catalog(
+        &catalog,
+        &installed,
+        Some(&github_token),
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn fetch_remote_proton(
     settings: State<'_, Mutex<crate::configs::app_config::AppConfig>>,
 ) -> Result<Vec<detector::RemoteWineVersion>, String> {
@@ -251,7 +291,12 @@ pub async fn fetch_remote_proton(
 }
 
 #[tauri::command]
-pub async fn download_proton(app: tauri::AppHandle, download_url: String, tag: String, variant: String) -> Result<String, String> {
+pub async fn download_proton(
+    app: tauri::AppHandle,
+    download_url: String,
+    tag: String,
+    variant: String,
+) -> Result<String, String> {
     detector::download_and_install_proton(&download_url, &tag, &variant, Some(app)).await
 }
 

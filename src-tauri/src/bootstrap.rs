@@ -18,9 +18,7 @@ pub fn setup(_app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         let settings_path = config_dir_boot.join("settings.json");
         if settings_path.exists() {
             if let Ok(content) = std::fs::read_to_string(&settings_path) {
-                if let Ok(cfg) =
-                    serde_json::from_str::<configs::app_config::AppConfig>(&content)
-                {
+                if let Ok(cfg) = serde_json::from_str::<configs::app_config::AppConfig>(&content) {
                     return cfg.data_dir;
                 }
             }

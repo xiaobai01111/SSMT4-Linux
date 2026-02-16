@@ -198,8 +198,8 @@ pub fn load_game_config(app: tauri::AppHandle, game_name: &str) -> Result<Value,
     normalize_known_identity_fields(&mut val);
 
     // 迁移到 SQLite
-    let normalized_content =
-        serde_json::to_string_pretty(&val).map_err(|e| format!("Failed to serialize config: {}", e))?;
+    let normalized_content = serde_json::to_string_pretty(&val)
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
     db::set_game_config(&game_name, &normalized_content);
     info!("从文件迁移游戏配置到 SQLite: {}", game_name);
     Ok(val)
@@ -658,7 +658,9 @@ fn backup_dir_path() -> PathBuf {
 }
 
 #[tauri::command]
-pub fn preview_game_key_migration(app: tauri::AppHandle) -> Result<GameKeyMigrationPreview, String> {
+pub fn preview_game_key_migration(
+    app: tauri::AppHandle,
+) -> Result<GameKeyMigrationPreview, String> {
     build_game_key_migration_preview(&app)
 }
 
@@ -685,9 +687,7 @@ pub fn get_game_key_migration_status(
 }
 
 #[tauri::command]
-pub fn execute_game_key_migration(
-    app: tauri::AppHandle,
-) -> Result<GameKeyMigrationResult, String> {
+pub fn execute_game_key_migration(app: tauri::AppHandle) -> Result<GameKeyMigrationResult, String> {
     let preview = build_game_key_migration_preview(&app)?;
     if !preview.conflicts.is_empty() {
         return Ok(GameKeyMigrationResult {
@@ -728,7 +728,8 @@ pub fn execute_game_key_migration(
         let from = safe_join(&games_dir, &pair.from)?;
         let to = safe_join(&games_dir, &pair.to)?;
         if from.exists() {
-            fs::rename(&from, &to).map_err(|e| format!("重命名目录失败 {} -> {}: {}", pair.from, pair.to, e))?;
+            fs::rename(&from, &to)
+                .map_err(|e| format!("重命名目录失败 {} -> {}: {}", pair.from, pair.to, e))?;
             applied_game_renames.push(pair.clone());
         }
     }
@@ -743,7 +744,10 @@ pub fn execute_game_key_migration(
             if let Err(e) = fs::rename(&from, &to) {
                 rollback_dir_renames(&games_dir, &applied_game_renames);
                 rollback_dir_renames(&prefixes_dir, &applied_prefix_renames);
-                return Err(format!("重命名 Prefix 目录失败 {} -> {}: {}", pair.from, pair.to, e));
+                return Err(format!(
+                    "重命名 Prefix 目录失败 {} -> {}: {}",
+                    pair.from, pair.to, e
+                ));
             }
             applied_prefix_renames.push(pair.clone());
         }
@@ -951,7 +955,14 @@ pub fn reset_game_background(app: tauri::AppHandle, game_name: &str) -> Result<(
 pub fn reset_game_icon(app: tauri::AppHandle, game_name: &str) -> Result<(), String> {
     let game_name = canonical_key(game_name);
     let game_dir = get_writable_game_dir(&app, &game_name)?;
-    let icon_candidates = ["Icon.png", "icon.png", "Icon.jpg", "icon.jpg", "Icon.jpeg", "icon.jpeg"];
+    let icon_candidates = [
+        "Icon.png",
+        "icon.png",
+        "Icon.jpg",
+        "icon.jpg",
+        "Icon.jpeg",
+        "icon.jpeg",
+    ];
     for name in &icon_candidates {
         let path = game_dir.join(name);
         if path.exists() {
@@ -1278,11 +1289,7 @@ fn find_game_dir_by_logic_name(games_dir: &std::path::Path, game_name: &str) -> 
                         .get("LogicName")
                         .or_else(|| data.get("GamePreset"))
                         .and_then(|v| v.as_str());
-                    if logic_name
-                        .map(canonical_key)
-                        .as_deref()
-                        == Some(target.as_str())
-                    {
+                    if logic_name.map(canonical_key).as_deref() == Some(target.as_str()) {
                         return Some(entry.path());
                     }
                 }

@@ -32,17 +32,18 @@ pub async fn read_log_file(max_lines: Option<usize>) -> Result<String, String> {
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
     });
 
-    let latest = entries
-        .last()
-        .ok_or("未找到日志文件")?
-        .path();
+    let latest = entries.last().ok_or("未找到日志文件")?.path();
 
     let content =
         std::fs::read_to_string(&latest).map_err(|e| format!("读取日志文件失败: {}", e))?;
 
     // 只返回尾部 max 行
     let lines: Vec<&str> = content.lines().collect();
-    let start = if lines.len() > max { lines.len() - max } else { 0 };
+    let start = if lines.len() > max {
+        lines.len() - max
+    } else {
+        0
+    };
     Ok(lines[start..].join("\n"))
 }
 
@@ -51,7 +52,9 @@ pub async fn read_log_file(max_lines: Option<usize>) -> Result<String, String> {
 pub async fn open_log_window(app: tauri::AppHandle) -> Result<(), String> {
     // 如果窗口已存在，聚焦
     if let Some(window) = app.get_webview_window("log-viewer") {
-        window.set_focus().map_err(|e| format!("聚焦窗口失败: {}", e))?;
+        window
+            .set_focus()
+            .map_err(|e| format!("聚焦窗口失败: {}", e))?;
         return Ok(());
     }
 

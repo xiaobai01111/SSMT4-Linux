@@ -25,8 +25,7 @@ pub fn normalize_game_key_or_alias(input: &str) -> Option<String> {
 }
 
 pub fn to_canonical_or_keep(input: &str) -> String {
-    normalize_game_key_or_alias(input)
-        .unwrap_or_else(|| input.trim().to_string())
+    normalize_game_key_or_alias(input).unwrap_or_else(|| input.trim().to_string())
 }
 
 #[allow(dead_code)]

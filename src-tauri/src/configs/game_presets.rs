@@ -266,7 +266,10 @@ mod tests {
     #[test]
     fn preset_json_roundtrip() {
         let map = load_presets_from_db();
-        let first = map.values().next().expect("preset table should not be empty");
+        let first = map
+            .values()
+            .next()
+            .expect("preset table should not be empty");
         let json = serde_json::to_string(first).unwrap();
         let parsed: GamePreset = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.id, first.id);

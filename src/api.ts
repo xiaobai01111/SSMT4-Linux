@@ -279,6 +279,68 @@ export interface RemoteWineVersion {
   installed: boolean;
 }
 
+export interface ProtonFamily {
+  family_key: string;
+  display_name: string;
+  enabled: boolean;
+  sort_order: number;
+  detect_patterns: string[];
+  builtin: boolean;
+}
+
+export interface ProtonSource {
+  id: number | null;
+  family_key: string;
+  provider: string;
+  repo: string;
+  endpoint: string;
+  url_template: string;
+  asset_index: number;
+  asset_pattern: string;
+  tag_pattern: string;
+  max_count: number;
+  include_prerelease: boolean;
+  enabled: boolean;
+  note: string;
+}
+
+export interface ProtonCatalog {
+  families: ProtonFamily[];
+  sources: ProtonSource[];
+}
+
+export interface ProtonLocalVersionItem {
+  id: string;
+  name: string;
+  variant: string;
+  path: string;
+  version: string;
+  timestamp: string | null;
+}
+
+export interface ProtonRemoteVersionItem {
+  tag: string;
+  version: string;
+  variant: string;
+  download_url: string;
+  file_size: number;
+  published_at: string;
+  installed: boolean;
+  source_repo: string;
+}
+
+export interface ProtonFamilyLocalGroup {
+  family_key: string;
+  display_name: string;
+  items: ProtonLocalVersionItem[];
+}
+
+export interface ProtonFamilyRemoteGroup {
+  family_key: string;
+  display_name: string;
+  items: ProtonRemoteVersionItem[];
+}
+
 export interface GameWineConfig {
   game_id: string;
   wine_version_id: string | null;
@@ -674,6 +736,22 @@ export async function installModArchive(
 
 export async function scanWineVersions(): Promise<WineVersion[]> {
   return invoke<WineVersion[]>('scan_wine_versions');
+}
+
+export async function getProtonCatalog(): Promise<ProtonCatalog> {
+  return invoke<ProtonCatalog>('get_proton_catalog');
+}
+
+export async function saveProtonCatalog(catalog: ProtonCatalog): Promise<void> {
+  return invoke('save_proton_catalog', { catalog });
+}
+
+export async function scanLocalProtonGrouped(): Promise<ProtonFamilyLocalGroup[]> {
+  return invoke<ProtonFamilyLocalGroup[]>('scan_local_proton_grouped');
+}
+
+export async function fetchRemoteProtonGrouped(): Promise<ProtonFamilyRemoteGroup[]> {
+  return invoke<ProtonFamilyRemoteGroup[]>('fetch_remote_proton_grouped');
 }
 
 export async function fetchRemoteProton(): Promise<RemoteWineVersion[]> {

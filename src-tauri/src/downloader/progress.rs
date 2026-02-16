@@ -104,8 +104,7 @@ impl SpeedTracker {
     /// 推进槽位：过期的槽从 window_bytes 中减去并清零
     fn advance_slots(&mut self) {
         let elapsed = self.slot_start.elapsed();
-        let slots_to_advance =
-            (elapsed.as_millis() / Self::SLOT_DURATION.as_millis()) as usize;
+        let slots_to_advance = (elapsed.as_millis() / Self::SLOT_DURATION.as_millis()) as usize;
 
         if slots_to_advance == 0 {
             return;

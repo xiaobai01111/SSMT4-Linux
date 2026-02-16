@@ -12,7 +12,8 @@ fn resolve_game_root_from_db(game_id: &str) -> Option<PathBuf> {
     let data: serde_json::Value = serde_json::from_str(&config_json).ok()?;
 
     // 优先：gameFolder 的父目录
-    if let Some(game_folder) = data.pointer("/other/gameFolder")
+    if let Some(game_folder) = data
+        .pointer("/other/gameFolder")
         .and_then(|v| v.as_str())
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
@@ -23,7 +24,8 @@ fn resolve_game_root_from_db(game_id: &str) -> Option<PathBuf> {
     }
 
     // 回退：gamePath 向上两级（exe → 数据子目录 → 游戏根目录）
-    if let Some(game_path) = data.pointer("/other/gamePath")
+    if let Some(game_path) = data
+        .pointer("/other/gamePath")
         .and_then(|v| v.as_str())
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
@@ -281,16 +283,24 @@ pub fn ensure_cjk_fonts(game_id: &str) {
     }
 
     // 常见系统字体目录
-    let system_font_dirs = [
-        "/usr/share/fonts",
-        "/usr/local/share/fonts",
-    ];
+    let system_font_dirs = ["/usr/share/fonts", "/usr/local/share/fonts"];
 
     // 查找系统中的 CJK 字体文件
-    let cjk_patterns = ["noto", "cjk", "wqy", "wenquanyi", "droid", "source-han", "sarasa"];
+    let cjk_patterns = [
+        "noto",
+        "cjk",
+        "wqy",
+        "wenquanyi",
+        "droid",
+        "source-han",
+        "sarasa",
+    ];
 
     let home = std::env::var("HOME").unwrap_or_default();
-    let user_fonts = PathBuf::from(&home).join(".local").join("share").join("fonts");
+    let user_fonts = PathBuf::from(&home)
+        .join(".local")
+        .join("share")
+        .join("fonts");
     let mut search_dirs: Vec<PathBuf> = system_font_dirs.iter().map(PathBuf::from).collect();
     if user_fonts.exists() {
         search_dirs.push(user_fonts);
@@ -321,14 +331,23 @@ pub fn ensure_cjk_fonts(game_id: &str) {
                 continue;
             }
             if let Err(e) = std::os::unix::fs::symlink(entry.path(), &target) {
-                warn!("字体链接失败: {} -> {}: {}", entry.path().display(), target.display(), e);
+                warn!(
+                    "字体链接失败: {} -> {}: {}",
+                    entry.path().display(),
+                    target.display(),
+                    e
+                );
             } else {
                 linked += 1;
             }
         }
     }
     if linked > 0 {
-        info!("已链接 {} 个 CJK 字体到 prefix: {}", linked, fonts_dir.display());
+        info!(
+            "已链接 {} 个 CJK 字体到 prefix: {}",
+            linked,
+            fonts_dir.display()
+        );
     }
 
     // 写入字体替换注册表，让 Windows 程序能通过标准字体名找到 CJK 字体
@@ -400,7 +419,8 @@ fn ensure_font_substitutes(pfx_dir: &Path) {
     }
 
     // 找到 FontSubstitutes 节并追加，或在文件末尾追加
-    let substitutes_section = "[Software\\\\Microsoft\\\\Windows NT\\\\CurrentVersion\\\\FontSubstitutes]";
+    let substitutes_section =
+        "[Software\\\\Microsoft\\\\Windows NT\\\\CurrentVersion\\\\FontSubstitutes]";
     let mut new_content = content.clone();
 
     if let Some(pos) = new_content.find(substitutes_section) {
@@ -446,19 +466,33 @@ fn detect_available_cjk_font(fonts_dir: &Path) -> String {
 
     // 按优先级检测（文件名 → Wine 字体族名）
     let candidates: &[(&[&str], &str)] = &[
-        (&["notosanscjksc", "notosanscjk-regular", "notosanscjk"], "Noto Sans CJK SC"),
+        (
+            &["notosanscjksc", "notosanscjk-regular", "notosanscjk"],
+            "Noto Sans CJK SC",
+        ),
         (&["notoserifcjksc"], "Noto Serif CJK SC"),
         (&["sarasa"], "Sarasa Gothic SC"),
-        (&["wqy-microhei", "wenquanyimicrohei"], "WenQuanYi Micro Hei"),
+        (
+            &["wqy-microhei", "wenquanyimicrohei"],
+            "WenQuanYi Micro Hei",
+        ),
         (&["wqy-zenhei", "wenquanyizenhei"], "WenQuanYi Zen Hei"),
         (&["droidsansfallback"], "Droid Sans Fallback"),
-        (&["sourcehanssanscn", "sourcehanssans", "source-han-sans"], "Source Han Sans CN"),
+        (
+            &["sourcehanssanscn", "sourcehanssans", "source-han-sans"],
+            "Source Han Sans CN",
+        ),
     ];
 
     let entries: Vec<String> = match std::fs::read_dir(fonts_dir) {
         Ok(rd) => rd
             .filter_map(|e| e.ok())
-            .map(|e| e.file_name().to_string_lossy().to_lowercase().replace(['-', '_', ' '], ""))
+            .map(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .to_lowercase()
+                    .replace(['-', '_', ' '], "")
+            })
             .collect(),
         Err(_) => return String::new(),
     };

@@ -1,0 +1,222 @@
+{
+  "schemaVersion": 1,
+  "families": [
+    {
+      "familyKey": "official",
+      "displayName": "Proton (Official)",
+      "enabled": true,
+      "sortOrder": 10,
+      "detectPatterns": [
+        "(?i)^proton\\s*\\d",
+        "(?i)^proton$"
+      ],
+      "builtin": true
+    },
+    {
+      "familyKey": "experimental",
+      "displayName": "Proton Experimental",
+      "enabled": true,
+      "sortOrder": 20,
+      "detectPatterns": [
+        "(?i)experimental"
+      ],
+      "builtin": true
+    },
+    {
+      "familyKey": "ge-proton",
+      "displayName": "GE-Proton",
+      "enabled": true,
+      "sortOrder": 30,
+      "detectPatterns": [
+        "(?i)ge-proton",
+        "(?i)geproton"
+      ],
+      "builtin": true
+    },
+    {
+      "familyKey": "dw-proton",
+      "displayName": "DW-Proton",
+      "enabled": true,
+      "sortOrder": 40,
+      "detectPatterns": [
+        "(?i)dw-proton",
+        "(?i)dwproton"
+      ],
+      "builtin": true
+    },
+    {
+      "familyKey": "proton-cachyos",
+      "displayName": "Proton-CachyOS",
+      "enabled": true,
+      "sortOrder": 50,
+      "detectPatterns": [
+        "(?i)cachyos"
+      ],
+      "builtin": true
+    },
+    {
+      "familyKey": "proton-em",
+      "displayName": "Proton-EM",
+      "enabled": true,
+      "sortOrder": 60,
+      "detectPatterns": [
+        "(?i)proton-em",
+        "(?i)\\bem\\b"
+      ],
+      "builtin": true
+    },
+    {
+      "familyKey": "proton-sarek",
+      "displayName": "Proton-Sarek",
+      "enabled": true,
+      "sortOrder": 70,
+      "detectPatterns": [
+        "(?i)proton-sarek(?!.*async)"
+      ],
+      "builtin": true
+    },
+    {
+      "familyKey": "proton-sarek-async",
+      "displayName": "Proton-Sarek (Async)",
+      "enabled": true,
+      "sortOrder": 80,
+      "detectPatterns": [
+        "(?i)sarek.*async",
+        "(?i)proton-sarek-async"
+      ],
+      "builtin": true
+    },
+    {
+      "familyKey": "proton-tkg",
+      "displayName": "Proton-TKG",
+      "enabled": true,
+      "sortOrder": 90,
+      "detectPatterns": [
+        "(?i)tkg"
+      ],
+      "builtin": true
+    },
+    {
+      "familyKey": "custom",
+      "displayName": "Custom",
+      "enabled": true,
+      "sortOrder": 100,
+      "detectPatterns": [],
+      "builtin": true
+    }
+  ],
+  "sources": [
+    {
+      "familyKey": "ge-proton",
+      "provider": "github_releases",
+      "repo": "GloriousEggroll/proton-ge-custom",
+      "endpoint": "",
+      "urlTemplate": "",
+      "assetIndex": 1,
+      "assetPattern": "(?i)\\.tar\\.(gz|xz)$",
+      "tagPattern": "(?i)^GE-Proton",
+      "maxCount": 20,
+      "includePrerelease": false,
+      "enabled": true,
+      "note": "ProtonPlus default source"
+    },
+    {
+      "familyKey": "proton-cachyos",
+      "provider": "github_releases",
+      "repo": "CachyOS/proton-cachyos",
+      "endpoint": "",
+      "urlTemplate": "",
+      "assetIndex": 1,
+      "assetPattern": "(?i)\\.tar\\.(gz|xz)$",
+      "tagPattern": ".*",
+      "maxCount": 20,
+      "includePrerelease": false,
+      "enabled": true,
+      "note": "ProtonPlus default source"
+    },
+    {
+      "familyKey": "dw-proton",
+      "provider": "forgejo_releases",
+      "repo": "dawn-winery/dwproton",
+      "endpoint": "https://dawn.wine/api/v1/repos/dawn-winery/dwproton/releases",
+      "urlTemplate": "",
+      "assetIndex": 1,
+      "assetPattern": "(?i)\\.tar\\.(gz|xz)$",
+      "tagPattern": ".*",
+      "maxCount": 20,
+      "includePrerelease": false,
+      "enabled": true,
+      "note": "ProtonPlus Forgejo source"
+    },
+    {
+      "familyKey": "proton-sarek",
+      "provider": "github_releases",
+      "repo": "pythonlover02/Proton-Sarek",
+      "endpoint": "",
+      "urlTemplate": "",
+      "assetIndex": 1,
+      "assetPattern": ".*",
+      "tagPattern": "^(?!.*Sarek9-13).*$",
+      "maxCount": 20,
+      "includePrerelease": false,
+      "enabled": true,
+      "note": "ProtonPlus default source"
+    },
+    {
+      "familyKey": "proton-sarek-async",
+      "provider": "github_releases",
+      "repo": "pythonlover02/Proton-Sarek",
+      "endpoint": "",
+      "urlTemplate": "",
+      "assetIndex": 0,
+      "assetPattern": ".*",
+      "tagPattern": "^(?!.*Sarek9-13).*$",
+      "maxCount": 20,
+      "includePrerelease": false,
+      "enabled": true,
+      "note": "ProtonPlus default source"
+    },
+    {
+      "familyKey": "proton-em",
+      "provider": "github_releases",
+      "repo": "Etaash-mathamsetty/Proton",
+      "endpoint": "",
+      "urlTemplate": "",
+      "assetIndex": 1,
+      "assetPattern": "(?i)\\.tar\\.(gz|xz)$",
+      "tagPattern": ".*",
+      "maxCount": 20,
+      "includePrerelease": false,
+      "enabled": true,
+      "note": "ProtonPlus default source"
+    },
+    {
+      "familyKey": "proton-tkg",
+      "provider": "github_actions",
+      "repo": "Frogging-Family/wine-tkg-git",
+      "endpoint": "https://api.github.com/repos/Frogging-Family/wine-tkg-git/actions/workflows/29873769/runs",
+      "urlTemplate": "https://nightly.link/Frogging-Family/wine-tkg-git/actions/runs/{id}/proton-tkg-build.zip",
+      "assetIndex": 0,
+      "assetPattern": ".*",
+      "tagPattern": ".*",
+      "maxCount": 20,
+      "includePrerelease": false,
+      "enabled": true,
+      "note": "ProtonPlus github-action source"
+    },
+    {
+      "familyKey": "dw-proton",
+      "provider": "github_releases",
+      "repo": "AUNaseef/proton-ge-custom",
+      "endpoint": "",
+      "urlTemplate": "",
+      "assetIndex": -1,
+      "assetPattern": "(?i)\\.tar\\.(gz|xz)$",
+      "tagPattern": ".*",
+      "maxCount": 20,
+      "includePrerelease": false,
+      "enabled": false,
+      "note": "Deprecated upstream (404), kept for compatibility"
+    }
+  ]
+}

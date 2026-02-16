@@ -148,8 +148,14 @@ pub async fn download_game(
         if hoyoverse::is_hoyoverse_api(&launcher_api) {
             let biz = require_hoyoverse_biz_prefix(biz_prefix.as_deref())?;
             let game_pkg = hoyoverse::fetch_game_packages(&launcher_api, biz).await?;
-            hoyoverse_download::download_game(app, &game_pkg, &game_path, &langs, cancel_token.clone())
-                .await?;
+            hoyoverse_download::download_game(
+                app,
+                &game_pkg,
+                &game_path,
+                &langs,
+                cancel_token.clone(),
+            )
+            .await?;
             write_local_version(&game_path, &game_pkg.main.major.version)?;
             info!("HoYoverse full download completed for {}", game_folder);
             return Ok(());
@@ -158,7 +164,8 @@ pub async fn download_game(
         // Kuro Games 分支
         let launcher_info = cdn::fetch_launcher_info(&launcher_api).await?;
         let resource_index =
-            cdn::fetch_resource_index(&launcher_info.cdn_url, &launcher_info.index_file_url).await?;
+            cdn::fetch_resource_index(&launcher_info.cdn_url, &launcher_info.index_file_url)
+                .await?;
 
         full_download::download_game(
             app,
@@ -172,7 +179,8 @@ pub async fn download_game(
         write_local_version(&game_path, &launcher_info.version)?;
         info!("Full download completed for {}", game_folder);
         Ok(())
-    }.await;
+    }
+    .await;
 
     cleanup_cancel_token(&game_folder);
     result
@@ -230,7 +238,8 @@ pub async fn update_game(
         // Kuro Games 分支
         let launcher_info = cdn::fetch_launcher_info(&launcher_api).await?;
         let resource_index =
-            cdn::fetch_resource_index(&launcher_info.cdn_url, &launcher_info.index_file_url).await?;
+            cdn::fetch_resource_index(&launcher_info.cdn_url, &launcher_info.index_file_url)
+                .await?;
 
         incremental::update_game_full(
             app,
@@ -244,7 +253,8 @@ pub async fn update_game(
         write_local_version(&game_path, &launcher_info.version)?;
         info!("Full comparison update completed for {}", game_folder);
         Ok(())
-    }.await;
+    }
+    .await;
 
     cleanup_cancel_token(&game_folder);
     result
@@ -310,14 +320,20 @@ pub async fn verify_game_files(
         if hoyoverse::is_hoyoverse_api(&launcher_api) {
             let biz = require_hoyoverse_biz_prefix(biz_prefix.as_deref())?;
             let game_pkg = hoyoverse::fetch_game_packages(&launcher_api, biz).await?;
-            return hoyoverse_download::verify_game(app, &game_pkg, &game_path, cancel_token.clone())
-                .await;
+            return hoyoverse_download::verify_game(
+                app,
+                &game_pkg,
+                &game_path,
+                cancel_token.clone(),
+            )
+            .await;
         }
 
         // Kuro Games 分支
         let launcher_info = cdn::fetch_launcher_info(&launcher_api).await?;
         let resource_index =
-            cdn::fetch_resource_index(&launcher_info.cdn_url, &launcher_info.index_file_url).await?;
+            cdn::fetch_resource_index(&launcher_info.cdn_url, &launcher_info.index_file_url)
+                .await?;
 
         let result = verifier::verify_game_files(
             app,
@@ -338,7 +354,8 @@ pub async fn verify_game_files(
         }
 
         Ok(result)
-    }.await;
+    }
+    .await;
 
     cleanup_cancel_token(&game_folder);
     result
@@ -350,7 +367,10 @@ pub async fn cancel_download(game_folder: Option<String>) -> Result<(), String> 
     let targets: Vec<(String, Arc<AsyncMutex<bool>>)> = {
         let tokens = CANCEL_TOKENS.lock().unwrap();
         if let Some(folder) = &game_folder {
-            tokens.get(folder).map(|t| vec![(folder.clone(), t.clone())]).unwrap_or_default()
+            tokens
+                .get(folder)
+                .map(|t| vec![(folder.clone(), t.clone())])
+                .unwrap_or_default()
         } else {
             tokens.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
         }

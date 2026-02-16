@@ -12,7 +12,10 @@ pub fn safe_join(root: &Path, relative: &str) -> Result<PathBuf, String> {
     // 拒绝 .. 组件
     for component in rel.components() {
         if matches!(component, Component::ParentDir) {
-            return Err(format!("路径安全校验失败：拒绝包含 '..' 的路径 '{}'", relative));
+            return Err(format!(
+                "路径安全校验失败：拒绝包含 '..' 的路径 '{}'",
+                relative
+            ));
         }
     }
     let joined = root.join(rel);
@@ -20,7 +23,10 @@ pub fn safe_join(root: &Path, relative: &str) -> Result<PathBuf, String> {
     let canon_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     if let Ok(canon) = joined.canonicalize() {
         if !canon.starts_with(&canon_root) {
-            return Err(format!("路径安全校验失败：'{}' 不在目标目录内", canon.display()));
+            return Err(format!(
+                "路径安全校验失败：'{}' 不在目标目录内",
+                canon.display()
+            ));
         }
     }
     Ok(joined)
