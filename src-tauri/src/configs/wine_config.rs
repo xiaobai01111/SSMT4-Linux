@@ -88,6 +88,7 @@ pub struct PrefixConfig {
 #[serde(default)]
 pub struct ProtonSettings {
     pub steam_app_id: String,
+    pub use_umu_run: bool,
     pub use_pressure_vessel: bool,
     pub proton_media_use_gst: bool,
     pub proton_enable_wayland: bool,
@@ -96,6 +97,14 @@ pub struct ProtonSettings {
     pub steam_deck_compat: bool,
     pub sandbox_enabled: bool,
     pub sandbox_isolate_home: bool,
+    /// DXVK HUD 显示模式："" = 关闭, "version" / "fps" / "full" / 自定义
+    pub dxvk_hud: String,
+    /// 启用 DXVK 异步着色器编译
+    pub dxvk_async: bool,
+    /// DXVK 帧率限制（0 = 不限制）
+    pub dxvk_frame_rate: u32,
+    /// 禁用 GPU 自动过滤（DXVK_FILTER_DEVICE_NAME）
+    pub disable_gpu_filter: bool,
     pub custom_env: HashMap<String, String>,
 }
 
@@ -103,6 +112,7 @@ impl Default for ProtonSettings {
     fn default() -> Self {
         Self {
             steam_app_id: "0".to_string(),
+            use_umu_run: false,
             use_pressure_vessel: true,
             proton_media_use_gst: false,
             proton_enable_wayland: false,
@@ -111,6 +121,10 @@ impl Default for ProtonSettings {
             steam_deck_compat: false,
             sandbox_enabled: false,
             sandbox_isolate_home: false,
+            dxvk_hud: String::new(),
+            dxvk_async: false,
+            dxvk_frame_rate: 0,
+            disable_gpu_filter: false,
             custom_env: HashMap::new(),
         }
     }

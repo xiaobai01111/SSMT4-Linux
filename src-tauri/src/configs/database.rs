@@ -152,17 +152,99 @@ fn ensure_game_catalog_seed(conn: &Connection) {
             continue;
         };
 
-        let Ok(json) = serde_json::to_string_pretty(&preset) else {
-            continue;
-        };
+        let existing_json: Option<String> = conn
+            .query_row(
+                "SELECT preset_json FROM game_presets WHERE id = ?1 LIMIT 1",
+                params![id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .ok()
+            .flatten();
 
-        if let Err(e) = conn.execute(
-            "INSERT OR IGNORE INTO game_presets (id, preset_json, updated_at) VALUES (?1, ?2, datetime('now'))",
-            params![id, json],
-        ) {
-            tracing::warn!("写入 game_presets 失败: id={}, err={}", id, e);
+        if let Some(existing_json) = existing_json {
+            let mut existing_value = match serde_json::from_str::<serde_json::Value>(&existing_json) {
+                Ok(v) => v,
+                Err(_) => serde_json::json!({}),
+            };
+            let mut changed = merge_missing_json_fields(&mut existing_value, &preset);
+            changed |= sync_managed_preset_fields(&mut existing_value, &preset);
+            if changed {
+                if let Ok(merged_json) = serde_json::to_string_pretty(&existing_value) {
+                    if let Err(e) = conn.execute(
+                        "UPDATE game_presets SET preset_json = ?2, updated_at = datetime('now') WHERE id = ?1",
+                        params![id, merged_json],
+                    ) {
+                        tracing::warn!("更新 game_presets 失败: id={}, err={}", id, e);
+                    }
+                }
+            }
+            continue;
+        }
+
+        if let Ok(json) = serde_json::to_string_pretty(&preset) {
+            if let Err(e) = conn.execute(
+                "INSERT OR IGNORE INTO game_presets (id, preset_json, updated_at) VALUES (?1, ?2, datetime('now'))",
+                params![id, json],
+            ) {
+                tracing::warn!("写入 game_presets 失败: id={}, err={}", id, e);
+            }
         }
     }
+}
+
+fn merge_missing_json_fields(target: &mut serde_json::Value, defaults: &serde_json::Value) -> bool {
+    match (target, defaults) {
+        (serde_json::Value::Object(target_obj), serde_json::Value::Object(default_obj)) => {
+            let mut changed = false;
+            for (key, default_value) in default_obj {
+                match target_obj.get_mut(key) {
+                    Some(existing_value) => {
+                        changed |= merge_missing_json_fields(existing_value, default_value);
+                    }
+                    None => {
+                        target_obj.insert(key.clone(), default_value.clone());
+                        changed = true;
+                    }
+                }
+            }
+            changed
+        }
+        _ => false,
+    }
+}
+
+fn sync_managed_preset_fields(
+    target: &mut serde_json::Value,
+    defaults: &serde_json::Value,
+) -> bool {
+    let serde_json::Value::Object(target_obj) = target else {
+        return false;
+    };
+    let serde_json::Value::Object(default_obj) = defaults else {
+        return false;
+    };
+
+    let mut changed = false;
+    for key in [
+        "requireProtectionBeforeLaunch",
+        "forceDirectProton",
+        "forceDisablePressureVessel",
+        "enableNetworkLogByDefault",
+        "telemetryServers",
+        "telemetryDlls",
+        "channelProtection",
+    ] {
+        let Some(default_value) = default_obj.get(key) else {
+            continue;
+        };
+        let need_update = target_obj.get(key) != Some(default_value);
+        if need_update {
+            target_obj.insert(key.to_string(), default_value.clone());
+            changed = true;
+        }
+    }
+    changed
 }
 
 fn resolve_canonical_key_with_conn(conn: &Connection, input: &str) -> Option<String> {

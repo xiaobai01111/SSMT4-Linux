@@ -41,6 +41,7 @@ const isSupported = ref(false);
 const statusMsg = ref('');
 const protectionInfo = ref<any>(null);
 const protectionApplied = ref(false);
+const protectionEnforceAtLaunch = ref(false);
 const isProtectionBusy = ref(false);
 
 // 语言包选择
@@ -63,7 +64,10 @@ const selectedServer = ref<ServerOption | null>(null);
 
 const protectionStatusLabel = computed(() => {
   if (!protectionInfo.value?.hasProtections) return '该游戏暂无可用防护';
-  return protectionApplied.value ? '防护状态：已启用' : '防护状态：未启用（将阻止启动）';
+  if (protectionEnforceAtLaunch.value) {
+    return protectionApplied.value ? '防护状态：已启用（强制）' : '防护状态：未启用（将阻止启动）';
+  }
+  return protectionApplied.value ? '防护状态：已启用' : '防护状态：未启用';
 });
 
 const protectionStatusClass = computed(() => {
@@ -166,10 +170,12 @@ const refreshProtectionStatus = async () => {
 
     const status = await checkGameProtectionStatus(preset, gameFolder.value || undefined);
     protectionApplied.value = !!status?.enabled;
+    protectionEnforceAtLaunch.value = status?.enforceAtLaunch !== false;
   } catch (e) {
     console.warn('[防护] 刷新状态失败:', e);
     protectionInfo.value = null;
     protectionApplied.value = false;
+    protectionEnforceAtLaunch.value = false;
   }
 };
 
@@ -353,7 +359,7 @@ const startVerify = async () => {
   });
 };
 
-// 手动应用游戏防护（遥测屏蔽 + 删除遥测 DLL）
+// 手动应用游戏防护（渠道参数切换/遥测处理）
 const applyProtectionAfterDownload = async () => {
   if (isProtectionBusy.value) return;
   try {
@@ -366,7 +372,7 @@ const applyProtectionAfterDownload = async () => {
 
     const protNames = (info.protections as any[]).map((p: any) => p.name).join('、');
     const confirmed = await askConfirm(
-      `检测到该游戏支持以下安全防护：\n\n${protNames}\n\n是否立即应用？（遥测屏蔽需要管理员权限）`,
+      `检测到该游戏支持以下安全防护：\n\n${protNames}\n\n是否立即应用？`,
       { title: '游戏安全防护', kind: 'warning', okLabel: '应用防护', cancelLabel: '跳过' }
     );
     if (confirmed) {
@@ -379,7 +385,7 @@ const applyProtectionAfterDownload = async () => {
         const status = await checkGameProtectionStatus(preset, gameFolder.value || undefined);
         const missing = Array.isArray(status?.missing) && status.missing.length > 0
           ? status.missing.join('\n')
-          : (status?.telemetry?.unblocked?.join('\n') || '未知');
+          : '未知';
         await showMessage(
           `防护未完全生效，仍有以下问题：\n${missing}`,
           { title: '防护部分完成', kind: 'warning' }
@@ -400,14 +406,20 @@ const disableProtection = async () => {
     isProtectionBusy.value = true;
     const preset = getProtectionPreset();
     const yes = await askConfirm(
-      '禁用防护会恢复遥测服务器访问并增加账号风险，确认继续？',
+      '禁用防护会恢复渠道参数为原始值并可能增加账号风险，确认继续？',
       { title: '禁用防护', kind: 'warning', okLabel: '确认禁用', cancelLabel: '取消' }
     );
     if (!yes) return;
 
-    await restoreTelemetry(preset);
+    const result = await restoreTelemetry(preset, gameFolder.value || undefined);
     await refreshProtectionStatus();
-    await showMessage('已禁用防护（已恢复 hosts 屏蔽项）', { title: '已禁用', kind: 'info' });
+    const channelRestored = result?.channel?.restored;
+    if (channelRestored === false) {
+      const reason = result?.channel?.reason || '未找到可恢复的原始值';
+      await showMessage(`防护已禁用，但渠道参数未恢复：${reason}`, { title: '部分完成', kind: 'warning' });
+    } else {
+      await showMessage('已禁用防护（已恢复原始渠道参数）', { title: '已禁用', kind: 'info' });
+    }
   } catch (e) {
     console.warn('[防护] 禁用失败:', e);
     await showMessage(`禁用防护失败: ${e}`, { title: '错误', kind: 'error' });

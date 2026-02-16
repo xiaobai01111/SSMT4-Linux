@@ -22,6 +22,17 @@ pub struct PresetAudioLanguage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ChannelProtectionConfig {
+    /// 相对于游戏根目录的 KRSDKConfig 路径
+    pub config_relative_path: String,
+    /// 需要切换的 JSON 字段名（例如 KR_ChannelId）
+    pub channel_key: String,
+    /// 启用防护时写入的目标值
+    pub protected_value: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GamePreset {
     /// Canonical 预设 ID（如 "HonkaiStarRail", "WutheringWaves"）
     pub id: String,
@@ -34,6 +45,9 @@ pub struct GamePreset {
     /// 是否支持下载/管理
     #[serde(default = "default_true")]
     pub supported: bool,
+    /// 启动前是否强制要求“防护已启用”
+    #[serde(default = "default_true")]
+    pub require_protection_before_launch: bool,
     /// 游戏默认安装子目录名
     #[serde(default)]
     pub default_folder: String,
@@ -58,6 +72,30 @@ pub struct GamePreset {
     /// 需要删除的遥测 DLL 路径列表（相对于游戏根目录）
     #[serde(default)]
     pub telemetry_dlls: Vec<String>,
+    /// 基于渠道配置文件的防护（例如 KR_ChannelId 切换）
+    #[serde(default)]
+    pub channel_protection: Option<ChannelProtectionConfig>,
+    /// 游戏启动时注入的默认环境变量（可被用户自定义 env 覆盖）
+    #[serde(default)]
+    pub env_defaults: HashMap<String, String>,
+    /// 是否默认启用 umu-run
+    #[serde(default)]
+    pub default_umu_run: bool,
+    /// umu-run 的 GAMEID（例如 "umu-3513350"）
+    #[serde(default)]
+    pub umu_game_id: Option<String>,
+    /// umu-run 的 STORE（例如 "none", "egs"）
+    #[serde(default)]
+    pub umu_store: Option<String>,
+    /// 强制走直连 Proton 启动链（忽略 umu-run）
+    #[serde(default)]
+    pub force_direct_proton: bool,
+    /// 强制禁用 pressure-vessel（更接近直连 Proton 启动行为）
+    #[serde(default)]
+    pub force_disable_pressure_vessel: bool,
+    /// 默认开启网络诊断日志（Proton/Wine 网络相关）
+    #[serde(default)]
+    pub enable_network_log_by_default: bool,
 }
 
 fn default_true() -> bool {
@@ -117,6 +155,22 @@ fn normalize_preset(mut preset: GamePreset) -> GamePreset {
     }
 
     preset.default_folder = normalize_default_folder(&canonical, &preset.default_folder);
+    if let Some(id) = preset.umu_game_id.as_mut() {
+        let trimmed = id.trim();
+        if trimmed.is_empty() {
+            preset.umu_game_id = None;
+        } else if trimmed != id {
+            *id = trimmed.to_string();
+        }
+    }
+    if let Some(store) = preset.umu_store.as_mut() {
+        let trimmed = store.trim();
+        if trimmed.is_empty() {
+            preset.umu_store = None;
+        } else if trimmed != store {
+            *store = trimmed.to_string();
+        }
+    }
     preset.id = canonical;
     preset
 }
