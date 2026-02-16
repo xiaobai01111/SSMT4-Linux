@@ -15,6 +15,7 @@ dependencies = [
  "notify",
  "once_cell",
  "percent-encoding",
+ "regex",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",

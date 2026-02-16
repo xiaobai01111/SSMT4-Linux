@@ -81,6 +81,10 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         commands::wine_manager::open_log_folder,
         commands::wine_manager::list_prefix_templates,
         commands::wine_manager::save_prefix_template,
+        commands::wine_manager::get_proton_catalog,
+        commands::wine_manager::save_proton_catalog,
+        commands::wine_manager::scan_local_proton_grouped,
+        commands::wine_manager::fetch_remote_proton_grouped,
         // Wine/Proton 远程版本管理
         commands::wine_manager::fetch_remote_proton,
         commands::wine_manager::download_proton,

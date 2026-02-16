@@ -20,8 +20,14 @@ pub fn run_resource_executable(
     }
 
     // 安全校验：仅允许白名单内的可执行文件
-    if !ALLOWED_RESOURCE_EXECUTABLES.iter().any(|&allowed| allowed == resource_name) {
-        return Err(format!("拒绝执行：'{}' 不在允许的资源列表中", resource_name));
+    if !ALLOWED_RESOURCE_EXECUTABLES
+        .iter()
+        .any(|&allowed| allowed == resource_name)
+    {
+        return Err(format!(
+            "拒绝执行：'{}' 不在允许的资源列表中",
+            resource_name
+        ));
     }
 
     let resource_path = app

@@ -1,0 +1,93 @@
+   0.156133397s  INFO prepare_target{force=false package_id=SSMT4-linux v0.0.5-beta (/home/xiaobai/data/ssmt4/src-tauri) target="ssmt4_lib"}: cargo::core::compiler::fingerprint: dependency on `build_script_build` is newer than we are 1771232353.047618834s > 1771152940.885286960s "/home/xiaobai/data/ssmt4/src-tauri"
+   0.156455944s  INFO prepare_target{force=false package_id=SSMT4-linux v0.0.5-beta (/home/xiaobai/data/ssmt4/src-tauri) target="ssmt4_lib"}: cargo::core::compiler::fingerprint: fingerprint dirty for SSMT4-linux v0.0.5-beta (/home/xiaobai/data/ssmt4/src-tauri)/Check { test: false }/TargetInner { ..: lib_target("ssmt4_lib", ["cdylib", "rlib"], "/home/xiaobai/data/ssmt4/src-tauri/src/lib.rs", Edition2021) }
+   0.156466271s  INFO prepare_target{force=false package_id=SSMT4-linux v0.0.5-beta (/home/xiaobai/data/ssmt4/src-tauri) target="ssmt4_lib"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDependency { name: "build_script_build", dep_mtime: FileTime { seconds: 1771232353, nanos: 47618834 }, max_mtime: FileTime { seconds: 1771152940, nanos: 885286960 } })
+   0.171784155s  INFO prepare_target{force=false package_id=SSMT4-linux v0.0.5-beta (/home/xiaobai/data/ssmt4/src-tauri) target="ssmt4_lib"}: cargo::core::compiler::fingerprint: fingerprint error for SSMT4-linux v0.0.5-beta (/home/xiaobai/data/ssmt4/src-tauri)/Check { test: true }/TargetInner { ..: lib_target("ssmt4_lib", ["cdylib", "rlib"], "/home/xiaobai/data/ssmt4/src-tauri/src/lib.rs", Edition2021) }
+   0.171793310s  INFO prepare_target{force=false package_id=SSMT4-linux v0.0.5-beta (/home/xiaobai/data/ssmt4/src-tauri) target="ssmt4_lib"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/xiaobai/data/ssmt4/src-tauri/target/debug/.fingerprint/SSMT4-linux-4560ba5fa1e32505/test-lib-ssmt4_lib`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: cargo_util::paths::read_bytes
+   1: cargo_util::paths::read
+   2: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   3: cargo::core::compiler::fingerprint::prepare_target
+   4: cargo::core::compiler::compile
+   5: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   6: cargo::ops::cargo_compile::compile_ws
+   7: cargo::ops::cargo_compile::compile_with_exec
+   8: cargo::ops::cargo_compile::compile
+   9: cargo::commands::check::exec
+  10: <cargo::cli::Exec>::exec
+  11: cargo::main
+  12: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  13: std::rt::lang_start::<()>::{closure#0}
+  14: core::ops::function::impls::<impl core::ops::function::FnOnce<A> for &F>::call_once
+             at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/core/src/ops/function.rs:287:21
+  15: std::panicking::catch_unwind::do_call
+             at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/panicking.rs:590:40
+  16: std::panicking::catch_unwind
+             at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/panicking.rs:553:19
+  17: std::panic::catch_unwind
+             at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/panic.rs:359:14
+  18: std::rt::lang_start_internal::{{closure}}
+             at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/rt.rs:175:24
+  19: std::panicking::catch_unwind::do_call
+             at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/panicking.rs:590:40
+  20: std::panicking::catch_unwind
+             at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/panicking.rs:553:19
+  21: std::panic::catch_unwind
+             at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/panic.rs:359:14
+  22: std::rt::lang_start_internal
+             at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/rt.rs:171:5
+  23: main
+  24: <unknown>
+  25: __libc_start_main
+  26: <unknown>
+   0.193803237s  INFO prepare_target{force=false package_id=SSMT4-linux v0.0.5-beta (/home/xiaobai/data/ssmt4/src-tauri) target="SSMT4-linux"}: cargo::core::compiler::fingerprint: fingerprint dirty for SSMT4-linux v0.0.5-beta (/home/xiaobai/data/ssmt4/src-tauri)/Check { test: false }/TargetInner { name: "SSMT4-linux", doc: true, ..: with_path("/home/xiaobai/data/ssmt4/src-tauri/src/main.rs", Edition2021) }
+   0.193826645s  INFO prepare_target{force=false package_id=SSMT4-linux v0.0.5-beta (/home/xiaobai/data/ssmt4/src-tauri) target="SSMT4-linux"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "ssmt4_lib" })
+   0.195803165s  INFO prepare_target{force=false package_id=SSMT4-linux v0.0.5-beta (/home/xiaobai/data/ssmt4/src-tauri) target="SSMT4-linux"}: cargo::core::compiler::fingerprint: fingerprint error for SSMT4-linux v0.0.5-beta (/home/xiaobai/data/ssmt4/src-tauri)/Check { test: true }/TargetInner { name: "SSMT4-linux", doc: true, ..: with_path("/home/xiaobai/data/ssmt4/src-tauri/src/main.rs", Edition2021) }
+   0.195846383s  INFO prepare_target{force=false package_id=SSMT4-linux v0.0.5-beta (/home/xiaobai/data/ssmt4/src-tauri) target="SSMT4-linux"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/xiaobai/data/ssmt4/src-tauri/target/debug/.fingerprint/SSMT4-linux-dcd80249801e2a38/test-bin-SSMT4-linux`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: cargo_util::paths::read_bytes
+   1: cargo_util::paths::read
+   2: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   3: cargo::core::compiler::fingerprint::prepare_target
+   4: cargo::core::compiler::compile
+   5: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   6: cargo::ops::cargo_compile::compile_ws
+   7: cargo::ops::cargo_compile::compile_with_exec
+   8: cargo::ops::cargo_compile::compile
+   9: cargo::commands::check::exec
+  10: <cargo::cli::Exec>::exec
+  11: cargo::main
+  12: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  13: std::rt::lang_start::<()>::{closure#0}
+  14: core::ops::function::impls::<impl core::ops::function::FnOnce<A> for &F>::call_once
+             at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/core/src/ops/function.rs:287:21
+  15: std::panicking::catch_unwind::do_call
+             at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/panicking.rs:590:40
+  16: std::panicking::catch_unwind
+             at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/panicking.rs:553:19
+  17: std::panic::catch_unwind
+             at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/panic.rs:359:14
+  18: std::rt::lang_start_internal::{{closure}}
+             at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/rt.rs:175:24
+  19: std::panicking::catch_unwind::do_call
+             at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/panicking.rs:590:40
+  20: std::panicking::catch_unwind
+             at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/panicking.rs:553:19
+  21: std::panic::catch_unwind
+             at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/panic.rs:359:14
+  22: std::rt::lang_start_internal
+             at /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234/library/std/src/rt.rs:171:5
+  23: main
+  24: <unknown>
+  25: __libc_start_main
+  26: <unknown>
+    Checking SSMT4-linux v0.0.5-beta (/home/xiaobai/data/ssmt4/src-tauri)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.80s

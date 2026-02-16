@@ -27,8 +27,7 @@ pub fn load_ini(path: &Path) -> Result<IniData, String> {
 
         if trimmed.starts_with('[') && trimmed.ends_with(']') {
             current_section = trimmed[1..trimmed.len() - 1].trim().to_string();
-            data.entry(current_section.clone())
-                .or_default();
+            data.entry(current_section.clone()).or_default();
             continue;
         }
 

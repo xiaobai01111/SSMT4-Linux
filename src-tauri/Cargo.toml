@@ -43,3 +43,4 @@ once_cell = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 percent-encoding = "2"
 http = "1"
+regex = "1"

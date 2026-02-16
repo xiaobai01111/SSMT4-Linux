@@ -60,7 +60,11 @@ pub fn scan_local_dxvk_versions() -> Vec<DxvkLocalVersion> {
             if !path.is_dir() {
                 continue;
             }
-            let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
             // 目录名格式: dxvk-{version}
             if let Some(ver) = name.strip_prefix("dxvk-") {
                 let has_x64 = path.join("x64").exists();
@@ -78,7 +82,11 @@ pub fn scan_local_dxvk_versions() -> Vec<DxvkLocalVersion> {
     if let Ok(entries) = std::fs::read_dir(&cache_dir) {
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
-            let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
             if name.starts_with("dxvk-") && name.ends_with(".tar.gz") {
                 let ver = name
                     .strip_prefix("dxvk-")
@@ -143,7 +151,10 @@ pub fn detect_installed_dxvk(prefix_path: &Path) -> DxvkInstalledStatus {
                 if v.is_some() {
                     info!("[DXVK] 版本来源: 文件大小比对 → {:?}", v);
                 } else {
-                    warn!("[DXVK] 三层版本检测均失败（标记文件/二进制搜索/大小比对）prefix={}", prefix_path.display());
+                    warn!(
+                        "[DXVK] 三层版本检测均失败（标记文件/二进制搜索/大小比对）prefix={}",
+                        prefix_path.display()
+                    );
                 }
                 v
             }
@@ -328,20 +339,14 @@ pub async fn fetch_dxvk_releases(max_count: usize) -> Result<Vec<DxvkRemoteVersi
         let assets = release.get("assets").and_then(|v| v.as_array());
         if let Some(assets) = assets {
             for asset in assets {
-                let name = asset
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let name = asset.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 if name.ends_with(".tar.gz") && name.contains("dxvk") {
                     let download_url = asset
                         .get("browser_download_url")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    let file_size = asset
-                        .get("size")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
+                    let file_size = asset.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
 
                     result.push(DxvkRemoteVersion {
                         version: version.clone(),
@@ -440,15 +445,11 @@ pub async fn install_dxvk(prefix_path: &Path, dxvk_version: &str) -> Result<Stri
     let x32_dir = extract_dir.join("x32");
 
     if !x64_dir.exists() {
-        return Err(format!(
-            "DXVK 解压目录缺少 x64/: {}",
-            extract_dir.display()
-        ));
+        return Err(format!("DXVK 解压目录缺少 x64/: {}", extract_dir.display()));
     }
 
     // 目标目录不存在时自动创建（prefix 可能尚未被 Wine 初始化）
-    std::fs::create_dir_all(&system32)
-        .map_err(|e| format!("创建 system32 目录失败: {}", e))?;
+    std::fs::create_dir_all(&system32).map_err(|e| format!("创建 system32 目录失败: {}", e))?;
 
     let dlls = ["d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll"];
     let mut copied: usize = 0;
@@ -494,7 +495,10 @@ pub async fn install_dxvk(prefix_path: &Path, dxvk_version: &str) -> Result<Stri
         prefix_path.display(),
         copied
     );
-    Ok(format!("DXVK {} 安装完成（{} 个 DLL）", dxvk_version, copied))
+    Ok(format!(
+        "DXVK {} 安装完成（{} 个 DLL）",
+        dxvk_version, copied
+    ))
 }
 
 pub fn uninstall_dxvk(prefix_path: &Path) -> Result<String, String> {
@@ -674,11 +678,14 @@ async fn download_tool(url: &str, dest: &Path) -> Result<(), String> {
                 header_buf[header_filled..header_filled + need].copy_from_slice(&chunk[..need]);
                 header_filled += need;
             }
-            file.write_all(&chunk).await
+            file.write_all(&chunk)
+                .await
                 .map_err(|e| format!("Failed to write chunk: {}", e))?;
             downloaded += chunk.len() as u64;
         }
-        file.flush().await.map_err(|e| format!("Failed to flush file: {}", e))?;
+        file.flush()
+            .await
+            .map_err(|e| format!("Failed to flush file: {}", e))?;
     }
 
     // 完整性校验：最小大小（防止空文件/截断/HTML 错误页面）
@@ -694,7 +701,7 @@ async fn download_tool(url: &str, dest: &Path) -> Result<(), String> {
     // 归档格式魔数校验（tar.gz/tar.xz/zip）
     let valid_archive = (header_filled >= 2 && header_buf[..2] == [0x1F, 0x8B])        // gzip
         || (header_filled >= 6 && header_buf[..6] == [0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00]) // xz
-        || (header_filled >= 4 && header_buf[..4] == [0x50, 0x4B, 0x03, 0x04]);         // zip
+        || (header_filled >= 4 && header_buf[..4] == [0x50, 0x4B, 0x03, 0x04]); // zip
     if !valid_archive {
         tokio::fs::remove_file(dest).await.ok();
         return Err(format!(

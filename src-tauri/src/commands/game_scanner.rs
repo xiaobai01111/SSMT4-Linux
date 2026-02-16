@@ -70,7 +70,9 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
                 .and_then(|v| v.get("LogicName").or_else(|| v.get("GamePreset")))
                 .and_then(|v| v.as_str())
                 .map(crate::configs::game_identity::to_canonical_or_keep)
-                .unwrap_or_else(|| crate::configs::game_identity::to_canonical_or_keep(&folder_name));
+                .unwrap_or_else(|| {
+                    crate::configs::game_identity::to_canonical_or_keep(&folder_name)
+                });
 
             all_dir_names.insert(game_id.clone());
 

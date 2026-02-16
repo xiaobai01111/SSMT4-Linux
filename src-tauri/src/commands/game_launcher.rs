@@ -126,7 +126,10 @@ pub async fn start_game(
             cfg
         }
         Err(e) => {
-            warn!("加载 prefix 配置失败 ({}), 将创建默认配置——用户设置可能丢失!", e);
+            warn!(
+                "加载 prefix 配置失败 ({}), 将创建默认配置——用户设置可能丢失!",
+                e
+            );
             use crate::configs::wine_config::PrefixConfig;
             let cfg = PrefixConfig {
                 wine_version_id: wine_version_id.clone(),
@@ -171,7 +174,11 @@ pub async fn start_game(
     // STEAM_COMPAT_TOOL_PATHS：Proton/protonfixes 需要此变量定位自身目录
     env.insert(
         "STEAM_COMPAT_TOOL_PATHS".to_string(),
-        proton_path.parent().unwrap_or(proton_path).to_string_lossy().to_string(),
+        proton_path
+            .parent()
+            .unwrap_or(proton_path)
+            .to_string_lossy()
+            .to_string(),
     );
 
     if let Some(steam_root) = detector::get_steam_root_path() {
@@ -239,10 +246,7 @@ pub async fn start_game(
         env.insert(key.clone(), value.clone());
     }
 
-    if env
-        .get("PROTON_NO_ESYNC")
-        .is_some_and(|v| v.trim() == "1")
-    {
+    if env.get("PROTON_NO_ESYNC").is_some_and(|v| v.trim() == "1") {
         warn!("检测到 PROTON_NO_ESYNC=1：该设置可能导致部分游戏稳定性或联网异常，建议关闭后重试");
     }
 
@@ -260,21 +264,39 @@ pub async fn start_game(
     if let Some(config_json) = db::get_game_config(&game_name) {
         if let Ok(config_data) = serde_json::from_str::<Value>(&config_json) {
             // GPU 选择
-            if let Some(gpu_index) = config_data.pointer("/other/gpuIndex").and_then(|v| v.as_i64()) {
+            if let Some(gpu_index) = config_data
+                .pointer("/other/gpuIndex")
+                .and_then(|v| v.as_i64())
+            {
                 if gpu_index >= 0 {
                     let gpus = crate::wine::display::enumerate_gpus();
                     if let Some(gpu) = gpus.iter().find(|g| g.index == gpu_index as usize) {
                         if gpu.driver == "nvidia" {
                             // OpenGL PRIME offload
                             env.insert("__NV_PRIME_RENDER_OFFLOAD".to_string(), "1".to_string());
-                            env.insert("__NV_PRIME_RENDER_OFFLOAD_PROVIDER".to_string(), format!("NVIDIA-G{}", gpu.index));
-                            env.insert("__GLX_VENDOR_LIBRARY_NAME".to_string(), "nvidia".to_string());
-                            env.insert("__VK_LAYER_NV_optimus".to_string(), "NVIDIA_only".to_string());
+                            env.insert(
+                                "__NV_PRIME_RENDER_OFFLOAD_PROVIDER".to_string(),
+                                format!("NVIDIA-G{}", gpu.index),
+                            );
+                            env.insert(
+                                "__GLX_VENDOR_LIBRARY_NAME".to_string(),
+                                "nvidia".to_string(),
+                            );
+                            env.insert(
+                                "__VK_LAYER_NV_optimus".to_string(),
+                                "NVIDIA_only".to_string(),
+                            );
                             // Vulkan: 优先选择 NVIDIA（不排除其他 ICD，避免 pressure-vessel 内失败）
-                            env.insert("VK_LOADER_DRIVERS_SELECT".to_string(), "nvidia*".to_string());
+                            env.insert(
+                                "VK_LOADER_DRIVERS_SELECT".to_string(),
+                                "nvidia*".to_string(),
+                            );
                             // DXVK/VKD3D: 按 GPU 名称过滤，确保选对设备
                             env.insert("DXVK_FILTER_DEVICE_NAME".to_string(), "NVIDIA".to_string());
-                            info!("GPU 选择: NVIDIA GPU {} ({}) [Vulkan+OpenGL]", gpu.index, gpu.name);
+                            info!(
+                                "GPU 选择: NVIDIA GPU {} ({}) [Vulkan+OpenGL]",
+                                gpu.index, gpu.name
+                            );
                         } else {
                             env.insert("DRI_PRIME".to_string(), gpu.index.to_string());
                             info!("GPU 选择: DRI_PRIME={} ({})", gpu.index, gpu.name);
@@ -288,7 +310,10 @@ pub async fn start_game(
             }
 
             // 语言设置
-            if let Some(lang) = config_data.pointer("/other/gameLang").and_then(|v| v.as_str()) {
+            if let Some(lang) = config_data
+                .pointer("/other/gameLang")
+                .and_then(|v| v.as_str())
+            {
                 if !lang.is_empty() {
                     env.insert("LANG".to_string(), format!("{}.UTF-8", lang));
                     env.insert("LC_ALL".to_string(), format!("{}.UTF-8", lang));
@@ -343,7 +368,12 @@ pub async fn start_game(
         if settings.use_umu_run {
             warn!("当前预设要求强制直连 Proton，已忽略 umu-run 设置");
         }
-        build_proton_base_command(effective_use_pressure_vessel, proton_path, &run_exe, &extra_args)
+        build_proton_base_command(
+            effective_use_pressure_vessel,
+            proton_path,
+            &run_exe,
+            &extra_args,
+        )
     } else if settings.use_umu_run {
         if let Some(umu_run) = find_umu_run_binary() {
             apply_umu_env_defaults(&game_preset, proton_path, settings, preset_meta, &mut env);
@@ -359,10 +389,20 @@ pub async fn start_game(
             (umu_run, args)
         } else {
             warn!("已启用 umu-run，但系统未找到 umu-run，回退到当前 Proton 启动链");
-            build_proton_base_command(effective_use_pressure_vessel, proton_path, &run_exe, &extra_args)
+            build_proton_base_command(
+                effective_use_pressure_vessel,
+                proton_path,
+                &run_exe,
+                &extra_args,
+            )
         }
     } else {
-        build_proton_base_command(effective_use_pressure_vessel, proton_path, &run_exe, &extra_args)
+        build_proton_base_command(
+            effective_use_pressure_vessel,
+            proton_path,
+            &run_exe,
+            &extra_args,
+        )
     };
 
     let mut cmd = if settings.sandbox_enabled && !use_umu_runtime {
@@ -407,11 +447,15 @@ pub async fn start_game(
 
     // 通知前端游戏已启动
     let game_name_clone = game_name.clone();
-    app.emit("game-lifecycle", serde_json::json!({
-        "event": "started",
-        "game": game_name_clone,
-        "pid": pid
-    })).ok();
+    app.emit(
+        "game-lifecycle",
+        serde_json::json!({
+            "event": "started",
+            "game": game_name_clone,
+            "pid": pid
+        }),
+    )
+    .ok();
 
     // 后台等待进程退出，退出后通知前端（仅 wait，不累积输出）
     let app_clone = app.clone();
@@ -425,10 +469,15 @@ pub async fn start_game(
             }
         }
         // 通知前端游戏已退出
-    app_clone.emit("game-lifecycle", serde_json::json!({
-        "event": "exited",
-        "game": game_name
-    })).ok();
+        app_clone
+            .emit(
+                "game-lifecycle",
+                serde_json::json!({
+                    "event": "exited",
+                    "game": game_name
+                }),
+            )
+            .ok();
     });
 
     Ok(format!("Game launched (PID: {})", pid))
@@ -569,7 +618,11 @@ fn build_proton_base_command(
     build_direct_proton_command_spec_with_args(proton_path, run_exe, extra_args)
 }
 
-fn build_direct_proton_command_spec_with_args(proton_path: &Path, run_exe: &Path, extra_args: &[String]) -> (PathBuf, Vec<String>) {
+fn build_direct_proton_command_spec_with_args(
+    proton_path: &Path,
+    run_exe: &Path,
+    extra_args: &[String],
+) -> (PathBuf, Vec<String>) {
     info!(
         "Launching with direct proton: {} waitforexitandrun {} {:?}",
         proton_path.display(),

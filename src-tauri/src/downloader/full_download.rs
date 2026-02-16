@@ -1,4 +1,4 @@
-use crate::downloader::cdn::{LauncherInfo, ResourceIndex, ResourceFile};
+use crate::downloader::cdn::{LauncherInfo, ResourceFile, ResourceIndex};
 use crate::downloader::progress::{DownloadProgress, SpeedTracker};
 use crate::utils::file_manager::safe_join_remote;
 use futures_util::StreamExt;
@@ -61,7 +61,16 @@ pub async fn download_game(
 
     if to_download.is_empty() {
         info!("所有文件已存在，无需下载");
-        emit_progress(&app, cached_size, total_size, total_count, total_count, "全部完成", 0, 0);
+        emit_progress(
+            &app,
+            cached_size,
+            total_size,
+            total_count,
+            total_count,
+            "全部完成",
+            0,
+            0,
+        );
         return Ok(());
     }
 
@@ -97,8 +106,11 @@ pub async fn download_game(
                 }
                 let remaining = total_size.saturating_sub(current);
                 emit_progress(
-                    &app, current, total_size,
-                    total_count, done.load(Ordering::Relaxed),
+                    &app,
+                    current,
+                    total_size,
+                    total_count,
+                    done.load(Ordering::Relaxed),
                     &format!("并行下载中 ({}路)", MAX_CONCURRENT),
                     tracker.speed_bps(),
                     tracker.eta_seconds(remaining),
@@ -163,7 +175,16 @@ pub async fn download_game(
         return Err(e);
     }
 
-    emit_progress(&app, total_size, total_size, total_count, total_count, "下载完成", 0, 0);
+    emit_progress(
+        &app,
+        total_size,
+        total_size,
+        total_count,
+        total_count,
+        "下载完成",
+        0,
+        0,
+    );
     info!("并行下载完成: {} 个文件", total_count);
     Ok(())
 }
@@ -183,14 +204,10 @@ async fn download_file_parallel(
             .map_err(|e| format!("创建目录失败: {}", e))?;
     }
 
-    let temp_path = dest.with_extension(
-        format!(
-            "{}.temp",
-            dest.extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("dl")
-        ),
-    );
+    let temp_path = dest.with_extension(format!(
+        "{}.temp",
+        dest.extension().and_then(|e| e.to_str()).unwrap_or("dl")
+    ));
 
     // 断点续传检查
     let mut downloaded_bytes: u64 = 0;
@@ -281,7 +298,9 @@ async fn download_file_parallel(
         if actual_size != expected_size {
             warn!(
                 "文件大小不匹配 {}: 期望 {} 实际 {}",
-                dest.display(), expected_size, actual_size
+                dest.display(),
+                expected_size,
+                actual_size
             );
         }
     }

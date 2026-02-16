@@ -59,7 +59,11 @@ pub async fn update_game_full(
             finished_count += 1;
 
             let elapsed_secs = start_time.elapsed().as_secs_f64();
-            let speed = if elapsed_secs > 1.0 { (finished_size as f64 / elapsed_secs) as u64 } else { 0 };
+            let speed = if elapsed_secs > 1.0 {
+                (finished_size as f64 / elapsed_secs) as u64
+            } else {
+                0
+            };
             let remaining = total_size.saturating_sub(finished_size);
             let eta = if speed > 0 { remaining / speed } else { 0 };
             let progress = DownloadProgress {
@@ -93,7 +97,11 @@ pub async fn update_game_full(
         finished_count += 1;
 
         let elapsed_secs = start_time.elapsed().as_secs_f64();
-        let speed = if elapsed_secs > 1.0 { (finished_size as f64 / elapsed_secs) as u64 } else { 0 };
+        let speed = if elapsed_secs > 1.0 {
+            (finished_size as f64 / elapsed_secs) as u64
+        } else {
+            0
+        };
         let remaining = total_size.saturating_sub(finished_size);
         let eta = if speed > 0 { remaining / speed } else { 0 };
         let progress = DownloadProgress {
@@ -338,15 +346,15 @@ async fn ensure_hpatchz() -> Result<PathBuf, String> {
 
 /// 验证 hpatchz 二进制完整性
 async fn verify_hpatchz_integrity(path: &Path) -> Result<(), String> {
-    let meta = std::fs::metadata(path)
-        .map_err(|e| format!("无法读取 hpatchz 元数据: {}", e))?;
+    let meta = std::fs::metadata(path).map_err(|e| format!("无法读取 hpatchz 元数据: {}", e))?;
 
     // 1. 大小校验
     if meta.len() < HPATCHZ_MIN_SIZE {
         std::fs::remove_file(path).ok();
         return Err(format!(
             "hpatchz 文件异常（大小 {} 字节，低于最小阈值 {}），已删除",
-            meta.len(), HPATCHZ_MIN_SIZE
+            meta.len(),
+            HPATCHZ_MIN_SIZE
         ));
     }
 
@@ -372,8 +380,7 @@ async fn verify_hpatchz_integrity(path: &Path) -> Result<(), String> {
     // 3. ELF 魔数校验（Linux 可执行文件基本验证）
     #[cfg(unix)]
     {
-        let header = std::fs::read(path)
-            .map_err(|e| format!("无法读取 hpatchz: {}", e))?;
+        let header = std::fs::read(path).map_err(|e| format!("无法读取 hpatchz: {}", e))?;
         if header.len() < 4 || &header[..4] != b"\x7fELF" {
             std::fs::remove_file(path).ok();
             return Err("hpatchz 不是有效的 ELF 可执行文件，已删除".to_string());

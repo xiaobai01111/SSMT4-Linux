@@ -162,7 +162,10 @@ pub fn enumerate_gpus() -> Vec<GpuDevice> {
             current_pci.clear();
 
             let lower = trimmed.to_lowercase();
-            if lower.contains("vga") || lower.contains("3d controller") || lower.contains("display controller") {
+            if lower.contains("vga")
+                || lower.contains("3d controller")
+                || lower.contains("display controller")
+            {
                 is_vga = true;
                 // 提取 PCI 地址（行首到第一个空格）
                 if let Some(space_pos) = trimmed.find(' ') {

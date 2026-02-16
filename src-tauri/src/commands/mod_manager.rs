@@ -66,7 +66,10 @@ fn resolve_game_path(app: &AppHandle, game_name: &str) -> Result<PathBuf, String
     let config_dirs: Vec<PathBuf> = {
         let mut dirs = Vec::new();
         // 用户可写目录优先
-        if let Ok(p) = crate::utils::file_manager::safe_join(&crate::utils::file_manager::get_global_games_dir(), &game_name) {
+        if let Ok(p) = crate::utils::file_manager::safe_join(
+            &crate::utils::file_manager::get_global_games_dir(),
+            &game_name,
+        ) {
             dirs.push(p);
         }
         for alias in crate::configs::game_identity::legacy_aliases_for_canonical(&game_name) {
@@ -640,7 +643,9 @@ fn install_from_zip(archive_path: &Path, target_dir: &Path) -> Result<(), String
         zip::ZipArchive::new(file).map_err(|e| format!("Failed to read zip: {}", e))?;
 
     std::fs::create_dir_all(target_dir).ok();
-    let canonical_root = target_dir.canonicalize().unwrap_or_else(|_| target_dir.to_path_buf());
+    let canonical_root = target_dir
+        .canonicalize()
+        .unwrap_or_else(|_| target_dir.to_path_buf());
 
     for i in 0..archive.len() {
         let mut file = archive

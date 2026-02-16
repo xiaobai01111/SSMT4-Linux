@@ -1,8 +1,7 @@
 use std::path::PathBuf;
 use tracing::info;
 
-const JADEITE_API_URL: &str =
-    "https://codeberg.org/api/v1/repos/mkrsym1/jadeite/releases/latest";
+const JADEITE_API_URL: &str = "https://codeberg.org/api/v1/repos/mkrsym1/jadeite/releases/latest";
 
 /// 获取 jadeite 最新版本信息
 #[tauri::command]
@@ -31,8 +30,7 @@ pub async fn get_jadeite_status(game_name: String) -> Result<serde_json::Value, 
 pub async fn install_jadeite(_app: tauri::AppHandle, game_name: String) -> Result<String, String> {
     let game_name = crate::configs::game_identity::to_canonical_or_keep(&game_name);
     let patch_dir = resolve_patch_dir(&game_name)?;
-    std::fs::create_dir_all(&patch_dir)
-        .map_err(|e| format!("创建 patch 目录失败: {}", e))?;
+    std::fs::create_dir_all(&patch_dir).map_err(|e| format!("创建 patch 目录失败: {}", e))?;
 
     // 获取最新 release 信息
     info!("[jadeite] 正在获取最新版本...");
@@ -82,19 +80,22 @@ pub async fn install_jadeite(_app: tauri::AppHandle, game_name: String) -> Resul
         let mut total: u64 = 0;
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| format!("读取 jadeite 数据流失败: {}", e))?;
-            file.write_all(&chunk).await
+            file.write_all(&chunk)
+                .await
                 .map_err(|e| format!("写入 jadeite.zip 失败: {}", e))?;
             total += chunk.len() as u64;
         }
-        file.flush().await.map_err(|e| format!("刷新 jadeite.zip 失败: {}", e))?;
+        file.flush()
+            .await
+            .map_err(|e| format!("刷新 jadeite.zip 失败: {}", e))?;
         info!("[jadeite] 下载完成 ({} bytes)，正在解压...", total);
     }
 
     // 解压 zip
-    let file = std::fs::File::open(&zip_path)
-        .map_err(|e| format!("打开 jadeite.zip 失败: {}", e))?;
-    let mut archive = zip::ZipArchive::new(file)
-        .map_err(|e| format!("解析 jadeite.zip 失败: {}", e))?;
+    let file =
+        std::fs::File::open(&zip_path).map_err(|e| format!("打开 jadeite.zip 失败: {}", e))?;
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|e| format!("解析 jadeite.zip 失败: {}", e))?;
 
     for i in 0..archive.len() {
         let mut entry = archive
@@ -114,8 +115,7 @@ pub async fn install_jadeite(_app: tauri::AppHandle, game_name: String) -> Resul
             }
             let mut outfile = std::fs::File::create(&out_path)
                 .map_err(|e| format!("创建文件失败 {}: {}", out_path.display(), e))?;
-            std::io::copy(&mut entry, &mut outfile)
-                .map_err(|e| format!("解压文件失败: {}", e))?;
+            std::io::copy(&mut entry, &mut outfile).map_err(|e| format!("解压文件失败: {}", e))?;
         }
     }
 
@@ -140,11 +140,12 @@ pub fn resolve_patch_dir(game_name: &str) -> Result<PathBuf, String> {
     let game_name = crate::configs::game_identity::to_canonical_or_keep(game_name);
     let config_json = crate::configs::database::get_game_config(&game_name)
         .ok_or_else(|| format!("未找到游戏 {} 的配置", game_name))?;
-    let data: serde_json::Value = serde_json::from_str(&config_json)
-        .map_err(|e| format!("解析游戏配置失败: {}", e))?;
+    let data: serde_json::Value =
+        serde_json::from_str(&config_json).map_err(|e| format!("解析游戏配置失败: {}", e))?;
 
     // 优先：gameFolder 的父目录
-    if let Some(game_folder) = data.pointer("/other/gameFolder")
+    if let Some(game_folder) = data
+        .pointer("/other/gameFolder")
         .and_then(|v| v.as_str())
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
@@ -155,7 +156,8 @@ pub fn resolve_patch_dir(game_name: &str) -> Result<PathBuf, String> {
     }
 
     // 回退：gamePath 向上两级（exe → 数据子目录 → 游戏根目录）
-    if let Some(game_path) = data.pointer("/other/gamePath")
+    if let Some(game_path) = data
+        .pointer("/other/gamePath")
         .and_then(|v| v.as_str())
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())

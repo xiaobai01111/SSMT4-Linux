@@ -456,7 +456,11 @@ fn scan_custom_path_inner(
             }
         }
     } else {
-        warn!("Wine 扫描达到最大深度 {}，跳过: {}", SCAN_MAX_DEPTH, path.display());
+        warn!(
+            "Wine 扫描达到最大深度 {}，跳过: {}",
+            SCAN_MAX_DEPTH,
+            path.display()
+        );
     }
     versions
 }
@@ -547,10 +551,28 @@ pub async fn fetch_remote_proton_versions(
 
     // 并发请求所有仓库
     let (ge, wine_ge, kron4ek, dw) = tokio::join!(
-        fetch_github_releases(&client, "GloriousEggroll/proton-ge-custom", "GE-Proton", 15, installed),
-        fetch_github_releases(&client, "GloriousEggroll/wine-ge-custom", "Wine-GE", 10, installed),
+        fetch_github_releases(
+            &client,
+            "GloriousEggroll/proton-ge-custom",
+            "GE-Proton",
+            15,
+            installed
+        ),
+        fetch_github_releases(
+            &client,
+            "GloriousEggroll/wine-ge-custom",
+            "Wine-GE",
+            10,
+            installed
+        ),
         fetch_github_releases(&client, "Kron4ek/Wine-Builds", "Wine-Builds", 10, installed),
-        fetch_github_releases(&client, "AUNaseef/proton-ge-custom", "DW-Proton", 10, installed),
+        fetch_github_releases(
+            &client,
+            "AUNaseef/proton-ge-custom",
+            "DW-Proton",
+            10,
+            installed
+        ),
     );
 
     let mut all = Vec::new();
@@ -617,10 +639,8 @@ async fn fetch_github_releases(
         .await
         .map_err(|e| format!("解析响应失败: {}", e))?;
 
-    let installed_tags: std::collections::HashSet<String> = installed
-        .iter()
-        .map(|v| v.name.clone())
-        .collect();
+    let installed_tags: std::collections::HashSet<String> =
+        installed.iter().map(|v| v.name.clone()).collect();
 
     let mut result = Vec::new();
     for release in &releases {
@@ -638,20 +658,14 @@ async fn fetch_github_releases(
         let assets = release.get("assets").and_then(|v| v.as_array());
         if let Some(assets) = assets {
             for asset in assets {
-                let name = asset
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let name = asset.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 if name.ends_with(".tar.gz") || name.ends_with(".tar.xz") {
                     let download_url = asset
                         .get("browser_download_url")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    let file_size = asset
-                        .get("size")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
+                    let file_size = asset.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
 
                     let is_installed = installed_tags.contains(&tag);
 
@@ -699,8 +713,7 @@ pub async fn download_and_install_proton(
     } else {
         get_proton_install_dir()
     };
-    std::fs::create_dir_all(&install_dir)
-        .map_err(|e| format!("创建目录失败: {}", e))?;
+    std::fs::create_dir_all(&install_dir).map_err(|e| format!("创建目录失败: {}", e))?;
 
     let kind = if is_wine { "Wine" } else { "Proton" };
 
@@ -708,10 +721,7 @@ pub async fn download_and_install_proton(
     let mirrors = [
         download_url.to_string(),
         download_url.replace("github.com", "ghp.ci"),
-        download_url.replace(
-            "github.com",
-            "gh-proxy.com/github.com",
-        ),
+        download_url.replace("github.com", "gh-proxy.com/github.com"),
     ];
 
     let client = reqwest::Client::builder()
@@ -762,12 +772,16 @@ pub async fn download_and_install_proton(
     let emit_progress = |phase: &str, current: u64, total: u64| {
         if let Some(ref a) = app {
             use tauri::Emitter;
-            a.emit("component-download-progress", serde_json::json!({
-                "component": format!("{} {}", kind, tag),
-                "phase": phase,
-                "downloaded": current,
-                "total": total,
-            })).ok();
+            a.emit(
+                "component-download-progress",
+                serde_json::json!({
+                    "component": format!("{} {}", kind, tag),
+                    "phase": phase,
+                    "downloaded": current,
+                    "total": total,
+                }),
+            )
+            .ok();
         }
     };
 
@@ -777,8 +791,7 @@ pub async fn download_and_install_proton(
         "tar.gz"
     };
     let tmp_file = install_dir.join(format!("{}.{}", tag, ext));
-    std::fs::create_dir_all(&install_dir)
-        .map_err(|e| format!("创建目录失败: {}", e))?;
+    std::fs::create_dir_all(&install_dir).map_err(|e| format!("创建目录失败: {}", e))?;
 
     // 流式写入：边下载边写磁盘，内存仅占一个 chunk
     let mut file = tokio::fs::File::create(&tmp_file)
@@ -800,7 +813,8 @@ pub async fn download_and_install_proton(
             header_buf[header_filled..header_filled + need].copy_from_slice(&chunk[..need]);
             header_filled += need;
         }
-        file.write_all(&chunk).await
+        file.write_all(&chunk)
+            .await
             .map_err(|e| format!("写入临时文件失败: {}", e))?;
         downloaded += chunk.len() as u64;
         // 节流：每 200ms 上报一次进度
@@ -811,7 +825,9 @@ pub async fn download_and_install_proton(
     }
     // 确保最终进度上报
     emit_progress("downloading", downloaded, total_size);
-    file.flush().await.map_err(|e| format!("刷新临时文件失败: {}", e))?;
+    file.flush()
+        .await
+        .map_err(|e| format!("刷新临时文件失败: {}", e))?;
     drop(file);
 
     // 下载完整性校验

@@ -233,14 +233,12 @@ async fn download_file_to_disk(
     shared_bytes: Arc<AtomicU64>,
     cancel_token: Arc<Mutex<bool>>,
 ) -> Result<(), String> {
-    let temp_path = dest.with_file_name(
-        format!(
-            "{}.temp",
-            dest.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("download")
-        ),
-    );
+    let temp_path = dest.with_file_name(format!(
+        "{}.temp",
+        dest.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("download")
+    ));
 
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent)
@@ -335,7 +333,9 @@ async fn download_file_to_disk(
 
         let len = chunk.len() as u64;
         #[allow(unused_assignments)]
-        { downloaded_bytes += len; }
+        {
+            downloaded_bytes += len;
+        }
         shared_bytes.fetch_add(len, Ordering::Relaxed);
     }
 
@@ -373,11 +373,30 @@ async fn extract_archive(
     total_segments: usize,
     current_segment: usize,
 ) -> Result<(), String> {
-    let name = archive_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let name = archive_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
     if name.contains(".7z") {
-        extract_7z(archive_path, dest_folder, app, label, total_segments, current_segment).await
+        extract_7z(
+            archive_path,
+            dest_folder,
+            app,
+            label,
+            total_segments,
+            current_segment,
+        )
+        .await
     } else {
-        extract_zip(archive_path, dest_folder, app, label, total_segments, current_segment).await
+        extract_zip(
+            archive_path,
+            dest_folder,
+            app,
+            label,
+            total_segments,
+            current_segment,
+        )
+        .await
     }
 }
 
@@ -410,14 +429,18 @@ async fn extract_7z(
         app.emit("game-install-progress", &progress).ok();
     }
 
-    info!("7z 解压: {} → {}", archive_path.display(), dest_folder.display());
+    info!(
+        "7z 解压: {} → {}",
+        archive_path.display(),
+        dest_folder.display()
+    );
 
     let mut child = tokio::process::Command::new("7z")
         .arg("x")
         .arg(&archive_path)
         .arg(format!("-o{}", dest_folder.display()))
         .arg("-aoa") // 覆盖已有文件
-        .arg("-y")   // 自动确认
+        .arg("-y") // 自动确认
         .arg("-bsp1") // 进度输出到 stderr
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
@@ -446,7 +469,10 @@ async fn extract_7z(
                             if let Some(pos) = trimmed.find('%') {
                                 let before = trimmed[..pos].trim();
                                 // 取 % 前面的最后一段数字
-                                let num_str = before.rsplit(|c: char| !c.is_ascii_digit()).next().unwrap_or("");
+                                let num_str = before
+                                    .rsplit(|c: char| !c.is_ascii_digit())
+                                    .next()
+                                    .unwrap_or("");
                                 if let Ok(pct) = num_str.parse::<u64>() {
                                     if pct <= 100 {
                                         last_pct = pct;
@@ -475,7 +501,9 @@ async fn extract_7z(
         });
     }
 
-    let status = child.wait().await
+    let status = child
+        .wait()
+        .await
         .map_err(|e| format!("等待 7z 进程失败: {}", e))?;
 
     if !status.success() {
@@ -535,7 +563,11 @@ async fn extract_zip(
         let file =
             std::fs::File::open(&zip_path).map_err(|e| format!("打开 zip 文件失败: {}", e))?;
         let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
-        info!("开始解压: {} ({:.1} MB)", zip_path.display(), file_len as f64 / 1048576.0);
+        info!(
+            "开始解压: {} ({:.1} MB)",
+            zip_path.display(),
+            file_len as f64 / 1048576.0
+        );
 
         let mut archive =
             zip::ZipArchive::new(file).map_err(|e| format!("读取 zip 归档失败: {}", e))?;
@@ -582,7 +614,11 @@ async fn extract_zip(
 
             // 每 500ms 上报一次安装进度
             if last_report.elapsed() > std::time::Duration::from_millis(500) {
-                let pct = if entry_count > 0 { (i + 1) * 100 / entry_count } else { 0 };
+                let pct = if entry_count > 0 {
+                    (i + 1) * 100 / entry_count
+                } else {
+                    0
+                };
                 let progress = DownloadProgress {
                     phase: "install".to_string(),
                     total_size: entry_count as u64,
@@ -886,17 +922,25 @@ async fn execute_plan(
         if let Some(cached_md5) = sw.state.checksums.get(&task.filename) {
             if !task.md5.is_empty() && cached_md5.to_lowercase() == task.md5.to_lowercase() {
                 let file_size = if dest.exists() {
-                    tokio::fs::metadata(&dest).await.map(|m| m.len()).unwrap_or(0)
+                    tokio::fs::metadata(&dest)
+                        .await
+                        .map(|m| m.len())
+                        .unwrap_or(0)
                 } else {
                     task.size.parse::<u64>().unwrap_or(0)
                 };
                 cached_size += file_size;
                 info!("{} ({}) 已缓存，跳过下载", task.label, task.filename);
                 emit_progress(
-                    &app, "download", cached_size, total_size,
-                    total_count, i + 1,
+                    &app,
+                    "download",
+                    cached_size,
+                    total_size,
+                    total_count,
+                    i + 1,
                     &format!("已缓存，跳过 {}", task.label),
-                    0, 0,
+                    0,
+                    0,
                 );
                 continue;
             }
@@ -906,7 +950,10 @@ async fn execute_plan(
         if migrate_old_files && !dest.exists() && !task.md5.is_empty() {
             let old_file = game_folder.join(format!("_download_{}.zip", i));
             if old_file.exists() {
-                let file_size = tokio::fs::metadata(&old_file).await.map(|m| m.len()).unwrap_or(0);
+                let file_size = tokio::fs::metadata(&old_file)
+                    .await
+                    .map(|m| m.len())
+                    .unwrap_or(0);
                 needs_hash.push((i, old_file, file_size, true));
                 continue;
             }
@@ -914,7 +961,10 @@ async fn execute_plan(
 
         // 文件已存在但无缓存 → 需要哈希校验
         if dest.exists() && !task.md5.is_empty() {
-            let file_size = tokio::fs::metadata(&dest).await.map(|m| m.len()).unwrap_or(0);
+            let file_size = tokio::fs::metadata(&dest)
+                .await
+                .map(|m| m.len())
+                .unwrap_or(0);
             needs_hash.push((i, dest, file_size, false));
             continue;
         }
@@ -937,18 +987,29 @@ async fn execute_plan(
                     // mtime 缓存命中且 MD5 匹配
                     if is_old {
                         let dest = safe_join(game_folder, &task.filename)?;
-                        info!("迁移旧文件 (mtime缓存) {} → {}", path.display(), dest.display());
+                        info!(
+                            "迁移旧文件 (mtime缓存) {} → {}",
+                            path.display(),
+                            dest.display()
+                        );
                         tokio::fs::rename(&path, &dest).await.ok();
                     }
-                    sw.state.checksums.insert(task.filename.clone(), task.md5.clone());
+                    sw.state
+                        .checksums
+                        .insert(task.filename.clone(), task.md5.clone());
                     sw.mark_dirty();
                     cached_size += file_size;
                     info!("{} mtime缓存命中，跳过哈希", task.filename);
                     emit_progress(
-                        &app, "download", cached_size, total_size,
-                        total_count, idx + 1,
+                        &app,
+                        "download",
+                        cached_size,
+                        total_size,
+                        total_count,
+                        idx + 1,
                         &format!("已缓存，跳过 {}", task.label),
-                        0, 0,
+                        0,
+                        0,
                     );
                     continue;
                 }
@@ -957,70 +1018,83 @@ async fn execute_plan(
         }
 
         if !still_needs_hash.is_empty() {
-        info!("预检：{} 个文件需要 MD5 校验 ({}路并发)", still_needs_hash.len(), HASH_CONCURRENCY);
+            info!(
+                "预检：{} 个文件需要 MD5 校验 ({}路并发)",
+                still_needs_hash.len(),
+                HASH_CONCURRENCY
+            );
 
-        let hash_sem = Arc::new(tokio::sync::Semaphore::new(HASH_CONCURRENCY));
-        let mut hash_handles = Vec::new();
+            let hash_sem = Arc::new(tokio::sync::Semaphore::new(HASH_CONCURRENCY));
+            let mut hash_handles = Vec::new();
 
-        for (idx, path, file_size, is_old) in still_needs_hash {
-            let sem = hash_sem.clone();
-            let cancel = cancel_token.clone();
-            let handle = tokio::spawn(async move {
-                let _permit = sem.acquire().await.map_err(|e| format!("{}", e))?;
-                if *cancel.lock().await {
-                    return Err("Download cancelled".to_string());
-                }
-                let md5 = hash_verify::md5_file(&path).await.unwrap_or_default();
-                Ok::<(usize, PathBuf, u64, bool, String), String>((idx, path, file_size, is_old, md5))
-            });
-            hash_handles.push(handle);
-        }
-
-        for handle in hash_handles {
-            let (idx, path, file_size, is_old, actual_md5) = match handle.await {
-                Ok(Ok(v)) => v,
-                Ok(Err(e)) => {
-                    sw.flush();
-                    return Err(e);
-                }
-                Err(e) => {
-                    sw.flush();
-                    return Err(format!("哈希任务失败: {}", e));
-                }
-            };
-
-            // 写入 mtime 缓存，无论匹配与否都记录（下次可快速判断）
-            let cache_key = make_hash_cache_key(&path, file_size);
-            sw.state.file_hashes.insert(cache_key, actual_md5.clone());
-
-            let task = &all_tasks[idx];
-            if actual_md5.to_lowercase() == task.md5.to_lowercase() {
-                // MD5 匹配
-                if is_old {
-                    let dest = safe_join(game_folder, &task.filename)?;
-                    info!("迁移旧文件 {} → {}", path.display(), dest.display());
-                    tokio::fs::rename(&path, &dest).await.ok();
-                }
-                sw.state.checksums.insert(task.filename.clone(), task.md5.clone());
-                sw.mark_dirty();
-                cached_size += file_size;
-                info!("{} MD5 匹配，补录缓存", task.filename);
-                emit_progress(
-                    &app, "download", cached_size, total_size,
-                    total_count, idx + 1,
-                    &format!("已缓存，跳过 {}", task.label),
-                    0, 0,
-                );
-            } else {
-                // MD5 不匹配 → 需要下载
-                if is_old {
-                    warn!("旧文件 {} MD5 不匹配，将重新下载", path.display());
-                } else {
-                    warn!("{} MD5 不匹配，将重新下载", task.filename);
-                }
-                to_download.push(idx);
+            for (idx, path, file_size, is_old) in still_needs_hash {
+                let sem = hash_sem.clone();
+                let cancel = cancel_token.clone();
+                let handle = tokio::spawn(async move {
+                    let _permit = sem.acquire().await.map_err(|e| format!("{}", e))?;
+                    if *cancel.lock().await {
+                        return Err("Download cancelled".to_string());
+                    }
+                    let md5 = hash_verify::md5_file(&path).await.unwrap_or_default();
+                    Ok::<(usize, PathBuf, u64, bool, String), String>((
+                        idx, path, file_size, is_old, md5,
+                    ))
+                });
+                hash_handles.push(handle);
             }
-        }
+
+            for handle in hash_handles {
+                let (idx, path, file_size, is_old, actual_md5) = match handle.await {
+                    Ok(Ok(v)) => v,
+                    Ok(Err(e)) => {
+                        sw.flush();
+                        return Err(e);
+                    }
+                    Err(e) => {
+                        sw.flush();
+                        return Err(format!("哈希任务失败: {}", e));
+                    }
+                };
+
+                // 写入 mtime 缓存，无论匹配与否都记录（下次可快速判断）
+                let cache_key = make_hash_cache_key(&path, file_size);
+                sw.state.file_hashes.insert(cache_key, actual_md5.clone());
+
+                let task = &all_tasks[idx];
+                if actual_md5.to_lowercase() == task.md5.to_lowercase() {
+                    // MD5 匹配
+                    if is_old {
+                        let dest = safe_join(game_folder, &task.filename)?;
+                        info!("迁移旧文件 {} → {}", path.display(), dest.display());
+                        tokio::fs::rename(&path, &dest).await.ok();
+                    }
+                    sw.state
+                        .checksums
+                        .insert(task.filename.clone(), task.md5.clone());
+                    sw.mark_dirty();
+                    cached_size += file_size;
+                    info!("{} MD5 匹配，补录缓存", task.filename);
+                    emit_progress(
+                        &app,
+                        "download",
+                        cached_size,
+                        total_size,
+                        total_count,
+                        idx + 1,
+                        &format!("已缓存，跳过 {}", task.label),
+                        0,
+                        0,
+                    );
+                } else {
+                    // MD5 不匹配 → 需要下载
+                    if is_old {
+                        warn!("旧文件 {} MD5 不匹配，将重新下载", path.display());
+                    } else {
+                        warn!("{} MD5 不匹配，将重新下载", task.filename);
+                    }
+                    to_download.push(idx);
+                }
+            }
         } // end if !still_needs_hash.is_empty()
     }
 
@@ -1105,7 +1179,12 @@ async fn execute_plan(
                 // 流错误自动重试（最多 3 次），利用断点续传从断点继续
                 const MAX_RETRIES: u32 = 3;
                 let mut last_err = String::new();
-                let temp_name = format!("{}.temp", dest.file_name().and_then(|n| n.to_str()).unwrap_or("download"));
+                let temp_name = format!(
+                    "{}.temp",
+                    dest.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("download")
+                );
                 let temp_path = dest.with_file_name(&temp_name);
                 for attempt in 0..=MAX_RETRIES {
                     if attempt > 0 {
@@ -1117,9 +1196,21 @@ async fn execute_plan(
                             "{} 下载失败，第 {}/{} 次重试: {}",
                             filename, attempt, MAX_RETRIES, last_err
                         );
-                        tokio::time::sleep(std::time::Duration::from_secs(2u64.pow(attempt.min(3)))).await;
+                        tokio::time::sleep(std::time::Duration::from_secs(
+                            2u64.pow(attempt.min(3)),
+                        ))
+                        .await;
                     }
-                    match download_file_to_disk(&client, &url, &dest, &md5, bytes.clone(), cancel.clone()).await {
+                    match download_file_to_disk(
+                        &client,
+                        &url,
+                        &dest,
+                        &md5,
+                        bytes.clone(),
+                        cancel.clone(),
+                    )
+                    .await
+                    {
                         Ok(()) => {
                             if attempt > 0 {
                                 info!("{} 重试成功 (第 {} 次)", filename, attempt);
@@ -1192,9 +1283,15 @@ async fn execute_plan(
             if first_part.exists() {
                 info!("安装{} (从 {})", primary_label, first_file);
                 match extract_archive(
-                    &first_part, game_folder, &app, &primary_label,
-                    total_count, 1,
-                ).await {
+                    &first_part,
+                    game_folder,
+                    &app,
+                    &primary_label,
+                    total_count,
+                    1,
+                )
+                .await
+                {
                     Ok(()) => {
                         for task in &all_tasks[..primary_pkg_count] {
                             if let Ok(p) = safe_join(game_folder, &task.filename) {
@@ -1214,7 +1311,8 @@ async fn execute_plan(
                         }
                         sw.flush();
                         return Err(format!(
-                            "{}安装失败: {}。已删除文件，请重新下载。", primary_label, e
+                            "{}安装失败: {}。已删除文件，请重新下载。",
+                            primary_label, e
                         ));
                     }
                 }
@@ -1246,9 +1344,15 @@ async fn execute_plan(
 
         info!("安装 {}", task.label);
         match extract_archive(
-            &archive, game_folder, &app, &task.label,
-            total_count, primary_pkg_count + idx + 1,
-        ).await {
+            &archive,
+            game_folder,
+            &app,
+            &task.label,
+            total_count,
+            primary_pkg_count + idx + 1,
+        )
+        .await
+        {
             Ok(()) => {
                 tokio::fs::remove_file(&archive).await.ok();
                 sw.state.installed_archives.push(task.filename.clone());
@@ -1304,7 +1408,10 @@ struct DownloadTask {
 fn make_hash_cache_key(path: &Path, size: u64) -> String {
     let mtime = std::fs::metadata(path)
         .and_then(|m| m.modified())
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).map_err(std::io::Error::other))
+        .and_then(|t| {
+            t.duration_since(std::time::UNIX_EPOCH)
+                .map_err(std::io::Error::other)
+        })
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");

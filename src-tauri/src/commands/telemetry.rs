@@ -22,7 +22,9 @@ fn get_telemetry_dlls(game_preset: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn get_channel_protection_config(game_preset: &str) -> Option<game_presets::ChannelProtectionConfig> {
+fn get_channel_protection_config(
+    game_preset: &str,
+) -> Option<game_presets::ChannelProtectionConfig> {
     let game_preset = canonical_preset(game_preset);
     game_presets::get_preset(&game_preset).and_then(|p| p.channel_protection.clone())
 }
@@ -166,7 +168,11 @@ fn read_channel_value(config_path: &Path, channel_key: &str) -> Result<i64, Stri
     let data = serde_json::from_str::<serde_json::Value>(&content)
         .map_err(|e| format!("解析渠道配置失败: {} ({})", config_path.display(), e))?;
     let Some(raw_value) = data.get(channel_key) else {
-        return Err(format!("渠道配置缺少字段 {} ({})", channel_key, config_path.display()));
+        return Err(format!(
+            "渠道配置缺少字段 {} ({})",
+            channel_key,
+            config_path.display()
+        ));
     };
     parse_i64_json(raw_value).ok_or_else(|| {
         format!(
@@ -186,7 +192,10 @@ fn write_channel_value(config_path: &Path, channel_key: &str, target: i64) -> Re
         return Err(format!("渠道配置结构非法: {}", config_path.display()));
     };
     // KRSDKConfig 里的渠道值需要保持字符串形态（例如 "205"）
-    obj.insert(channel_key.to_string(), serde_json::Value::String(target.to_string()));
+    obj.insert(
+        channel_key.to_string(),
+        serde_json::Value::String(target.to_string()),
+    );
     let output = serde_json::to_string_pretty(&data)
         .map_err(|e| format!("序列化渠道配置失败: {} ({})", config_path.display(), e))?;
     std::fs::write(config_path, output)
@@ -194,7 +203,10 @@ fn write_channel_value(config_path: &Path, channel_key: &str, target: i64) -> Re
     Ok(())
 }
 
-fn evaluate_channel_protection(game_preset: &str, game_root: Option<&Path>) -> ChannelProtectionState {
+fn evaluate_channel_protection(
+    game_preset: &str,
+    game_root: Option<&Path>,
+) -> ChannelProtectionState {
     let Some(config) = get_channel_protection_config(game_preset) else {
         return ChannelProtectionState {
             required: false,
@@ -823,9 +835,7 @@ pub fn get_game_protection_info(game_preset: String) -> Result<serde_json::Value
     let channel = get_channel_protection_config(&game_preset);
 
     let category = match game_preset.as_str() {
-        "GenshinImpact" | "HonkaiStarRail" | "ZenlessZoneZero" | "HonkaiImpact3rd" => {
-            "HoYoverse"
-        }
+        "GenshinImpact" | "HonkaiStarRail" | "ZenlessZoneZero" | "HonkaiImpact3rd" => "HoYoverse",
         "WutheringWaves" => "Kuro Games",
         "SnowbreakContainmentZone" => "Seasun",
         _ => "Unknown",

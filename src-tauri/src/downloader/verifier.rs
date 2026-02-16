@@ -1,13 +1,13 @@
 use crate::configs::database as db;
-use crate::downloader::cdn::{LauncherInfo, ResourceIndex, ResourceFile};
+use crate::downloader::cdn::{LauncherInfo, ResourceFile, ResourceIndex};
 use crate::downloader::fetcher;
 use crate::downloader::progress::{DownloadProgress, SpeedTracker};
 use crate::utils::file_manager::{safe_join, safe_join_remote};
 use crate::utils::hash_verify;
 use reqwest::Client;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{Mutex, Semaphore};
 use tracing::{error, info, warn};
@@ -58,7 +58,9 @@ async fn md5_with_cache(path: &Path, expected_size: u64) -> String {
         let size = expected_size as i64;
         let mt = mtime;
         let md5_c = md5.clone();
-        tokio::task::spawn_blocking(move || db::set_cached_md5(&ps, size, mt, &md5_c)).await.ok();
+        tokio::task::spawn_blocking(move || db::set_cached_md5(&ps, size, mt, &md5_c))
+            .await
+            .ok();
     }
 
     md5
@@ -85,7 +87,10 @@ pub async fn verify_game_files(
     let total_files = resource_index.resource.len();
     let total_size: u64 = resource_index.resource.iter().map(|r| r.size).sum();
 
-    info!("开始校验 {} 个文件（总计 {} bytes）", total_files, total_size);
+    info!(
+        "开始校验 {} 个文件（总计 {} bytes）",
+        total_files, total_size
+    );
 
     // 清理无效 pak 文件
     remove_invalid_paks(game_folder, resource_index).await;
@@ -112,7 +117,12 @@ pub async fn verify_game_files(
             }
             Ok(meta) => {
                 // 文件存在但 size 不对，直接标记重下
-                warn!("{} size mismatch (expected: {}, got: {})", file.dest, file.size, meta.len());
+                warn!(
+                    "{} size mismatch (expected: {}, got: {})",
+                    file.dest,
+                    file.size,
+                    meta.len()
+                );
                 need_download.push((i, file));
                 _phase1_skipped += file.size;
             }
@@ -165,7 +175,10 @@ pub async fn verify_game_files(
             Ok(p) => p,
             Err(e) => {
                 warn!("不安全的清单路径（计入失败）: {} ({})", file.dest, e);
-                failed.lock().await.push(format!("{} (unsafe path: {})", file.dest, e));
+                failed
+                    .lock()
+                    .await
+                    .push(format!("{} (unsafe path: {})", file.dest, e));
                 finished_count.fetch_add(1, Ordering::Relaxed);
                 continue;
             }
@@ -194,12 +207,20 @@ pub async fn verify_game_files(
             if current_md5 == file_md5 {
                 verified_ok_c.fetch_add(1, Ordering::Relaxed);
             } else {
-                warn!("{} MD5 mismatch (expected: {}, got: {})", file_dest, file_md5, current_md5);
+                warn!(
+                    "{} MD5 mismatch (expected: {}, got: {})",
+                    file_dest, file_md5, current_md5
+                );
                 // 重下
                 let url = build_resource_url(&launcher_info_cdn, &launcher_info_base, &file_dest);
-                match redownload_and_verify(&client_c, &url, &file_path, &file_md5, file_size).await {
-                    true => { redownloaded_c.fetch_add(1, Ordering::Relaxed); }
-                    false => { failed_c.lock().await.push(file_dest.clone()); }
+                match redownload_and_verify(&client_c, &url, &file_path, &file_md5, file_size).await
+                {
+                    true => {
+                        redownloaded_c.fetch_add(1, Ordering::Relaxed);
+                    }
+                    false => {
+                        failed_c.lock().await.push(file_dest.clone());
+                    }
                 }
             }
 
@@ -243,7 +264,10 @@ pub async fn verify_game_files(
             Ok(p) => p,
             Err(e) => {
                 warn!("不安全的清单路径（计入失败）: {} ({})", file.dest, e);
-                failed.lock().await.push(format!("{} (unsafe path: {})", file.dest, e));
+                failed
+                    .lock()
+                    .await
+                    .push(format!("{} (unsafe path: {})", file.dest, e));
                 finished_count.fetch_add(1, Ordering::Relaxed);
                 continue;
             }
@@ -268,8 +292,12 @@ pub async fn verify_game_files(
 
             let url = build_resource_url(&launcher_info_cdn, &launcher_info_base, &file_dest);
             match redownload_and_verify(&client_c, &url, &file_path, &file_md5, file_size).await {
-                true => { redownloaded_c.fetch_add(1, Ordering::Relaxed); }
-                false => { failed_c.lock().await.push(file_dest.clone()); }
+                true => {
+                    redownloaded_c.fetch_add(1, Ordering::Relaxed);
+                }
+                false => {
+                    failed_c.lock().await.push(file_dest.clone());
+                }
             }
 
             finished_size_c.fetch_add(file_size, Ordering::Relaxed);
@@ -316,7 +344,9 @@ pub async fn verify_game_files(
 
     info!(
         "校验完成: ok={}, redownloaded={}, failed={}",
-        ok, redl, fail.len()
+        ok,
+        redl,
+        fail.len()
     );
 
     Ok(VerifyResult {
@@ -349,7 +379,10 @@ async fn redownload_and_verify(
         info!("{} MD5 OK after re-download", file_path.display());
         true
     } else {
-        error!("{} still MD5 mismatch after re-download", file_path.display());
+        error!(
+            "{} still MD5 mismatch after re-download",
+            file_path.display()
+        );
         false
     }
 }

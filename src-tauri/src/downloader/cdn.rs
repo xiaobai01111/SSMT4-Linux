@@ -169,17 +169,17 @@ async fn fetch_json(client: &Client, url: &str) -> Result<Value, String> {
     let mut last_err = String::new();
 
     for attempt in 1..=max_retries {
-        match retry_client
-            .get(url)
-            .send()
-            .await
-        {
+        match retry_client.get(url).send().await {
             Ok(resp) => {
                 if !resp.status().is_success() {
                     last_err = format!("HTTP {}: {}", resp.status(), url);
-                    warn!("fetch_json 第 {}/{} 次失败: {}", attempt, max_retries, last_err);
+                    warn!(
+                        "fetch_json 第 {}/{} 次失败: {}",
+                        attempt, max_retries, last_err
+                    );
                     if attempt < max_retries {
-                        tokio::time::sleep(std::time::Duration::from_secs(2 * attempt as u64)).await;
+                        tokio::time::sleep(std::time::Duration::from_secs(2 * attempt as u64))
+                            .await;
                         continue;
                     }
                     return Err(last_err);
@@ -209,7 +209,10 @@ async fn fetch_json(client: &Client, url: &str) -> Result<Value, String> {
             }
             Err(e) => {
                 last_err = format!("HTTP request failed: {}", e);
-                warn!("fetch_json 第 {}/{} 次失败: {} ({})", attempt, max_retries, last_err, url);
+                warn!(
+                    "fetch_json 第 {}/{} 次失败: {} ({})",
+                    attempt, max_retries, last_err, url
+                );
                 if attempt < max_retries {
                     tokio::time::sleep(std::time::Duration::from_secs(2 * attempt as u64)).await;
                     continue;
@@ -218,7 +221,12 @@ async fn fetch_json(client: &Client, url: &str) -> Result<Value, String> {
         }
     }
 
-    tracing::error!("fetch_json 全部 {} 次重试失败: {} ({})", max_retries, last_err, url);
+    tracing::error!(
+        "fetch_json 全部 {} 次重试失败: {} ({})",
+        max_retries,
+        last_err,
+        url
+    );
     Err(format!("下载失败: {} ({})", last_err, url))
 }
 
