@@ -1101,7 +1101,44 @@ async fn execute_plan(
                     .await
                     .map_err(|e| format!("信号量错误: {}", e))?;
                 info!("开始下载: {}", filename);
-                download_file_to_disk(&client, &url, &dest, &md5, bytes, cancel).await?;
+
+                // 流错误自动重试（最多 3 次），利用断点续传从断点继续
+                const MAX_RETRIES: u32 = 3;
+                let mut last_err = String::new();
+                let temp_name = format!("{}.temp", dest.file_name().and_then(|n| n.to_str()).unwrap_or("download"));
+                let temp_path = dest.with_file_name(&temp_name);
+                for attempt in 0..=MAX_RETRIES {
+                    if attempt > 0 {
+                        // 重试前回退 temp 文件大小：download_file_to_disk 内部会重新 fetch_add
+                        if let Ok(meta) = tokio::fs::metadata(&temp_path).await {
+                            bytes.fetch_sub(meta.len(), Ordering::Relaxed);
+                        }
+                        warn!(
+                            "{} 下载失败，第 {}/{} 次重试: {}",
+                            filename, attempt, MAX_RETRIES, last_err
+                        );
+                        tokio::time::sleep(std::time::Duration::from_secs(2u64.pow(attempt.min(3)))).await;
+                    }
+                    match download_file_to_disk(&client, &url, &dest, &md5, bytes.clone(), cancel.clone()).await {
+                        Ok(()) => {
+                            if attempt > 0 {
+                                info!("{} 重试成功 (第 {} 次)", filename, attempt);
+                            }
+                            last_err.clear();
+                            break;
+                        }
+                        Err(e) => {
+                            if e.contains("cancelled") {
+                                return Err(e);
+                            }
+                            last_err = e;
+                        }
+                    }
+                }
+                if !last_err.is_empty() {
+                    return Err(format!("{} (已重试 {} 次)", last_err, MAX_RETRIES));
+                }
+
                 done.fetch_add(1, Ordering::Relaxed);
                 let final_md5 = if !md5.is_empty() {
                     md5

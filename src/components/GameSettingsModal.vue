@@ -244,6 +244,7 @@ const wineVersions = ref<WineVersion[]>([]);
 const selectedWineVersionId = ref('');
 const protonSettings = reactive<ProtonSettings>({
   steam_app_id: '0',
+  use_umu_run: false,
   use_pressure_vessel: true,
   proton_media_use_gst: false,
   proton_enable_wayland: false,
@@ -252,6 +253,10 @@ const protonSettings = reactive<ProtonSettings>({
   steam_deck_compat: false,
   sandbox_enabled: false,
   sandbox_isolate_home: false,
+  dxvk_hud: '',
+  dxvk_async: false,
+  dxvk_frame_rate: 0,
+  disable_gpu_filter: false,
   custom_env: {},
 });
 const vulkanInfo = ref<VulkanInfo | null>(null);
@@ -1513,6 +1518,9 @@ defineExpose({
               <div class="setting-group">
                 <div class="setting-label">Proton 设置</div>
                 <div class="setting-checkbox-row">
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.use_umu_run" /> 使用 umu-run 启动（鸣潮默认开启）</label>
+                </div>
+                <div class="setting-checkbox-row">
                   <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.use_pressure_vessel" /> 使用 Pressure Vessel 容器</label>
                 </div>
                 <div class="setting-checkbox-row">
@@ -1529,6 +1537,31 @@ defineExpose({
                 </div>
                 <div class="setting-checkbox-row">
                   <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.steam_deck_compat" /> Steam Deck 兼容模式</label>
+                </div>
+              </div>
+
+              <!-- DXVK/VKD3D 设置 -->
+              <div class="setting-group">
+                <div class="setting-label">DXVK / 图形设置</div>
+                <div class="setting-checkbox-row">
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.dxvk_async" /> DXVK 异步着色器编译</label>
+                </div>
+                <div class="setting-checkbox-row">
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.disable_gpu_filter" /> 禁用 GPU 自动过滤</label>
+                </div>
+                <div class="setting-inline-row">
+                  <span class="setting-inline-label">DXVK HUD</span>
+                  <select v-model="protonSettings.dxvk_hud" class="custom-input" style="flex: 1;">
+                    <option value="">关闭</option>
+                    <option value="version">版本号</option>
+                    <option value="fps">帧率</option>
+                    <option value="version,fps">版本 + 帧率</option>
+                    <option value="full">完整信息</option>
+                  </select>
+                </div>
+                <div class="setting-inline-row">
+                  <span class="setting-inline-label">帧率限制</span>
+                  <input v-model.number="protonSettings.dxvk_frame_rate" type="number" class="custom-input" style="flex: 1;" placeholder="0 = 不限制" min="0" />
                 </div>
               </div>
 
@@ -1793,6 +1826,20 @@ defineExpose({
 
 .setting-checkbox-row {
   margin-bottom: 12px;
+}
+
+.setting-inline-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.setting-inline-label {
+  color: rgba(255,255,255,0.7);
+  font-size: 13px;
+  white-space: nowrap;
+  min-width: 80px;
 }
 
 .checkbox-label {

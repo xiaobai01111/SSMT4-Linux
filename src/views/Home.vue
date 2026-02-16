@@ -14,7 +14,6 @@ import {
   check3dmigotoIntegrity,
   startGame as apiStartGame,
   checkGameProtectionStatus,
-  getGameProtectionInfo,
   joinPath,
   listenEvent,
   getGameWineConfig,
@@ -246,9 +245,6 @@ const ensureRiskAcknowledged = async () => {
 const ensureProtectionEnabled = async (gameName: string, gameConfig: any) => {
   try {
     const preset = gameConfig?.basic?.gamePreset || gameConfig?.GamePreset || gameName;
-    const info = await getGameProtectionInfo(preset);
-    if (!info?.hasProtections) return true;
-
     const exePath = String(gameConfig?.other?.gamePath || '').trim();
     const gameRoot = (() => {
       if (!exePath) return undefined;
@@ -257,7 +253,16 @@ const ensureProtectionEnabled = async (gameName: string, gameConfig: any) => {
       return idx > 0 ? normalized.slice(0, idx) : undefined;
     })();
 
-    const status = await checkGameProtectionStatus(preset, gameRoot);
+    let status = await checkGameProtectionStatus(preset, gameRoot);
+    if (status?.enforceAtLaunch !== true && preset !== gameName) {
+      const fallback = await checkGameProtectionStatus(gameName, gameRoot);
+      if (fallback?.enforceAtLaunch === true) {
+        status = fallback;
+      }
+    }
+    const enforceAtLaunch = status?.enforceAtLaunch === true;
+    if (!enforceAtLaunch) return true;
+
     const enabled = !!status?.enabled;
     if (enabled) return true;
 
@@ -360,6 +365,7 @@ watch(() => appSettings.currentConfigName, () => {
 
 let unlistenLifecycle: (() => void) | null = null;
 let unlistenComponentDl: (() => void) | null = null;
+let unlistenAnticheat: (() => void) | null = null;
 
 onMounted(async () => {
   document.addEventListener('click', closeMenu);
@@ -384,12 +390,17 @@ onMounted(async () => {
       componentDlProgress.value = data;
     }
   });
+  unlistenAnticheat = await listenEvent('game-anticheat-warning', (event: any) => {
+    const data = event.payload;
+    showMessage(data.message, { title: '⚠️ 反作弊风险警告', kind: 'warning' });
+  });
 });
 
 onUnmounted(() => {
   document.removeEventListener('click', closeMenu);
   if (unlistenLifecycle) unlistenLifecycle();
   if (unlistenComponentDl) unlistenComponentDl();
+  if (unlistenAnticheat) unlistenAnticheat();
 });
 </script>
 

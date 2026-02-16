@@ -194,6 +194,7 @@ export interface WineVersion {
 
 export interface ProtonSettings {
   steam_app_id: string;
+  use_umu_run: boolean;
   use_pressure_vessel: boolean;
   proton_media_use_gst: boolean;
   proton_enable_wayland: boolean;
@@ -202,6 +203,14 @@ export interface ProtonSettings {
   steam_deck_compat: boolean;
   sandbox_enabled: boolean;
   sandbox_isolate_home: boolean;
+  /** DXVK HUD 显示模式："" = 关闭, "version" / "fps" / "full" / 自定义 */
+  dxvk_hud: string;
+  /** 启用 DXVK 异步着色器编译 */
+  dxvk_async: boolean;
+  /** DXVK 帧率限制（0 = 不限制） */
+  dxvk_frame_rate: number;
+  /** 禁用 GPU 自动过滤（DXVK_FILTER_DEVICE_NAME） */
+  disable_gpu_filter: boolean;
   custom_env: Record<string, string>;
 }
 
@@ -762,20 +771,20 @@ export async function savePrefixTemplate(template: PrefixTemplate): Promise<void
 // 遥测防护 Commands
 // ============================================================
 
-export async function checkTelemetryStatus(gamePreset: string): Promise<any> {
-  return invoke('check_telemetry_status', { gamePreset });
+export async function checkTelemetryStatus(gamePreset: string, gamePath?: string): Promise<any> {
+  return invoke('check_telemetry_status', { gamePreset, gamePath: gamePath || null });
 }
 
 export async function checkGameProtectionStatus(gamePreset: string, gamePath?: string): Promise<any> {
   return invoke('check_game_protection_status', { gamePreset, gamePath: gamePath || null });
 }
 
-export async function disableTelemetry(gamePreset: string): Promise<any> {
-  return invoke('disable_telemetry', { gamePreset });
+export async function disableTelemetry(gamePreset: string, gamePath?: string): Promise<any> {
+  return invoke('disable_telemetry', { gamePreset, gamePath: gamePath || null });
 }
 
-export async function restoreTelemetry(gamePreset: string): Promise<any> {
-  return invoke('restore_telemetry', { gamePreset });
+export async function restoreTelemetry(gamePreset: string, gamePath?: string): Promise<any> {
+  return invoke('restore_telemetry', { gamePreset, gamePath: gamePath || null });
 }
 
 export async function removeTelemetryFiles(gamePreset: string, gamePath: string): Promise<any> {

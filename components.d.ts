@@ -42,6 +42,7 @@ declare module 'vue' {
     GameInfoVersionSection: typeof import('./src/components/game-info/GameInfoVersionSection.vue')['default']
     GamesDrawer: typeof import('./src/components/GamesDrawer.vue')['default']
     GameSettingsModal: typeof import('./src/components/GameSettingsModal.vue')['default']
+    GlobalSidebar: typeof import('./src/components/GlobalSidebar.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     TitleBar: typeof import('./src/components/TitleBar.vue')['default']

@@ -27,22 +27,65 @@ pub async fn start_game(
     }
 
     let game_preset = resolve_game_preset(&game_name);
-    let game_root = infer_game_root_from_exe(&game_exe)
+    let preset_meta = crate::configs::game_presets::get_preset(&game_preset);
+    let launch_exe = resolve_preferred_launch_exe(&game_preset, &game_exe);
+    let game_root = infer_game_root_from_exe(&launch_exe)
         .ok_or_else(|| format!("无法从可执行文件推断游戏目录: {}", game_exe_path))?;
     let game_root_str = game_root.to_string_lossy().to_string();
 
-    let protection_status = crate::commands::telemetry::check_game_protection_status_internal(
+    let mut protection_status = crate::commands::telemetry::check_game_protection_status_internal(
         &game_preset,
         Some(&game_root_str),
     )?;
-    let protection_required = protection_status
-        .get("supported")
+    let mut protection_required = protection_status
+        .get("enforceAtLaunch")
         .and_then(|v| v.as_bool())
+        .or_else(|| protection_status.get("supported").and_then(|v| v.as_bool()))
         .unwrap_or(false);
-    let protection_enabled = protection_status
+    let mut protection_enabled = protection_status
         .get("enabled")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
+    if !protection_required && game_preset != game_name {
+        let fallback_status = crate::commands::telemetry::check_game_protection_status_internal(
+            &game_name,
+            Some(&game_root_str),
+        )?;
+        let fallback_required = fallback_status
+            .get("enforceAtLaunch")
+            .and_then(|v| v.as_bool())
+            .or_else(|| fallback_status.get("supported").and_then(|v| v.as_bool()))
+            .unwrap_or(false);
+        if fallback_required {
+            info!(
+                "防护判定已从 preset={} 回退到 game_name={}",
+                game_preset, game_name
+            );
+            protection_status = fallback_status;
+            protection_required = fallback_required;
+            protection_enabled = protection_status
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+        }
+    }
+    if !protection_required {
+        let blocked_domains: Vec<String> = protection_status
+            .pointer("/telemetry/blocked")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if !blocked_domains.is_empty() {
+            warn!(
+                "检测到当前游戏已屏蔽域名（{}）。该游戏防护非必需，此设置可能导致联网异常，建议恢复防护后重试",
+                blocked_domains.join(", ")
+            );
+        }
+    }
 
     if protection_required && !protection_enabled {
         let missing_items = protection_status
@@ -69,20 +112,31 @@ pub async fn start_game(
     }
 
     // Load prefix config（不存在则自动创建）
+    let prefix_dir = prefix::get_prefix_dir(&game_name);
+    info!("prefix 路径: {}", prefix_dir.display());
     let prefix_config = match prefix::load_prefix_config(&game_name) {
-        Ok(cfg) => cfg,
-        Err(_) => {
+        Ok(cfg) => {
+            info!(
+                "已加载 prefix 配置: steam_deck_compat={}, use_umu_run={}, custom_env={:?}, use_pressure_vessel={}",
+                cfg.proton_settings.steam_deck_compat,
+                cfg.proton_settings.use_umu_run,
+                cfg.proton_settings.custom_env,
+                cfg.proton_settings.use_pressure_vessel,
+            );
+            cfg
+        }
+        Err(e) => {
+            warn!("加载 prefix 配置失败 ({}), 将创建默认配置——用户设置可能丢失!", e);
             use crate::configs::wine_config::PrefixConfig;
             let cfg = PrefixConfig {
                 wine_version_id: wine_version_id.clone(),
                 ..Default::default()
             };
             prefix::create_prefix(&game_name, &cfg)?;
-            info!("自动创建了 prefix: {}", prefix::get_prefix_dir(&game_name).display());
+            info!("自动创建了 prefix: {}", prefix_dir.display());
             cfg
         }
     };
-    let prefix_dir = prefix::get_prefix_dir(&game_name);
     let pfx_dir = prefix::get_prefix_pfx_dir(&game_name);
 
     // 确保 prefix 中有 CJK 字体（解决中文乱码）
@@ -110,6 +164,15 @@ pub async fn start_game(
         "WINEPREFIX".to_string(),
         pfx_dir.to_string_lossy().to_string(),
     );
+    env.insert(
+        "STEAM_COMPAT_INSTALL_PATH".to_string(),
+        game_root.to_string_lossy().to_string(),
+    );
+    // STEAM_COMPAT_TOOL_PATHS：Proton/protonfixes 需要此变量定位自身目录
+    env.insert(
+        "STEAM_COMPAT_TOOL_PATHS".to_string(),
+        proton_path.parent().unwrap_or(proton_path).to_string_lossy().to_string(),
+    );
 
     if let Some(steam_root) = detector::get_steam_root_path() {
         env.insert(
@@ -118,14 +181,29 @@ pub async fn start_game(
         );
     }
 
-    // Steam App ID（始终设置，避免 ProtonFixes 解析路径时 IndexError）
-    let app_id = if settings.steam_app_id.is_empty() || settings.steam_app_id == "0" {
-        "0".to_string()
-    } else {
-        settings.steam_app_id.clone()
-    };
+    // Steam App ID（优先用户配置；为空时尝试由预设推断，便于启用 Proton 兼容分支）
+    let mut app_id = settings.steam_app_id.trim().to_string();
+    if app_id.is_empty() || app_id == "0" {
+        if let Some(from_preset) = preset_meta
+            .and_then(|p| p.umu_game_id.as_deref())
+            .and_then(|id| id.strip_prefix("umu-"))
+            .filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()))
+        {
+            app_id = from_preset.to_string();
+        } else {
+            app_id = "0".to_string();
+        }
+    }
     env.insert("SteamAppId".to_string(), app_id.clone());
-    env.insert("SteamGameId".to_string(), app_id);
+    env.insert("SteamGameId".to_string(), app_id.clone());
+    if app_id != "0" {
+        env.insert("STEAMAPPID".to_string(), app_id.clone());
+        env.insert("STEAM_COMPAT_APP_ID".to_string(), app_id);
+    }
+    env.insert(
+        "STEAM_PROTON_PATH".to_string(),
+        proton_path.to_string_lossy().to_string(),
+    );
 
     // Proton feature flags
     if settings.proton_media_use_gst {
@@ -142,7 +220,13 @@ pub async fn start_game(
     }
     if settings.steam_deck_compat {
         env.insert("SteamDeck".to_string(), "1".to_string());
+        // 兼容不同脚本/游戏对大小写的读取差异
+        env.insert("steamdeck".to_string(), "1".to_string());
+        env.insert("STEAM_DECK".to_string(), "1".to_string());
+        env.insert("STEAMDECK".to_string(), "1".to_string());
     }
+
+    apply_preset_env_defaults(preset_meta, &mut env);
 
     // Per-prefix env overrides (e.g. WINEDLLOVERRIDES)
     for (key, value) in &prefix_config.env_overrides {
@@ -151,8 +235,26 @@ pub async fn start_game(
 
     // Custom env from proton_settings
     for (key, value) in &settings.custom_env {
+        info!("注入自定义环境变量: {}={}", key, value);
         env.insert(key.clone(), value.clone());
     }
+
+    if env
+        .get("PROTON_NO_ESYNC")
+        .is_some_and(|v| v.trim() == "1")
+    {
+        warn!("检测到 PROTON_NO_ESYNC=1：该设置可能导致部分游戏稳定性或联网异常，建议关闭后重试");
+    }
+
+    // 打印最终的关键环境变量
+    info!("环境变量汇总: SteamDeck={}, steamdeck={}, SteamOS={}, SteamAppId={}, WINEPREFIX={}, custom_env_count={}",
+        env.get("SteamDeck").unwrap_or(&"(未设置)".to_string()),
+        env.get("steamdeck").unwrap_or(&"(未设置)".to_string()),
+        env.get("SteamOS").unwrap_or(&"(未设置)".to_string()),
+        env.get("SteamAppId").unwrap_or(&"(未设置)".to_string()),
+        env.get("WINEPREFIX").unwrap_or(&"(未设置)".to_string()),
+        settings.custom_env.len(),
+    );
 
     // GPU 选择和语言设置（从游戏配置 other 中读取）
     if let Some(config_json) = db::get_game_config(&game_name) {
@@ -215,43 +317,55 @@ pub async fn start_game(
     // 参考 the-honkers-railway-launcher：jadeite.exe 需要 Windows 路径格式（Z:\...）
     let (run_exe, extra_args) = if let Some(ref jade) = jadeite_exe {
         info!("使用 jadeite 反作弊补丁: {}", jade.display());
-        let win_game_path = format!("Z:{}", game_exe.to_string_lossy().replace('/', "\\"));
+        let win_game_path = format!("Z:{}", launch_exe.to_string_lossy().replace('/', "\\"));
         (jade.clone(), vec![win_game_path, "--".to_string()])
     } else {
         if is_hoyoverse {
             warn!("未找到 jadeite.exe，HoYoverse 游戏可能因反作弊而无法启动");
         }
-        (game_exe.clone(), vec![])
+        (launch_exe.clone(), vec![])
     };
 
-    // Build command based on pressure-vessel support
-    let (base_program, base_args) = if settings.use_pressure_vessel {
-        if let Some(runtime_dir) = detector::find_steam_linux_runtime() {
-            let entry_point = runtime_dir.join("_v2-entry-point");
+    let force_direct_proton = preset_meta.map(|p| p.force_direct_proton).unwrap_or(false);
+    let effective_use_pressure_vessel = if preset_meta
+        .map(|p| p.force_disable_pressure_vessel)
+        .unwrap_or(false)
+    {
+        if settings.use_pressure_vessel {
+            warn!("当前预设要求禁用 pressure-vessel，已忽略该设置");
+        }
+        false
+    } else {
+        settings.use_pressure_vessel
+    };
+    let mut use_umu_runtime = false;
+    let (base_program, base_args) = if force_direct_proton {
+        if settings.use_umu_run {
+            warn!("当前预设要求强制直连 Proton，已忽略 umu-run 设置");
+        }
+        build_proton_base_command(effective_use_pressure_vessel, proton_path, &run_exe, &extra_args)
+    } else if settings.use_umu_run {
+        if let Some(umu_run) = find_umu_run_binary() {
+            apply_umu_env_defaults(&game_preset, proton_path, settings, preset_meta, &mut env);
             info!(
-                "Launching with pressure-vessel: {} -> {} -> {}",
-                entry_point.display(),
-                proton_path.display(),
-                run_exe.display()
+                "Launching with umu-run: {} -> {} {:?}",
+                umu_run.display(),
+                run_exe.display(),
+                extra_args
             );
-            let mut args = vec![
-                "--verb=waitforexitandrun".to_string(),
-                "--".to_string(),
-                proton_path.to_string_lossy().to_string(),
-                "waitforexitandrun".to_string(),
-                run_exe.to_string_lossy().to_string(),
-            ];
-            args.extend(extra_args);
-            (entry_point, args)
+            use_umu_runtime = true;
+            let mut args = vec![run_exe.to_string_lossy().to_string()];
+            args.extend(extra_args.clone());
+            (umu_run, args)
         } else {
-            warn!("SteamLinuxRuntime not found, falling back to direct proton launch");
-            build_direct_proton_command_spec_with_args(proton_path, &run_exe, &extra_args)
+            warn!("已启用 umu-run，但系统未找到 umu-run，回退到当前 Proton 启动链");
+            build_proton_base_command(effective_use_pressure_vessel, proton_path, &run_exe, &extra_args)
         }
     } else {
-        build_direct_proton_command_spec_with_args(proton_path, &run_exe, &extra_args)
+        build_proton_base_command(effective_use_pressure_vessel, proton_path, &run_exe, &extra_args)
     };
 
-    let mut cmd = if settings.sandbox_enabled {
+    let mut cmd = if settings.sandbox_enabled && !use_umu_runtime {
         info!(
             "Launching with bwrap sandbox (isolate_home={})",
             settings.sandbox_isolate_home
@@ -265,6 +379,9 @@ pub async fn start_game(
             &env,
         )?
     } else {
+        if settings.sandbox_enabled && use_umu_runtime {
+            warn!("umu-run 已启用，跳过额外 bwrap 沙盒以避免容器嵌套冲突");
+        }
         let mut command = tokio::process::Command::new(&base_program);
         command.args(&base_args);
         command
@@ -274,7 +391,7 @@ pub async fn start_game(
     cmd.envs(&env);
 
     // Set working directory to game exe's parent
-    if let Some(game_dir) = game_exe.parent() {
+    if let Some(game_dir) = launch_exe.parent() {
         cmd.current_dir(game_dir);
     }
 
@@ -308,13 +425,148 @@ pub async fn start_game(
             }
         }
         // 通知前端游戏已退出
-        app_clone.emit("game-lifecycle", serde_json::json!({
-            "event": "exited",
-            "game": game_name
-        })).ok();
+    app_clone.emit("game-lifecycle", serde_json::json!({
+        "event": "exited",
+        "game": game_name
+    })).ok();
     });
 
     Ok(format!("Game launched (PID: {})", pid))
+}
+
+fn apply_preset_env_defaults(
+    preset: Option<&crate::configs::game_presets::GamePreset>,
+    env: &mut HashMap<String, String>,
+) {
+    let Some(preset) = preset else {
+        return;
+    };
+    for (key, value) in &preset.env_defaults {
+        if !env.contains_key(key) {
+            env.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+fn find_umu_run_binary() -> Option<PathBuf> {
+    which::which("umu-run").ok()
+}
+
+fn apply_umu_env_defaults(
+    game_preset: &str,
+    proton_path: &Path,
+    settings: &crate::configs::wine_config::ProtonSettings,
+    preset: Option<&crate::configs::game_presets::GamePreset>,
+    env: &mut HashMap<String, String>,
+) {
+    let proton_dir = proton_path
+        .parent()
+        .unwrap_or(proton_path)
+        .to_string_lossy()
+        .to_string();
+    env.insert("PROTONPATH".to_string(), proton_dir);
+
+    if !env.contains_key("GAMEID") {
+        let game_id = preset
+            .and_then(|p| p.umu_game_id.clone())
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| {
+                if settings.steam_app_id != "0" && !settings.steam_app_id.trim().is_empty() {
+                    format!("umu-{}", settings.steam_app_id.trim())
+                } else {
+                    format!("nonsteam-{}", game_preset.to_lowercase())
+                }
+            });
+        env.insert("GAMEID".to_string(), game_id);
+    }
+    if !env.contains_key("UMU_ID") {
+        if let Some(game_id) = env.get("GAMEID").cloned() {
+            env.insert("UMU_ID".to_string(), game_id);
+        }
+    }
+
+    if !env.contains_key("STORE") {
+        if let Some(store) = preset
+            .and_then(|p| p.umu_store.as_ref())
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
+            env.insert("STORE".to_string(), store.to_string());
+        }
+    }
+
+    if env
+        .get("SteamAppId")
+        .is_none_or(|v| v.trim().is_empty() || v.trim() == "0")
+    {
+        let maybe_numeric_id = env.get("GAMEID").and_then(|game_id| {
+            game_id
+                .strip_prefix("umu-")
+                .filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()))
+                .map(|id| id.to_string())
+        });
+        if let Some(numeric_id) = maybe_numeric_id {
+            env.insert("SteamAppId".to_string(), numeric_id.clone());
+            env.insert("SteamGameId".to_string(), numeric_id);
+        }
+    }
+    if env
+        .get("STEAM_COMPAT_APP_ID")
+        .is_none_or(|v| v.trim().is_empty() || v.trim() == "0")
+    {
+        let maybe_numeric_id = env
+            .get("UMU_ID")
+            .and_then(|id| id.strip_prefix("umu-"))
+            .or_else(|| env.get("GAMEID").and_then(|id| id.strip_prefix("umu-")))
+            .filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()))
+            .map(|id| id.to_string());
+        if let Some(numeric_id) = maybe_numeric_id {
+            env.insert("STEAM_COMPAT_APP_ID".to_string(), numeric_id);
+        }
+    }
+
+    info!(
+        "umu-run env: PROTONPATH={}, GAMEID={}, UMU_ID={}, STORE={}, UMU_USE_STEAM={}, SteamAppId={}, STEAM_COMPAT_APP_ID={}",
+        env.get("PROTONPATH").cloned().unwrap_or_default(),
+        env.get("GAMEID").cloned().unwrap_or_default(),
+        env.get("UMU_ID").cloned().unwrap_or_default(),
+        env.get("STORE").cloned().unwrap_or_default(),
+        env.get("UMU_USE_STEAM").cloned().unwrap_or_default(),
+        env.get("SteamAppId").cloned().unwrap_or_default(),
+        env.get("STEAM_COMPAT_APP_ID").cloned().unwrap_or_default(),
+    );
+}
+
+fn build_proton_base_command(
+    use_pressure_vessel: bool,
+    proton_path: &Path,
+    run_exe: &Path,
+    extra_args: &[String],
+) -> (PathBuf, Vec<String>) {
+    if use_pressure_vessel {
+        if let Some(runtime_dir) = detector::find_steam_linux_runtime() {
+            let entry_point = runtime_dir.join("_v2-entry-point");
+            info!(
+                "Launching with pressure-vessel: {} -> {} -> {}",
+                entry_point.display(),
+                proton_path.display(),
+                run_exe.display()
+            );
+            let mut args = vec![
+                "--verb=waitforexitandrun".to_string(),
+                "--".to_string(),
+                proton_path.to_string_lossy().to_string(),
+                "waitforexitandrun".to_string(),
+                run_exe.to_string_lossy().to_string(),
+            ];
+            args.extend_from_slice(extra_args);
+            return (entry_point, args);
+        }
+
+        warn!("SteamLinuxRuntime not found, falling back to direct proton launch");
+    }
+
+    build_direct_proton_command_spec_with_args(proton_path, run_exe, extra_args)
 }
 
 fn build_direct_proton_command_spec_with_args(proton_path: &Path, run_exe: &Path, extra_args: &[String]) -> (PathBuf, Vec<String>) {
@@ -467,7 +719,12 @@ fn resolve_game_preset(game_name: &str) -> String {
         return game_name.to_string();
     };
 
-    extract_game_preset_from_config(&data).unwrap_or(game_name)
+    let candidate = extract_game_preset_from_config(&data).unwrap_or_else(|| game_name.clone());
+    if crate::configs::game_presets::get_preset(&candidate).is_some() {
+        candidate
+    } else {
+        game_name
+    }
 }
 
 fn extract_game_preset_from_config(data: &Value) -> Option<String> {
@@ -483,6 +740,34 @@ fn extract_game_preset_from_config(data: &Value) -> Option<String> {
 
 fn infer_game_root_from_exe(game_exe: &Path) -> Option<PathBuf> {
     game_exe.parent().map(|p| p.to_path_buf())
+}
+
+fn resolve_preferred_launch_exe(game_preset: &str, game_exe: &Path) -> PathBuf {
+    if game_preset == "WutheringWaves" {
+        let file_name = game_exe
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        if file_name.eq_ignore_ascii_case("Client-Win64-Shipping.exe") {
+            if let Some(win64_dir) = game_exe.parent() {
+                if let Some(binaries_dir) = win64_dir.parent() {
+                    if let Some(client_dir) = binaries_dir.parent() {
+                        if let Some(game_root) = client_dir.parent() {
+                            let wrapper = game_root.join("Wuthering Waves.exe");
+                            if wrapper.exists() {
+                                info!(
+                                    "WutheringWaves 启动可执行已切换为包装器: {}",
+                                    wrapper.display()
+                                );
+                                return wrapper;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    game_exe.to_path_buf()
 }
 
 #[tauri::command]

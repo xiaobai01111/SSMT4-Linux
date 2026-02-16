@@ -372,7 +372,8 @@ pub fn list_game_presets_for_info() -> Result<Vec<PresetCatalogItem>, String> {
             default_folder: preset.default_folder.clone(),
             supported_download: preset.supported,
             supported_protection: !preset.telemetry_servers.is_empty()
-                || !preset.telemetry_dlls.is_empty(),
+                || !preset.telemetry_dlls.is_empty()
+                || preset.channel_protection.is_some(),
             supported_3dmigoto: preset.migoto_repo_api.is_some(),
         })
         .collect();

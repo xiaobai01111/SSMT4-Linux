@@ -3,15 +3,37 @@ use crate::utils::file_manager;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
-/// 从数据库的游戏配置中解析游戏根目录（gameFolder 的父目录）
+/// 从数据库的游戏配置中解析游戏根目录
+///
+/// 优先从 gameFolder 的父目录推导，回退到 gamePath 向上两级推导。
 fn resolve_game_root_from_db(game_id: &str) -> Option<PathBuf> {
     let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
     let config_json = crate::configs::database::get_game_config(&game_id)?;
     let data: serde_json::Value = serde_json::from_str(&config_json).ok()?;
-    let game_folder = data.pointer("/other/gameFolder")?.as_str()?;
-    let game_folder_path = PathBuf::from(game_folder);
-    // gameFolder 是游戏文件目录（如 .../SRMI/StarRail），取其父目录作为游戏根目录
-    game_folder_path.parent().map(|p| p.to_path_buf())
+
+    // 优先：gameFolder 的父目录
+    if let Some(game_folder) = data.pointer("/other/gameFolder")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        if let Some(parent) = PathBuf::from(game_folder).parent() {
+            return Some(parent.to_path_buf());
+        }
+    }
+
+    // 回退：gamePath 向上两级（exe → 数据子目录 → 游戏根目录）
+    if let Some(game_path) = data.pointer("/other/gamePath")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        if let Some(root) = PathBuf::from(game_path).parent().and_then(|p| p.parent()) {
+            return Some(root.to_path_buf());
+        }
+    }
+
+    None
 }
 
 fn prefix_candidate_score(path: &Path) -> u32 {
@@ -308,6 +330,149 @@ pub fn ensure_cjk_fonts(game_id: &str) {
     if linked > 0 {
         info!("已链接 {} 个 CJK 字体到 prefix: {}", linked, fonts_dir.display());
     }
+
+    // 写入字体替换注册表，让 Windows 程序能通过标准字体名找到 CJK 字体
+    ensure_font_substitutes(&pfx_dir);
+}
+
+/// 在 Wine 注册表中添加 CJK 字体替换项（FontSubstitutes + FontLinkDefaultChar）
+/// 等效于 winetricks cjkfonts 中的注册表设置
+fn ensure_font_substitutes(pfx_dir: &Path) {
+    let system_reg = pfx_dir.join("system.reg");
+    if !system_reg.exists() {
+        return;
+    }
+
+    let content = match std::fs::read_to_string(&system_reg) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    // 检查是否已经有 FontSubstitutes 项（避免重复写入）
+    if content.contains("\"MS Shell Dlg\"=\"Noto Sans CJK")
+        || content.contains("\"MS Shell Dlg\"=\"WenQuanYi")
+    {
+        return;
+    }
+
+    // 选择系统中可用的 CJK 字体名
+    let fonts_dir = pfx_dir.join("drive_c").join("windows").join("Fonts");
+    let fallback_font = detect_available_cjk_font(&fonts_dir);
+    if fallback_font.is_empty() {
+        warn!("未找到可用的 CJK 字体，跳过注册表配置");
+        return;
+    }
+    info!("使用 CJK 字体 '{}' 配置 Wine 注册表替换", fallback_font);
+
+    // 构造注册表补丁
+    let reg_patch = format!(
+        r#"REGEDIT4
+
+[HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\FontSubstitutes]
+"MS Shell Dlg"="{font}"
+"MS Shell Dlg 2"="{font}"
+"MS UI Gothic"="{font}"
+"SimSun"="{font}"
+"NSimSun"="{font}"
+"PMingLiU"="{font}"
+"MingLiU"="{font}"
+"Microsoft YaHei"="{font}"
+"Microsoft YaHei UI"="{font}"
+"宋体"="{font}"
+"新宋体"="{font}"
+
+[HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\FontLink\SystemLink]
+"Tahoma"="{font}"
+"Microsoft Sans Serif"="{font}"
+"Arial"="{font}"
+"Segoe UI"="{font}"
+"Lucida Sans Unicode"="{font}"
+
+"#,
+        font = fallback_font
+    );
+
+    // 写入临时 .reg 文件，用 regedit 导入
+    // 直接追加到 system.reg 更可靠（Wine regedit 可能不可用）
+    let patch_marker = format!("\n;; SSMT4 CJK FontSubstitutes ({})\n", fallback_font);
+    if content.contains("SSMT4 CJK FontSubstitutes") {
+        return;
+    }
+
+    // 找到 FontSubstitutes 节并追加，或在文件末尾追加
+    let substitutes_section = "[Software\\\\Microsoft\\\\Windows NT\\\\CurrentVersion\\\\FontSubstitutes]";
+    let mut new_content = content.clone();
+
+    if let Some(pos) = new_content.find(substitutes_section) {
+        // 找到该节的末尾（下一个 [ 开头的行或文件末尾）
+        let after = &new_content[pos + substitutes_section.len()..];
+        let insert_pos = if let Some(next_section) = after.find("\n[") {
+            pos + substitutes_section.len() + next_section
+        } else {
+            new_content.len()
+        };
+
+        let entries = format!(
+            "\n\"MS Shell Dlg\"=\"{font}\"\n\"MS Shell Dlg 2\"=\"{font}\"\n\"MS UI Gothic\"=\"{font}\"\n\"SimSun\"=\"{font}\"\n\"NSimSun\"=\"{font}\"\n\"Microsoft YaHei\"=\"{font}\"\n\"\u{5b8b}\u{4f53}\"=\"{font}\"\n",
+            font = fallback_font
+        );
+        new_content.insert_str(insert_pos, &entries);
+    } else {
+        // 没有 FontSubstitutes 节，在文件末尾添加完整节
+        new_content.push_str(&patch_marker);
+        new_content.push_str(&format!(
+            "\n[Software\\\\Microsoft\\\\Windows NT\\\\CurrentVersion\\\\FontSubstitutes]\n\"MS Shell Dlg\"=\"{font}\"\n\"MS Shell Dlg 2\"=\"{font}\"\n\"MS UI Gothic\"=\"{font}\"\n\"SimSun\"=\"{font}\"\n\"NSimSun\"=\"{font}\"\n\"Microsoft YaHei\"=\"{font}\"\n\"\u{5b8b}\u{4f53}\"=\"{font}\"\n",
+            font = fallback_font
+        ));
+    }
+
+    // 添加标记防止重复
+    if !new_content.contains("SSMT4 CJK FontSubstitutes") {
+        new_content.push_str(&patch_marker);
+    }
+
+    if let Err(e) = std::fs::write(&system_reg, &new_content) {
+        warn!("写入 Wine 注册表失败: {}", e);
+    } else {
+        info!("已写入 CJK 字体替换到 {}", system_reg.display());
+    }
+}
+
+/// 检测 prefix Fonts 目录中可用的 CJK 字体名（返回 Wine 可识别的字体族名）
+fn detect_available_cjk_font(fonts_dir: &Path) -> String {
+    if !fonts_dir.exists() {
+        return String::new();
+    }
+
+    // 按优先级检测（文件名 → Wine 字体族名）
+    let candidates: &[(&[&str], &str)] = &[
+        (&["notosanscjksc", "notosanscjk-regular", "notosanscjk"], "Noto Sans CJK SC"),
+        (&["notoserifcjksc"], "Noto Serif CJK SC"),
+        (&["sarasa"], "Sarasa Gothic SC"),
+        (&["wqy-microhei", "wenquanyimicrohei"], "WenQuanYi Micro Hei"),
+        (&["wqy-zenhei", "wenquanyizenhei"], "WenQuanYi Zen Hei"),
+        (&["droidsansfallback"], "Droid Sans Fallback"),
+        (&["sourcehanssanscn", "sourcehanssans", "source-han-sans"], "Source Han Sans CN"),
+    ];
+
+    let entries: Vec<String> = match std::fs::read_dir(fonts_dir) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_lowercase().replace(['-', '_', ' '], ""))
+            .collect(),
+        Err(_) => return String::new(),
+    };
+
+    for (patterns, font_name) in candidates {
+        for pattern in *patterns {
+            let pat = pattern.replace(['-', '_', ' '], "");
+            if entries.iter().any(|name| name.contains(&pat)) {
+                return font_name.to_string();
+            }
+        }
+    }
+
+    String::new()
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
