@@ -133,7 +133,7 @@ onUnmounted(() => {
 
     <!-- Global Mask Layer for Game Library Page -->
     <transition name="fade">
-      <div v-if="route.path === '/games' || route.path === '/settings' || route.path === '/mods'" class="global-dim-layer"></div>
+      <div v-if="route.path === '/games' || route.path === '/settings'" class="global-dim-layer"></div>
     </transition>
 
     <el-config-provider>

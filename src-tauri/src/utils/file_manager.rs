@@ -53,10 +53,6 @@ pub fn get_tools_dir() -> PathBuf {
     app_config::get_app_data_dir().join("tools")
 }
 
-pub fn get_3dmigoto_dir() -> PathBuf {
-    app_config::get_app_data_dir().join("3Dmigoto")
-}
-
 pub fn get_templates_dir() -> PathBuf {
     app_config::get_app_config_dir()
         .join("prefixes")

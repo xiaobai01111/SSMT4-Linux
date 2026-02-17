@@ -27,7 +27,8 @@ pub fn setup(_app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     });
 
     if !data_dir_str.is_empty() {
-        configs::app_config::set_custom_data_dir(std::path::PathBuf::from(&data_dir_str));
+        let expanded = configs::app_config::expand_user_path(&data_dir_str);
+        configs::app_config::set_custom_data_dir(expanded);
     }
 
     // 2. 创建固定目录（config、cache、prefixes — 不受 dataDir 影响）

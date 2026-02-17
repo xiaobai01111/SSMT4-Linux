@@ -51,7 +51,7 @@ const finish = () => {
           </svg>
         </div>
         <h1 class="setup-title">欢迎使用 SSMT4</h1>
-        <p class="setup-desc">3DMigoto Toolbox for Linux</p>
+        <p class="setup-desc">Linux Game Launcher & Manager</p>
         <p class="setup-hint">首次使用需要进行简单配置，共两步即可完成。</p>
         <button class="setup-btn primary" @click="step = 2">
           开始配置

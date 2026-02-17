@@ -264,12 +264,25 @@ fn ensure_game_catalog_seed(conn: &Connection) {
         if identity.canonical_key.trim().is_empty() {
             continue;
         }
+        let canonical_key = identity.canonical_key.trim().to_string();
         if let Err(e) = conn.execute(
             "INSERT OR IGNORE INTO game_identities (canonical_key, display_name_en) VALUES (?1, ?2)",
-            params![identity.canonical_key.trim(), identity.display_name_en.trim()],
+            params![canonical_key, identity.display_name_en.trim()],
         ) {
             tracing::warn!(
                 "写入 game_identities 失败: key={}, err={}",
+                identity.canonical_key,
+                e
+            );
+        }
+
+        // 以 seed 为准重建 alias，确保旧的 MI 兼容别名不会残留在数据库中。
+        if let Err(e) = conn.execute(
+            "DELETE FROM game_key_aliases WHERE lower(canonical_key) = lower(?1)",
+            params![identity.canonical_key.trim()],
+        ) {
+            tracing::warn!(
+                "清理 game_key_aliases 失败: canonical={}, err={}",
                 identity.canonical_key,
                 e
             );
@@ -282,8 +295,8 @@ fn ensure_game_catalog_seed(conn: &Connection) {
             }
             if let Err(e) = conn.execute(
                 "INSERT OR IGNORE INTO game_key_aliases (alias_key, canonical_key) VALUES (?1, ?2)",
-                params![alias, identity.canonical_key.trim()],
-            ) {
+                    params![alias, identity.canonical_key.trim()],
+                ) {
                 tracing::warn!(
                     "写入 game_key_aliases 失败: alias={}, canonical={}, err={}",
                     alias,
@@ -472,6 +485,16 @@ fn ensure_proton_catalog_seed(conn: &Connection) {
     );
     let _ = conn.execute(
         "UPDATE proton_sources
+         SET tag_pattern = '.*',
+             updated_at = datetime('now')
+         WHERE family_key = 'proton-sarek'
+           AND provider = 'github_releases'
+           AND repo = 'pythonlover02/Proton-Sarek'
+           AND tag_pattern = '^(?!.*Sarek9-13).*$'",
+        [],
+    );
+    let _ = conn.execute(
+        "UPDATE proton_sources
          SET asset_index = 0,
              updated_at = datetime('now')
          WHERE family_key = 'proton-sarek-async'
@@ -487,6 +510,16 @@ fn ensure_proton_catalog_seed(conn: &Connection) {
          WHERE family_key = 'proton-sarek-async'
            AND provider = 'github_releases'
            AND repo = 'pythonlover02/Proton-Sarek'",
+        [],
+    );
+    let _ = conn.execute(
+        "UPDATE proton_sources
+         SET tag_pattern = '.*',
+             updated_at = datetime('now')
+         WHERE family_key = 'proton-sarek-async'
+           AND provider = 'github_releases'
+           AND repo = 'pythonlover02/Proton-Sarek'
+           AND tag_pattern = '^(?!.*Sarek9-13).*$'",
         [],
     );
     let _ = conn.execute(
@@ -545,6 +578,7 @@ fn sync_managed_preset_fields(
 
     let mut changed = false;
     for key in [
+        "legacyIds",
         "requireProtectionBeforeLaunch",
         "forceDirectProton",
         "forceDisablePressureVessel",

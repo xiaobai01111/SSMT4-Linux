@@ -5,13 +5,7 @@
     "ZenlessZoneZero": "Zenless Zone Zero",
     "WutheringWaves": "Wuthering Waves",
     "HonkaiImpact3rd": "Honkai Impact 3rd",
-    "SnowbreakContainmentZone": "Snowbreak: Containment Zone",
-    "GIMI": "Genshin Impact",
-    "SRMI": "Honkai: Star Rail",
-    "ZZMI": "Zenless Zone Zero",
-    "WWMI": "Wuthering Waves",
-    "HIMI": "Honkai Impact 3rd",
-    "EFMI": "Snowbreak: Containment Zone"
+    "SnowbreakContainmentZone": "Snowbreak: Containment Zone"
   },
   "home": {
     "hidegame": {
@@ -26,11 +20,8 @@
     },
     "dropdown": {
       "gamesettings": "Game Settings",
-      "open3dmigoto": "Open 3Dmigoto Folder",
-      "opend3dx": "Open d3dx.ini",
       "enablesymlink": "Enable Symlink",
-      "disablesymlink": "Disable Symlink",
-      "checkupdate": "Check 3Dmigoto Update"
+      "disablesymlink": "Disable Symlink"
     }
   },
   "gamelibrary": {
@@ -119,7 +110,6 @@
   "gamesettingsmodal": {
     "title": "Game Settings",
     "basicsettings": "Basic Settings",
-    "migoto": "3DMigoto Settings",
     "wine": "Wine / Proton",
     "other": "Other Settings",
     "processing": "Processing...",
@@ -139,28 +129,12 @@
     "selectbgvideo": "Select Background Video",
     "selectbgimage": "Select Background Image",
     "autoupdatebg": "Auto Update Background",
-    "migotodir": "3Dmigoto Directory",
-    "migotodir_placeholder": "Select or enter directory",
     "selectfolder": "Select Folder",
     "openfolder": "Open Folder",
-    "updatepackage": "Update Package",
-    "targetexe": "Target Process Path (Target Exe)",
-    "targetexe_placeholder": "Select game executable",
     "selectfile": "Select File",
     "openlocation": "Open Location",
-    "launcherexe": "Launcher Path (Launcher Exe)",
-    "launcherexe_placeholder": "Select launcher (optional)",
     "launchargs": "Launch Arguments",
     "launchargs_placeholder": "e.g. -popupwindow",
-    "show_warnings": "Show top-left errors (show_warnings)",
-    "auto_analyse": "Auto set analyse_options",
-    "use_shell": "Run with Shell",
-    "use_upx": "Use UPX default packing",
-    "dll_delay": "d3d11.dll Delay (ms)",
-    "auto_exit": "Auto Exit (seconds)",
-    "extra_dll": "Extra Inject DLL",
-    "extra_dll_placeholder": "Select or leave empty",
-    "setdefaultdll": "Set as current d3d11.dll",
     "sysinfo": "System Environment",
     "displayserver": "Display Server",
     "gpu_driver": "GPU Driver",
@@ -183,9 +157,7 @@
     "gamepath": "Game Executable Path",
     "gamepath_placeholder": "Full path to game .exe file",
     "more_coming": "More settings coming in future updates",
-    "no_auto_update": "Current preset does not support auto package update",
     "error": {
-      "failconstructdefaultpath": "Failed to construct default 3dmigoto path",
       "failloadconfig": "Failed to load game config: ",
       "configfailedsaving": "Failed to save current conifg: {e}",
       "failedopendir": "Open direction failed: {e}"
@@ -211,10 +183,6 @@
       }
     },
     "confirm": {
-      "checkUpdate": {
-        "title": "Check for Updates",
-        "message": "Are you sure you want to check for 3Dmigoto updates for {gamePreset}?"
-      },
       "versionUpdate": {
         "title": "Version Details",
         "message": "New version found: {version}\n\nChangelog:\n{description}\n\nUpdate now? (Current files will be overwritten)"
@@ -255,8 +223,6 @@
       "capabilityNoDownload": "No Download Support",
       "capabilityProtection": "Protection Supported",
       "capabilityNoProtection": "No Protection Support",
-      "capability3dmigoto": "3Dmigoto Supported",
-      "capabilityNo3dmigoto": "No 3Dmigoto",
       "capabilityLimitedHint": "This preset currently has limited download capability. Editing remains available.",
       "backgroundType": "Background Type",
       "backgroundTypePlaceholder": "Select background type",

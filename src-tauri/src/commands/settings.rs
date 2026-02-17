@@ -1,6 +1,9 @@
 use crate::configs::app_config::{self, AppConfig};
 use crate::configs::database as db;
+use serde::Serialize;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use tauri::Manager;
 use tauri::State;
 
 #[tauri::command]
@@ -19,7 +22,8 @@ pub fn load_settings(config: State<'_, Mutex<AppConfig>>) -> Result<AppConfig, S
     if loaded.data_dir.is_empty() {
         app_config::clear_custom_data_dir();
     } else {
-        app_config::set_custom_data_dir(std::path::PathBuf::from(&loaded.data_dir));
+        let expanded = app_config::expand_user_path(&loaded.data_dir);
+        app_config::set_custom_data_dir(expanded);
     }
 
     let mut state = config.lock().map_err(|e| e.to_string())?;
@@ -43,6 +47,90 @@ pub fn save_settings(
     let mut state = config.lock().map_err(|e| e.to_string())?;
     *state = settings;
     Ok(())
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionCheckInfo {
+    pub current_version: String,
+    pub latest_version: String,
+    pub has_update: bool,
+    pub update_log: String,
+}
+
+fn read_trimmed_file(path: &Path) -> Option<String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn read_raw_file(path: &Path) -> Option<String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn resolve_version_file_paths(app: &tauri::AppHandle) -> Vec<PathBuf> {
+    let mut bases = Vec::<PathBuf>::new();
+
+    if let Some(root) = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|p| p.to_path_buf())
+    {
+        bases.push(root);
+    }
+
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        bases.push(resource_dir);
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            bases.push(dir.to_path_buf());
+        }
+    }
+
+    bases
+}
+
+#[tauri::command]
+pub fn get_version_check_info(app: tauri::AppHandle) -> Result<VersionCheckInfo, String> {
+    let current_version = env!("CARGO_PKG_VERSION").to_string();
+    let mut latest_version = String::new();
+    let mut update_log = String::new();
+
+    for base in resolve_version_file_paths(&app) {
+        if latest_version.is_empty() {
+            let candidate = base.join("version");
+            if let Some(v) = read_trimmed_file(&candidate) {
+                latest_version = v;
+            }
+        }
+        if update_log.is_empty() {
+            let candidate = base.join("version-log");
+            if let Some(v) = read_raw_file(&candidate) {
+                update_log = v;
+            }
+        }
+        if !latest_version.is_empty() && !update_log.is_empty() {
+            break;
+        }
+    }
+
+    if latest_version.is_empty() {
+        latest_version = current_version.clone();
+    }
+
+    let has_update = latest_version != current_version;
+
+    Ok(VersionCheckInfo {
+        current_version,
+        latest_version,
+        has_update,
+        update_log,
+    })
 }
 
 /// 从旧 settings.json 迁移到 SQLite（首次升级时执行一次）
@@ -79,7 +167,6 @@ fn settings_to_kv(cfg: &AppConfig) {
     db::set_setting("cache_dir", &cfg.cache_dir);
     db::set_setting("current_config_name", &cfg.current_config_name);
     db::set_setting("github_token", &cfg.github_token);
-    db::set_setting("show_mods", if cfg.show_mods { "true" } else { "false" });
     db::set_setting(
         "show_websites",
         if cfg.show_websites { "true" } else { "false" },
@@ -197,10 +284,6 @@ fn settings_from_kv(pairs: &[(String, String)]) -> AppConfig {
                 v
             }
         },
-        show_mods: {
-            let v = get_any(&["show_mods", "showMods"]);
-            parse_bool_or_default(&v, defaults.show_mods)
-        },
         show_websites: {
             let v = get_any(&["show_websites", "showWebsites"]);
             parse_bool_or_default(&v, defaults.show_websites)
@@ -315,6 +398,10 @@ fn normalize_settings(cfg: &mut AppConfig) {
     if cfg.content_blur.is_nan() || cfg.content_blur < 0.0 {
         cfg.content_blur = 0.0;
     }
+
+    if !cfg.data_dir.trim().is_empty() {
+        cfg.data_dir = app_config::expand_user_path_string(&cfg.data_dir);
+    }
 }
 
 fn normalize_snowbreak_source_policy(value: &str, default: &str) -> String {
@@ -333,7 +420,7 @@ fn apply_data_dir(cfg: &AppConfig) {
         app_config::clear_custom_data_dir();
         crate::utils::file_manager::remove_data_dir_symlink();
     } else {
-        let dir = std::path::PathBuf::from(&cfg.data_dir);
+        let dir = app_config::expand_user_path(&cfg.data_dir);
         app_config::set_custom_data_dir(dir.clone());
 
         // 创建符号链接：~/.local/share/ssmt4 -> 自定义目录

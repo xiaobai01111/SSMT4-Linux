@@ -303,7 +303,7 @@ fn get_resource_games_dir(app: &tauri::AppHandle) -> Result<Option<PathBuf>, Str
 pub struct GameTemplateInfo {
     /// 模板文件夹名（英文游戏名，如 GenshinImpact）
     pub name: String,
-    /// 游戏代码名（从 Config.json 的 LogicName 读取，如 GIMI）
+    /// 游戏代码名（从 Config.json 的 LogicName 读取，如 GenshinImpact）
     pub game_id: String,
     pub display_name: String,
     pub icon_path: String,

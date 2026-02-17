@@ -1,5 +1,4 @@
 use crate::configs::database as db;
-use crate::utils::ini_manager;
 use crate::wine::{detector, prefix};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -338,8 +337,8 @@ pub async fn start_game(
         None
     };
 
-    // 实际要运行的可执行文件（有 jadeite 则用 jadeite 包装）
-    // 参考 the-honkers-railway-launcher：jadeite.exe 需要 Windows 路径格式（Z:\...）
+    // 实际要运行的可执行文件
+    // 优先级：jadeite > 游戏 exe
     let (run_exe, extra_args) = if let Some(ref jade) = jadeite_exe {
         info!("使用 jadeite 反作弊补丁: {}", jade.display());
         let win_game_path = format!("Z:{}", launch_exe.to_string_lossy().replace('/', "\\"));
@@ -430,7 +429,7 @@ pub async fn start_game(
     // Set environment
     cmd.envs(&env);
 
-    // Set working directory to game exe's parent
+    // Set working directory
     if let Some(game_dir) = launch_exe.parent() {
         cmd.current_dir(game_dir);
     }
@@ -821,62 +820,4 @@ fn resolve_preferred_launch_exe(game_preset: &str, game_exe: &Path) -> PathBuf {
         }
     }
     game_exe.to_path_buf()
-}
-
-#[tauri::command]
-pub fn check_3dmigoto_integrity(
-    _app: tauri::AppHandle,
-    _game_name: &str,
-    game_path: &str,
-) -> Result<bool, String> {
-    let game_dir = PathBuf::from(game_path);
-    let d3dx_ini = game_dir.join("d3dx.ini");
-
-    if !d3dx_ini.exists() {
-        return Ok(false);
-    }
-
-    let d3d11_dll = game_dir.join("d3d11.dll");
-    let d3dcompiler = game_dir.join("d3dcompiler_47.dll");
-
-    Ok(d3d11_dll.exists() && d3dcompiler.exists())
-}
-
-#[tauri::command]
-pub fn toggle_symlink(game_path: &str, enabled: bool) -> Result<bool, String> {
-    let game_dir = PathBuf::from(game_path);
-    let ini_path = game_dir.join("d3dx.ini");
-
-    if !ini_path.exists() {
-        return Err("d3dx.ini not found".to_string());
-    }
-
-    let mut ini_data = ini_manager::load_ini(&ini_path)?;
-
-    if enabled {
-        ini_manager::set_value(&mut ini_data, "Loader", "target", "d3d11.dll");
-    } else {
-        ini_manager::remove_value(&mut ini_data, "Loader", "target");
-    }
-
-    ini_manager::save_ini(&ini_data, &ini_path)?;
-    info!("Toggled symlink for {}: enabled={}", game_path, enabled);
-    Ok(enabled)
-}
-
-#[tauri::command]
-pub fn get_symlink_status(game_path: &str) -> Result<bool, String> {
-    let game_dir = PathBuf::from(game_path);
-    let ini_path = game_dir.join("d3dx.ini");
-
-    if !ini_path.exists() {
-        return Err("d3dx.ini not found".to_string());
-    }
-
-    let ini_data = ini_manager::load_ini(&ini_path)?;
-    let enabled = ini_manager::get_value(&ini_data, "Loader", "target")
-        .map(|v| v.trim().eq_ignore_ascii_case("d3d11.dll"))
-        .unwrap_or(false);
-
-    Ok(enabled)
 }

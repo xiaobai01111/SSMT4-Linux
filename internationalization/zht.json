@@ -5,13 +5,7 @@
     "ZenlessZoneZero": "絕區零",
     "WutheringWaves": "鳴潮",
     "HonkaiImpact3rd": "崩壞3",
-    "SnowbreakContainmentZone": "塵白禁區",
-    "GIMI": "原神",
-    "SRMI": "崩壞：星穹鐵道",
-    "ZZMI": "絕區零",
-    "WWMI": "鳴潮",
-    "HIMI": "崩壞3",
-    "EFMI": "塵白禁區"
+    "SnowbreakContainmentZone": "塵白禁區"
   },
   "home": {
     "hidegame": {
@@ -26,11 +20,8 @@
     },
     "dropdown": {
       "gamesettings": "遊戲設定",
-      "open3dmigoto": "開啓3Dmigoto資料夾",
-      "opend3dx": "開啓d3dx.ini",
       "enablesymlink": "開啟Symlink",
-      "disablesymlink": "關閉Symlink",
-      "checkupdate": "檢查3Dmigoto包更新"
+      "disablesymlink": "關閉Symlink"
     }
   },
   "gamelibrary": {
@@ -119,7 +110,6 @@
   "gamesettingsmodal": {
     "title": "遊戲設定",
     "basicsettings": "基本設定",
-    "migoto": "3DMigoto 設定",
     "wine": "Wine / Proton",
     "other": "其他設定",
     "processing": "處理中...",
@@ -139,28 +129,12 @@
     "selectbgvideo": "選擇背景影片",
     "selectbgimage": "選擇背景圖片",
     "autoupdatebg": "自動更新背景",
-    "migotodir": "3Dmigoto 目錄",
-    "migotodir_placeholder": "請選擇或輸入目錄",
     "selectfolder": "選擇資料夾",
     "openfolder": "開啟資料夾",
-    "updatepackage": "更新整合包",
-    "targetexe": "目標程序路徑 (Target Exe)",
-    "targetexe_placeholder": "選擇遊戲主程式",
     "selectfile": "選擇檔案",
     "openlocation": "開啟所在位置",
-    "launcherexe": "啟動檔案路徑 (Launcher Exe)",
-    "launcherexe_placeholder": "選擇啟動器 (可選)",
     "launchargs": "啟動參數",
     "launchargs_placeholder": "例如: -popupwindow",
-    "show_warnings": "顯示左上角報錯 (show_warnings)",
-    "auto_analyse": "自動設定 analyse_options",
-    "use_shell": "使用 Shell 方式執行",
-    "use_upx": "使用 UPX 預設選項加殼",
-    "dll_delay": "d3d11.dll 延遲 (Delay ms)",
-    "auto_exit": "自動退出秒數 (Auto Exit s)",
-    "extra_dll": "額外注入 DLL",
-    "extra_dll_placeholder": "選擇或者留空",
-    "setdefaultdll": "設為當前d3d11.dll",
     "sysinfo": "系統環境",
     "displayserver": "顯示伺服器",
     "gpu_driver": "GPU 驅動",
@@ -183,9 +157,7 @@
     "gamepath": "遊戲執行檔路徑",
     "gamepath_placeholder": "遊戲 .exe 檔案的完整路徑",
     "more_coming": "更多設定將在後續版本中新增",
-    "no_auto_update": "當前預設不支援自動更新整合包",
     "error": {
-      "failconstructdefaultpath": "构建 3DMigoto 默认路径失败",
       "failloadconfig": "游戏配置加载失败: ",
       "configfailedsaving": "当前配置保存失败: {e}",
       "failedopendir": "打开路径失败: {e}"
@@ -211,10 +183,6 @@
       }
     },
     "confirm": {
-      "checkUpdate": {
-        "title": "检查更新",
-        "message": "确定要检查 {gamePreset} 的 3Dmigoto 整合包更新吗？"
-      },
       "versionUpdate": {
         "title": "版本详情",
         "message": "发现新版本: {version}\n\n更新内容:\n{description}\n\n是否立即更新？（将覆盖当前文件）"
@@ -255,8 +223,6 @@
       "capabilityNoDownload": "不支援下載",
       "capabilityProtection": "支援防護",
       "capabilityNoProtection": "無防護能力",
-      "capability3dmigoto": "支援 3Dmigoto",
-      "capabilityNo3dmigoto": "無 3Dmigoto",
       "capabilityLimitedHint": "此預設目前不支援完整下載流程，可繼續編輯但部分功能受限。",
       "backgroundType": "背景類型",
       "backgroundTypePlaceholder": "選擇背景類型",

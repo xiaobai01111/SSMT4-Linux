@@ -430,35 +430,6 @@ pub async fn fetch_remote_by_catalog(
         });
     }
 
-    for group in &mut groups {
-        if !group.items.is_empty() {
-            continue;
-        }
-        let mut locals = installed
-            .iter()
-            .filter(|v| {
-                classify_local_runner(&v.name, &catalog.families)
-                    .eq_ignore_ascii_case(&group.family_key)
-            })
-            .collect::<Vec<_>>();
-        if locals.is_empty() && group.family_key.eq_ignore_ascii_case("custom") {
-            locals = installed.iter().collect::<Vec<_>>();
-        }
-        locals.sort_by(|a, b| b.timestamp.cmp(&a.timestamp).then_with(|| a.name.cmp(&b.name)));
-        for v in locals {
-            group.items.push(ProtonRemoteVersionItem {
-                tag: v.name.clone(),
-                version: v.version.clone(),
-                variant: group.family_key.clone(),
-                download_url: String::new(),
-                file_size: 0,
-                published_at: v.timestamp.clone().unwrap_or_default(),
-                installed: true,
-                source_repo: "local-installed".to_string(),
-            });
-        }
-    }
-
     let total_items: usize = groups.iter().map(|g| g.items.len()).sum();
     if !failures.is_empty() {
         let joined = failures.join(" | ");

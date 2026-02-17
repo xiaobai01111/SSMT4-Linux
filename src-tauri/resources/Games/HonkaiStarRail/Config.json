@@ -1,21 +1,8 @@
 {
-  "TargetPath": "",
-  "3DmigotoPath": "",
-  "LaunchPath": "",
-  "LaunchArgs": "",
-  "WorkSpace": "",
   "GamePreset": "HonkaiStarRail",
   "LogicName": "HonkaiStarRail",
   "GameTypeName": "HonkaiStarRail",
-  "MigotoPackage": "SRMI-Package",
-  "AutoSetAnalyseOptionsSelectedIndex": 0,
-  "GithubPackageVersion": "",
-  "DllInitializationDelay": 100,
-  "DllReplaceSelectedIndex": 0,
-  "DllPreProcessSelectedIndex": 0,
-  "PureGameMode": false,
-  "RunWithShell": false,
-  "AutoRunIgnoreErrorGIPlugin": false,
-  "Delay": 5,
-  "LaunchItems": []
+  "gamePath": "",
+  "launchArgs": "",
+  "workingDir": ""
 }

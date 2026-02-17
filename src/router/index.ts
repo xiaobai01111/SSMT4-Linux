@@ -1,23 +1,14 @@
-import { createRouter, createWebHistory } from 'vue-router'
-import Home from '../views/Home.vue'
-import GameLibrary from '../views/GameLibrary.vue'
-import Websites from '../views/Websites.vue'
-import Settings from '../views/Settings.vue'
-import Documents from '../views/Documents.vue'
-import ModsManagement from '../views/ModsManagement.vue'
-import Setup from '../views/Setup.vue'
-import LogViewer from '../views/LogViewer.vue'
+import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { appSettings, settingsLoaded } from '../store'
 
-const routes = [
-  { path: '/', name: 'Home', component: Home },
-  { path: '/setup', name: 'Setup', component: Setup },
-  { path: '/games', name: 'GameLibrary', component: GameLibrary },
-  { path: '/mods', name: 'ModsManagement', component: ModsManagement },
-  { path: '/websites', name: 'Websites', component: Websites },
-  { path: '/settings', name: 'Settings', component: Settings },
-  { path: '/documents', name: 'Documents', component: Documents },
-  { path: '/log-viewer', name: 'LogViewer', component: LogViewer },
+const routes: RouteRecordRaw[] = [
+  { path: '/', name: 'Home', component: () => import('../views/Home.vue') },
+  { path: '/setup', name: 'Setup', component: () => import('../views/Setup.vue') },
+  { path: '/games', name: 'GameLibrary', component: () => import('../views/GameLibrary.vue') },
+  { path: '/websites', name: 'Websites', component: () => import('../views/Websites.vue') },
+  { path: '/settings', name: 'Settings', component: () => import('../views/Settings.vue') },
+  { path: '/documents', name: 'Documents', component: () => import('../views/Documents.vue') },
+  { path: '/log-viewer', name: 'LogViewer', component: () => import('../views/LogViewer.vue') },
 ]
 
 const router = createRouter({

@@ -28,7 +28,6 @@ export interface AppSettings {
   cacheDir: string;
   currentConfigName: string;
   githubToken: string;
-  showMods: boolean;
   showWebsites: boolean;
   showDocuments: boolean;
   locale: Locale;  // 我新增
@@ -58,7 +57,6 @@ const defaultSettings: AppSettings = {
   cacheDir: '',
   currentConfigName: 'Default',
   githubToken: '',
-  showMods: true,
   showWebsites: false,
   showDocuments: false,
   locale: 'zhs', // 新增

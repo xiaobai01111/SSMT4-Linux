@@ -785,8 +785,15 @@ pub async fn download_and_install_proton(
         }
     };
 
-    let ext = if download_url.ends_with(".tar.xz") {
+    let url_path = download_url
+        .split('?')
+        .next()
+        .unwrap_or(download_url)
+        .to_lowercase();
+    let ext = if url_path.ends_with(".tar.xz") {
         "tar.xz"
+    } else if url_path.ends_with(".zip") {
+        "zip"
     } else {
         "tar.gz"
     };
@@ -839,9 +846,11 @@ pub async fn download_and_install_proton(
             kind, tag, downloaded, MIN_ARCHIVE_SIZE
         ));
     }
-    // tar 归档魔数校验（xz: 0xFD377A585A00, gzip: 0x1F8B）
-    let valid_header = if download_url.ends_with(".tar.xz") {
+    // 归档魔数校验（xz: 0xFD377A585A00, gzip: 0x1F8B, zip: PK）
+    let valid_header = if ext == "tar.xz" {
         header_filled >= 6 && header_buf[..6] == [0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00]
+    } else if ext == "zip" {
+        header_filled >= 2 && header_buf[..2] == [0x50, 0x4B]
     } else {
         header_filled >= 2 && header_buf[..2] == [0x1F, 0x8B]
     };
@@ -857,15 +866,26 @@ pub async fn download_and_install_proton(
     // 解压（异步子进程，不阻塞 tokio 运行时）
     emit_progress("extracting", 0, 0);
     info!("解压 {} 到 {}", tmp_file.display(), install_dir.display());
-    let tar_flag = if ext == "tar.xz" { "-xf" } else { "-xzf" };
-    let status = tokio::process::Command::new("tar")
-        .arg(tar_flag)
-        .arg(&tmp_file)
-        .arg("-C")
-        .arg(&install_dir)
-        .status()
-        .await
-        .map_err(|e| format!("解压失败: {}", e))?;
+    let status = if ext == "zip" {
+        tokio::process::Command::new("unzip")
+            .arg("-o")
+            .arg(&tmp_file)
+            .arg("-d")
+            .arg(&install_dir)
+            .status()
+            .await
+            .map_err(|e| format!("解压 zip 失败: {}。请确保已安装 unzip。", e))?
+    } else {
+        let tar_flag = if ext == "tar.xz" { "-xf" } else { "-xzf" };
+        tokio::process::Command::new("tar")
+            .arg(tar_flag)
+            .arg(&tmp_file)
+            .arg("-C")
+            .arg(&install_dir)
+            .status()
+            .await
+            .map_err(|e| format!("解压失败: {}", e))?
+    };
 
     if !status.success() {
         return Err(format!("解压 {} 失败", tmp_file.display()));
