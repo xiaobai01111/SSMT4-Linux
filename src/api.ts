@@ -744,6 +744,7 @@ export async function getGameProtectionInfo(gamePreset: string): Promise<any> {
   return invoke('get_game_protection_info', { gamePreset });
 }
 
+<<<<<<< HEAD
 export interface ChannelProtectionState {
   required: boolean;
   enabled: boolean;
@@ -788,6 +789,8 @@ export async function setChannelProtectionMode(
   });
 }
 
+=======
+>>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
 // ============================================================
 // Game Download Commands
 // ============================================================

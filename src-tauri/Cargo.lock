@@ -4,14 +4,21 @@ version = 4
 
 [[package]]
 name = "SSMT4-linux"
+<<<<<<< HEAD
 version = "0.0.1-beta"
+=======
+version = "0.0.8-beta"
+>>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
 dependencies = [
  "chrono",
  "encoding_rs",
  "flate2",
  "futures-util",
  "http",
+<<<<<<< HEAD
  "lazy_static",
+=======
+>>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
  "md-5",
  "notify",
  "once_cell",

@@ -23,12 +23,20 @@ declare module 'vue' {
     ElIcon: typeof import('element-plus/es')['ElIcon']
     ElInput: typeof import('element-plus/es')['ElInput']
     ElInputNumber: typeof import('element-plus/es')['ElInputNumber']
+<<<<<<< HEAD
+=======
+    ElLink: typeof import('element-plus/es')['ElLink']
+>>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
     ElMenu: typeof import('element-plus/es')['ElMenu']
     ElMenuItem: typeof import('element-plus/es')['ElMenuItem']
     ElOption: typeof import('element-plus/es')['ElOption']
     ElOptionGroup: typeof import('element-plus/es')['ElOptionGroup']
     ElSelect: typeof import('element-plus/es')['ElSelect']
     ElSlider: typeof import('element-plus/es')['ElSlider']
+<<<<<<< HEAD
+=======
+    ElSpace: typeof import('element-plus/es')['ElSpace']
+>>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
     ElSwitch: typeof import('element-plus/es')['ElSwitch']
     ElTag: typeof import('element-plus/es')['ElTag']
     ElTooltip: typeof import('element-plus/es')['ElTooltip']
