@@ -17,6 +17,43 @@ pub fn clear_custom_data_dir() {
     *CUSTOM_DATA_DIR.write().unwrap() = None;
 }
 
+/// Expand user-entered paths like `~/...` and `$HOME/...`.
+pub fn expand_user_path(raw: &str) -> PathBuf {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return PathBuf::new();
+    }
+
+    if trimmed == "~" {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home);
+        }
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join(rest);
+        }
+    }
+    if let Some(rest) = trimmed.strip_prefix("~\\") {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join(rest);
+        }
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("$HOME/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join(rest);
+        }
+    }
+
+    PathBuf::from(trimmed)
+}
+
+pub fn expand_user_path_string(raw: &str) -> String {
+    expand_user_path(raw).to_string_lossy().to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AppConfig {
@@ -32,8 +69,6 @@ pub struct AppConfig {
     pub current_config_name: String,
     #[serde(alias = "github_token")]
     pub github_token: String,
-    #[serde(alias = "show_mods")]
-    pub show_mods: bool,
     #[serde(alias = "show_websites")]
     pub show_websites: bool,
     #[serde(alias = "show_documents")]
@@ -75,7 +110,6 @@ impl Default for AppConfig {
             cache_dir,
             current_config_name: "Default".to_string(),
             github_token: String::new(),
-            show_mods: true,
             show_websites: false,
             show_documents: false,
             locale: "zhs".to_string(),

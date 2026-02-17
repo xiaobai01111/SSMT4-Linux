@@ -1,7 +1,7 @@
 [package]
 name = "SSMT4-linux"
-version = "0.0.5-beta"
-description = "SSMT4 - 3Dmigoto Toolbox for Linux"
+version = "0.0.8-beta"
+description = "SSMT4 - Linux Game Launcher"
 authors = ["you"]
 edition = "2021"
 

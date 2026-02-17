@@ -118,10 +118,10 @@ pub fn get_prefix_info(game_id: &str) -> Result<prefix::PrefixInfo, String> {
 }
 
 #[tauri::command]
-pub async fn install_dxvk(game_id: &str, version: &str) -> Result<String, String> {
+pub async fn install_dxvk(game_id: &str, version: &str, variant: &str) -> Result<String, String> {
     let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
     let pfx_dir = prefix::get_prefix_pfx_dir(&game_id);
-    graphics::install_dxvk(&pfx_dir, version).await
+    graphics::install_dxvk(&pfx_dir, version, variant).await
 }
 
 #[tauri::command]
@@ -317,6 +317,17 @@ pub fn detect_dxvk_status(game_id: &str) -> Result<graphics::DxvkInstalledStatus
 }
 
 #[tauri::command]
-pub async fn fetch_dxvk_versions() -> Result<Vec<graphics::DxvkRemoteVersion>, String> {
-    graphics::fetch_dxvk_releases(20).await
+pub async fn fetch_dxvk_versions(
+    settings: State<'_, Mutex<crate::configs::app_config::AppConfig>>,
+) -> Result<Vec<graphics::DxvkRemoteVersion>, String> {
+    let github_token = {
+        let s = settings.lock().map_err(|e| e.to_string())?;
+        s.github_token.clone()
+    };
+    graphics::fetch_dxvk_releases(20, Some(&github_token)).await
+}
+
+#[tauri::command]
+pub async fn download_dxvk(version: &str, variant: &str) -> Result<String, String> {
+    graphics::download_dxvk_only(version, variant).await
 }

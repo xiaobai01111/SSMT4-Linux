@@ -115,8 +115,6 @@ pub fn v2_to_legacy(v2: &GameInfoConfigV2, legacy_seed: Option<&Value>) -> Value
             Value::String(v2.meta.game_preset.clone()),
         );
         root.insert("schemaVersion".to_string(), Value::from(v2.schema_version));
-        root.entry("threeDMigoto".to_string())
-            .or_insert_with(|| json!({}));
         root.entry("other".to_string()).or_insert_with(|| json!({}));
     }
 
@@ -154,14 +152,14 @@ mod tests {
     #[test]
     fn legacy_to_v2_supports_mixed_fields() {
         let legacy = json!({
-            "GamePreset": "ZZMI",
+            "GamePreset": "ZenlessZoneZero",
             "runtimeEnv": "steam",
             "DisplayName": "绝区零",
             "basic": {
                 "backgroundType": "Video"
             }
         });
-        let v2 = legacy_to_v2("ZZMI", &legacy);
+        let v2 = legacy_to_v2("ZenlessZoneZero", &legacy);
         assert_eq!(v2.schema_version, GAME_INFO_SCHEMA_VERSION);
         assert_eq!(v2.meta.game_preset, "ZenlessZoneZero");
         assert_eq!(v2.meta.display_name, "绝区零");
@@ -173,7 +171,6 @@ mod tests {
     fn v2_to_legacy_preserves_unknown_fields() {
         let seed = json!({
             "other": {"gpuIndex": 1},
-            "threeDMigoto": {"installDir": "/tmp/a"},
             "customField": "keep-me"
         });
         let mut v2 = GameInfoConfigV2::new("GenshinImpact");
@@ -184,7 +181,6 @@ mod tests {
         let projected = v2_to_legacy(&v2, Some(&seed));
         assert_eq!(projected["customField"], "keep-me");
         assert_eq!(projected["other"]["gpuIndex"], 1);
-        assert_eq!(projected["threeDMigoto"]["installDir"], "/tmp/a");
         assert_eq!(projected["basic"]["runtimeEnv"], "linux");
         assert_eq!(projected["basic"]["gamePreset"], "GenshinImpact");
     }

@@ -30,7 +30,6 @@ pub struct PresetCatalogItem {
     pub default_folder: String,
     pub supported_download: bool,
     pub supported_protection: bool,
-    pub supported_3dmigoto: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -374,7 +373,6 @@ pub fn list_game_presets_for_info() -> Result<Vec<PresetCatalogItem>, String> {
             supported_protection: !preset.telemetry_servers.is_empty()
                 || !preset.telemetry_dlls.is_empty()
                 || preset.channel_protection.is_some(),
-            supported_3dmigoto: preset.migoto_repo_api.is_some(),
         })
         .collect();
     list.sort_by(|a, b| a.id.cmp(&b.id));
@@ -893,9 +891,8 @@ pub fn create_new_config(
             "GamePreset": &new_name,
             "GameTypeName": &new_name,
             "gamePath": "",
-            "d3dxPath": "",
-            "launcherEnabled": false,
-            "launcherPath": "",
+            "launchArgs": "",
+            "workingDir": "",
         })
     });
     normalize_known_identity_fields(&mut final_config);
@@ -1070,158 +1067,6 @@ pub fn update_game_background(
     ))
 }
 
-#[tauri::command]
-pub async fn get_3dmigoto_latest_release(game_preset: String) -> Result<Value, String> {
-    let game_preset = canonical_key(&game_preset);
-    let default_repo =
-        "https://api.github.com/repos/SilentNightSound/GI-Model-Importer/releases/latest";
-    let repo_url = crate::configs::game_presets::get_preset(&game_preset)
-        .and_then(|p| p.migoto_repo_api.as_deref())
-        .unwrap_or(default_repo);
-
-    let client = reqwest::Client::new();
-    let resp = client
-        .get(repo_url)
-        .header("User-Agent", "SSMT4/0.1")
-        .send()
-        .await
-        .map_err(|e| format!("GitHub API request failed: {}", e))?;
-
-    if !resp.status().is_success() {
-        return Err(format!("GitHub API returned {}", resp.status()));
-    }
-
-    let data: Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse GitHub response: {}", e))?;
-
-    // 从 GitHub Release API 响应中提取字段，构造前端期望的 UpdateInfo
-    let version = data
-        .get("tag_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown")
-        .to_string();
-
-    let description = data
-        .get("body")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    let download_url = data
-        .get("assets")
-        .and_then(|a| a.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|asset| asset.get("browser_download_url"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    Ok(serde_json::json!({
-        "version": version,
-        "description": description,
-        "downloadUrl": download_url
-    }))
-}
-
-#[tauri::command]
-pub async fn install_3dmigoto_update(
-    app: tauri::AppHandle,
-    download_url: String,
-    game_name: String,
-) -> Result<String, String> {
-    let game_name = canonical_key(&game_name);
-    let game_dir = get_writable_game_dir(&app, &game_name)?;
-    let cache_dir = crate::configs::app_config::get_app_cache_dir();
-    crate::utils::file_manager::ensure_dir(&cache_dir)?;
-
-    let zip_path = cache_dir.join("3dmigoto_update.zip");
-
-    // 流式下载到临时文件，避免大包全量驻留内存
-    let client = reqwest::Client::new();
-    let resp = client
-        .get(&download_url)
-        .header("User-Agent", "SSMT4/0.1")
-        .send()
-        .await
-        .map_err(|e| format!("Download failed: {}", e))?;
-
-    {
-        use futures_util::StreamExt;
-        use tokio::io::AsyncWriteExt;
-        let mut stream = resp.bytes_stream();
-        let mut file = tokio::fs::File::create(&zip_path)
-            .await
-            .map_err(|e| format!("Failed to create zip file: {}", e))?;
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| format!("Failed to read download stream: {}", e))?;
-            file.write_all(&chunk)
-                .await
-                .map_err(|e| format!("Failed to write zip chunk: {}", e))?;
-        }
-        file.flush()
-            .await
-            .map_err(|e| format!("Failed to flush zip: {}", e))?;
-    }
-
-    // Extract
-    let file = std::fs::File::open(&zip_path).map_err(|e| format!("Failed to open zip: {}", e))?;
-    let mut archive =
-        zip::ZipArchive::new(file).map_err(|e| format!("Failed to read zip: {}", e))?;
-
-    let canonical_root = game_dir
-        .canonicalize()
-        .unwrap_or_else(|_| game_dir.to_path_buf());
-
-    for i in 0..archive.len() {
-        let mut file = archive
-            .by_index(i)
-            .map_err(|e| format!("Failed to read zip entry: {}", e))?;
-
-        // 防止 Zip Slip 路径穿越：使用 enclosed_name 过滤 ../ 等恶意路径
-        let safe_name = match file.enclosed_name() {
-            Some(name) => name.to_path_buf(),
-            None => {
-                warn!("跳过不安全的 zip 条目: {}", file.name());
-                continue;
-            }
-        };
-        let dest = game_dir.join(&safe_name);
-
-        // 二次校验：canonicalize 后必须位于目标根目录内
-        if let Ok(canon) = dest.canonicalize().or_else(|_| {
-            // 文件尚不存在时，校验父目录
-            dest.parent()
-                .and_then(|p| p.canonicalize().ok())
-                .map(|p| p.join(dest.file_name().unwrap_or_default()))
-                .ok_or(std::io::Error::other("no parent"))
-        }) {
-            if !canon.starts_with(&canonical_root) {
-                warn!("跳过路径穿越条目: {} -> {}", file.name(), canon.display());
-                continue;
-            }
-        }
-
-        if safe_name.to_string_lossy().ends_with('/') {
-            std::fs::create_dir_all(&dest).ok();
-        } else {
-            if let Some(parent) = dest.parent() {
-                std::fs::create_dir_all(parent).ok();
-            }
-            let mut out = std::fs::File::create(&dest)
-                .map_err(|e| format!("Failed to create file: {}", e))?;
-            std::io::copy(&mut file, &mut out)
-                .map_err(|e| format!("Failed to extract file: {}", e))?;
-        }
-    }
-
-    // Cleanup
-    std::fs::remove_file(&zip_path).ok();
-    info!("Installed 3Dmigoto update for game: {}", game_name);
-    Ok("Update installed".to_string())
-}
-
 fn get_user_games_dir() -> Result<PathBuf, String> {
     let games_dir = crate::utils::file_manager::get_global_games_dir();
     crate::utils::file_manager::ensure_dir(&games_dir)?;
@@ -1381,7 +1226,8 @@ mod tests {
 
     #[test]
     fn validate_name_accepts_normal_name() {
-        let result = validate_game_config_name_internal("ZZMI-Test", Some("ZZMI"));
+        let result =
+            validate_game_config_name_internal("ZenlessZoneZero-Test", Some("ZenlessZoneZero"));
         assert!(result.valid);
         assert_eq!(result.code, "OK");
     }

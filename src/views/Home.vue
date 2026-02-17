@@ -7,14 +7,8 @@ import {
   askConfirm,
   setGameVisibility,
   loadGameConfig,
-  ensureDirectory,
-  openInExplorer,
-  toggleSymlink as apiToggleSymlink,
-  getSymlinkStatus,
-  check3dmigotoIntegrity,
   startGame as apiStartGame,
   checkGameProtectionStatus,
-  joinPath,
   listenEvent,
   getGameWineConfig,
 } from '../api'
@@ -89,37 +83,6 @@ const hideGame = async () => {
   closeMenu();
 };
 
-const resolve3dmigotoDir = async (): Promise<string | null> => {
-  const gameName = appSettings.currentConfigName;
-  if (!gameName || gameName === 'Default') return null;
-
-  const data = await loadGameConfig(gameName);
-  let installDir = data.threeDMigoto?.installDir;
-  if (!installDir && appSettings.dataDir) {
-    installDir = await joinPath(appSettings.dataDir, '3Dmigoto', gameName);
-  }
-  return installDir || null;
-};
-
-const open3dmigotoPath = async (target: 'folder' | 'ini') => {
-  if (!hasCurrentGame.value) return;
-  try {
-    const installDir = await resolve3dmigotoDir();
-    if (!installDir) {
-      await showMessage('未找到 3Dmigoto 路径，请先在游戏设置中配置', { title: '提示', kind: 'info' });
-      return;
-    }
-    await ensureDirectory(installDir);
-    const openTarget = target === 'ini' ? await joinPath(installDir, 'd3dx.ini') : installDir;
-    await openInExplorer(openTarget);
-  } catch (e) {
-    console.error(`Failed to open 3Dmigoto ${target}:`, e);
-  }
-};
-
-const open3dmigotoFolder = () => open3dmigotoPath('folder');
-const openD3dxIni = () => open3dmigotoPath('ini');
-
 const showSettings = ref(false);
 const showDownload = ref(false);
 
@@ -128,59 +91,6 @@ const currentDisplayName = computed(() => {
   return game?.displayName || appSettings.currentConfigName;
 });
 const settingsModalRef = ref<InstanceType<typeof GameSettingsModal> | null>(null);
-
-const openSettingsAndUpdate = () => {
-  showSettings.value = true;
-  // Wait for modal to mount/open
-  setTimeout(() => {
-    settingsModalRef.value?.runPackageUpdate();
-  }, 100);
-};
-
-const symlinkEnabled = ref(false);
-const symlinkToggleLabel = computed(() =>
-  symlinkEnabled.value ? t('home.dropdown.disablesymlink') : t('home.dropdown.enablesymlink')
-);
-
-const refreshSymlinkStatus = async () => {
-  if (!hasCurrentGame.value) {
-    symlinkEnabled.value = false;
-    return;
-  }
-
-  try {
-    const installDir = await resolve3dmigotoDir();
-    if (!installDir) {
-      symlinkEnabled.value = false;
-      return;
-    }
-    symlinkEnabled.value = await getSymlinkStatus(installDir);
-  } catch {
-    symlinkEnabled.value = false;
-  }
-};
-
-const setSymlinkState = async (enable: boolean) => {
-  if (!hasCurrentGame.value) return;
-
-  try {
-    const installDir = await resolve3dmigotoDir();
-    if (!installDir) {
-      await showMessage('未找到 3Dmigoto 路径，请先在游戏设置中配置', { title: '错误', kind: 'error' });
-      return;
-    }
-    await apiToggleSymlink(installDir, enable);
-    symlinkEnabled.value = enable;
-    await showMessage(enable ? 'Symlink 已开启' : 'Symlink 已关闭', { title: '成功', kind: 'info' });
-  } catch (e) {
-    console.error('Failed to toggle symlink:', e);
-    await showMessage(`操作失败: ${e}`, { title: '错误', kind: 'error' });
-  }
-};
-
-const toggleSymlink = async () => {
-  await setSymlinkState(!symlinkEnabled.value);
-};
 
 // 检查当前游戏是否已配置可执行文件
 const gameHasExe = ref(false);
@@ -247,6 +157,10 @@ const ensureProtectionEnabled = async (gameName: string, gameConfig: any) => {
     const preset = gameConfig?.basic?.gamePreset || gameConfig?.GamePreset || gameName;
     const exePath = String(gameConfig?.other?.gamePath || '').trim();
     const gameRoot = (() => {
+      // 优先使用配置的游戏根目录
+      const folder = String(gameConfig?.other?.gameFolder || '').trim();
+      if (folder) return folder;
+      // 回退到可执行文件的父目录
       if (!exePath) return undefined;
       const normalized = exePath.replace(/\\/g, '/');
       const idx = normalized.lastIndexOf('/');
@@ -303,11 +217,6 @@ const launchGame = async () => {
         return;
       }
 
-      let gamePath = data.threeDMigoto?.installDir;
-      if (!gamePath && appSettings.dataDir) {
-        gamePath = await joinPath(appSettings.dataDir, '3Dmigoto', gameName);
-      }
-
       const gameExePath = data.other?.gamePath || '';
       // wineVersionId 优先从 wine config 读取，回退到 config.other
       let wineVersionId = data.other?.wineVersionId || '';
@@ -316,21 +225,6 @@ const launchGame = async () => {
           const wineConfig = await getGameWineConfig(gameName);
           wineVersionId = wineConfig.wine_version_id || '';
         } catch { /* ignore */ }
-      }
-
-      // Check 3Dmigoto Integrity（非强制，用户可选择无 Mod 启动）
-      const safe = await check3dmigotoIntegrity(gameName, gamePath || '');
-      if (!safe) {
-          const install = await askConfirm(
-              '未检测到 3Dmigoto 文件 (d3d11.dll 或 d3dx.ini)。\n\nMod 功能将不可用。\n是否现在安装 3Dmigoto？\n\n点击"取消"将直接启动游戏（无 Mod）。', 
-              { title: 'Mod 组件缺失', kind: 'warning', okLabel: '安装 3Dmigoto', cancelLabel: '继续启动' }
-          );
-          
-          if (install) {
-              openSettingsAndUpdate();
-              return;
-          }
-          // 用户选择"继续启动"，不阻断
       }
       
       if (!gameExePath) {
@@ -360,7 +254,6 @@ const launchGame = async () => {
 
 watch(() => appSettings.currentConfigName, () => {
   checkGameExe();
-  refreshSymlinkStatus();
 });
 
 let unlistenLifecycle: (() => void) | null = null;
@@ -370,7 +263,6 @@ let unlistenAnticheat: (() => void) | null = null;
 onMounted(async () => {
   document.addEventListener('click', closeMenu);
   checkGameExe();
-  refreshSymlinkStatus();
   unlistenLifecycle = await listenEvent('game-lifecycle', (event: any) => {
     const data = event.payload;
     if (data.event === 'started') {
@@ -508,11 +400,7 @@ onUnmounted(() => {
         <template #dropdown>
           <el-dropdown-menu>
             <el-dropdown-item @click="showSettings = true" :disabled="!hasCurrentGame">{{ t('home.dropdown.gamesettings') }}</el-dropdown-item>
-            <el-dropdown-item @click="open3dmigotoFolder" :disabled="!hasCurrentGame">{{ t('home.dropdown.open3dmigoto') }}</el-dropdown-item>
-            <el-dropdown-item @click="openD3dxIni" :disabled="!hasCurrentGame">{{ t('home.dropdown.opend3dx') }}</el-dropdown-item>
-            <el-dropdown-item divided @click="toggleSymlink" :disabled="!hasCurrentGame">{{ symlinkToggleLabel }}</el-dropdown-item>
             <el-dropdown-item divided @click="showDownload = true" :disabled="!hasCurrentGame">下载/防护管理</el-dropdown-item>
-            <el-dropdown-item @click="openSettingsAndUpdate" :disabled="!hasCurrentGame">{{ t('home.dropdown.checkupdate') }}</el-dropdown-item>
 
           </el-dropdown-menu>
         </template>

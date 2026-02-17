@@ -1,11 +1,12 @@
 {
   "name": "ssmt4",
   "private": true,
-  "version": "0.0.5-beta",
+  "version": "0.0.8-beta",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
+    "sync-version": "bash scripts/sync-version.sh",
+    "dev": "bun run sync-version && vite",
+    "build": "bun run sync-version && vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "gen-i18n-types": "bun scripts/gen-i18n-types.js"

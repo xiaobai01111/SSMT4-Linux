@@ -1,21 +1,8 @@
 {
-  "TargetPath": "",
-  "3DmigotoPath": "",
-  "LaunchPath": "",
-  "LaunchArgs": "",
-  "WorkSpace": "",
   "GamePreset": "SnowbreakContainmentZone",
   "LogicName": "SnowbreakContainmentZone",
   "GameTypeName": "SnowbreakContainmentZone",
-  "MigotoPackage": "EFMI-Package",
-  "AutoSetAnalyseOptionsSelectedIndex": 0,
-  "GithubPackageVersion": "",
-  "DllInitializationDelay": 1,
-  "DllReplaceSelectedIndex": 0,
-  "DllPreProcessSelectedIndex": 1,
-  "PureGameMode": false,
-  "RunWithShell": false,
-  "AutoRunIgnoreErrorGIPlugin": false,
-  "Delay": 5,
-  "LaunchItems": []
+  "gamePath": "",
+  "launchArgs": "",
+  "workingDir": ""
 }

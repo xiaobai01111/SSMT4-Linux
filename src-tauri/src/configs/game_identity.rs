@@ -30,11 +30,7 @@ pub fn to_canonical_or_keep(input: &str) -> String {
 
 #[allow(dead_code)]
 pub fn canonical_to_legacy_primary(canonical: &str) -> Option<String> {
-    let aliases = legacy_aliases_for_canonical(canonical);
-    aliases
-        .into_iter()
-        .find(|alias| !alias.eq_ignore_ascii_case("WuWa"))
-        .or_else(|| legacy_aliases_for_canonical(canonical).into_iter().next())
+    legacy_aliases_for_canonical(canonical).into_iter().next()
 }
 
 pub fn legacy_aliases_for_canonical(canonical: &str) -> Vec<String> {
@@ -50,23 +46,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normalizes_legacy_alias_to_canonical() {
+    fn resolves_canonical_key() {
         assert_eq!(
-            normalize_game_key_or_alias("WWMI"),
+            normalize_game_key_or_alias("WutheringWaves"),
             Some("WutheringWaves".to_string())
-        );
-        assert_eq!(
-            normalize_game_key_or_alias("WuWa"),
-            Some("WutheringWaves".to_string())
-        );
-        assert_eq!(
-            normalize_game_key_or_alias("SRMI"),
-            Some("HonkaiStarRail".to_string())
         );
     }
 
     #[test]
     fn keeps_unknown_keys() {
-        assert_eq!(to_canonical_or_keep("AEMI"), "AEMI".to_string());
+        assert_eq!(
+            to_canonical_or_keep("CustomGame"),
+            "CustomGame".to_string()
+        );
     }
 }

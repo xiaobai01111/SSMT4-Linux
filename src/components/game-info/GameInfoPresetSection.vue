@@ -52,9 +52,6 @@ const selectedPreset = computed(() =>
       <span class="capability-tag" :class="selectedPreset.supportedProtection ? 'ok' : 'warn'">
         {{ selectedPreset.supportedProtection ? t('gamesettingsmodal.info.capabilityProtection') : t('gamesettingsmodal.info.capabilityNoProtection') }}
       </span>
-      <span class="capability-tag" :class="selectedPreset.supported3dmigoto ? 'ok' : 'warn'">
-        {{ selectedPreset.supported3dmigoto ? t('gamesettingsmodal.info.capability3dmigoto') : t('gamesettingsmodal.info.capabilityNo3dmigoto') }}
-      </span>
     </div>
     <div v-if="selectedPreset && !selectedPreset.supportedDownload" class="info-sub text-warn">
       {{ t('gamesettingsmodal.info.capabilityLimitedHint') }}

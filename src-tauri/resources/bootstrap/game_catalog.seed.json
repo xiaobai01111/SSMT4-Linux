@@ -2,39 +2,32 @@
   "identities": [
     {
       "canonicalKey": "WutheringWaves",
-      "displayNameEn": "Wuthering Waves",
-      "legacyAliases": ["WWMI", "WuWa"]
+      "displayNameEn": "Wuthering Waves"
     },
     {
       "canonicalKey": "GenshinImpact",
-      "displayNameEn": "Genshin Impact",
-      "legacyAliases": ["GIMI"]
+      "displayNameEn": "Genshin Impact"
     },
     {
       "canonicalKey": "HonkaiStarRail",
-      "displayNameEn": "Honkai: Star Rail",
-      "legacyAliases": ["SRMI"]
+      "displayNameEn": "Honkai: Star Rail"
     },
     {
       "canonicalKey": "ZenlessZoneZero",
-      "displayNameEn": "Zenless Zone Zero",
-      "legacyAliases": ["ZZMI"]
+      "displayNameEn": "Zenless Zone Zero"
     },
     {
       "canonicalKey": "HonkaiImpact3rd",
-      "displayNameEn": "Honkai Impact 3rd",
-      "legacyAliases": ["HIMI"]
+      "displayNameEn": "Honkai Impact 3rd"
     },
     {
       "canonicalKey": "SnowbreakContainmentZone",
-      "displayNameEn": "Snowbreak: Containment Zone",
-      "legacyAliases": ["EFMI"]
+      "displayNameEn": "Snowbreak: Containment Zone"
     }
   ],
   "presets": [
     {
       "id": "WutheringWaves",
-      "legacyIds": ["WWMI", "WuWa"],
       "displayNameEn": "Wuthering Waves",
       "supported": true,
       "requireProtectionBeforeLaunch": true,
@@ -69,7 +62,6 @@
         }
       ],
       "audioLanguages": [],
-      "migotoRepoApi": "https://api.github.com/repos/SpectrumQT/WWMI/releases/latest",
       "channelProtection": {
         "configRelativePath": "Client/Binaries/Win64/ThirdParty/KrPcSdk_Mainland/KRSDKRes/KRSDKConfig.json",
         "channelKey": "KR_ChannelId",
@@ -80,7 +72,6 @@
     },
     {
       "id": "HonkaiStarRail",
-      "legacyIds": ["SRMI"],
       "displayNameEn": "Honkai: Star Rail",
       "supported": true,
       "defaultFolder": "StarRail",
@@ -104,7 +95,6 @@
         { "code": "ja-jp", "label": "日本語" },
         { "code": "ko-kr", "label": "한국어" }
       ],
-      "migotoRepoApi": "https://api.github.com/repos/SilentNightSound/SR-Model-Importer/releases/latest",
       "telemetryServers": [
         "log-upload.mihoyo.com",
         "uspider.yuanshen.com",
@@ -120,7 +110,6 @@
     },
     {
       "id": "ZenlessZoneZero",
-      "legacyIds": ["ZZMI"],
       "displayNameEn": "Zenless Zone Zero",
       "supported": true,
       "defaultFolder": "ZenlessZoneZero",
@@ -144,7 +133,6 @@
         { "code": "ja-jp", "label": "日本語" },
         { "code": "ko-kr", "label": "한국어" }
       ],
-      "migotoRepoApi": "https://api.github.com/repos/leotorrez/ZZ-Model-Importer/releases/latest",
       "telemetryServers": [
         "log-upload.mihoyo.com",
         "uspider.yuanshen.com",
@@ -160,7 +148,6 @@
     },
     {
       "id": "GenshinImpact",
-      "legacyIds": ["GIMI"],
       "displayNameEn": "Genshin Impact",
       "supported": true,
       "defaultFolder": "GenshinImpact",
@@ -184,7 +171,6 @@
         { "code": "ja-jp", "label": "日本語" },
         { "code": "ko-kr", "label": "한국어" }
       ],
-      "migotoRepoApi": "https://api.github.com/repos/SilentNightSound/GI-Model-Importer/releases/latest",
       "telemetryServers": [
         "log-upload.mihoyo.com",
         "uspider.yuanshen.com",
@@ -202,7 +188,6 @@
     },
     {
       "id": "HonkaiImpact3rd",
-      "legacyIds": ["HIMI"],
       "displayNameEn": "Honkai Impact 3rd",
       "supported": true,
       "defaultFolder": "HonkaiImpact3rd",
@@ -221,7 +206,6 @@
         }
       ],
       "audioLanguages": [],
-      "migotoRepoApi": "https://api.github.com/repos/SilentNightSound/HI-Model-Importer/releases/latest",
       "telemetryServers": [
         "log-upload.mihoyo.com",
         "uspider.yuanshen.com",
@@ -234,7 +218,6 @@
     },
     {
       "id": "SnowbreakContainmentZone",
-      "legacyIds": ["EFMI"],
       "displayNameEn": "Snowbreak: Containment Zone",
       "supported": true,
       "defaultFolder": "SnowbreakContainmentZone",

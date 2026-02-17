@@ -2,8 +2,8 @@
 
 # SSMT4
 
-**第四代超简单3Dmigoto工具箱**  
-**(Super Simple Migoto Tools 4th)**
+**第四代超简单 Linux 游戏工具箱**  
+**(Super Simple Linux Game Tools 4th)**
 
 [![GitHub stars](https://img.shields.io/github/stars/StarBobis/SSMT4?style=flat-square&logo=github)](https://github.com/StarBobis/SSMT4/stargazers)
 [![GitHub forks](https://img.shields.io/github/forks/StarBobis/SSMT4?style=flat-square&logo=github)](https://github.com/StarBobis/SSMT4/network)

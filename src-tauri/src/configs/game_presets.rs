@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{info, warn};
 
-/// 单个游戏预设：聚合 launcher API、默认目录、3DMigoto 仓库、遥测等全部元数据。
+/// 单个游戏预设：聚合 launcher API、默认目录、遥测等全部元数据。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PresetDownloadServer {
@@ -36,7 +36,7 @@ pub struct ChannelProtectionConfig {
 pub struct GamePreset {
     /// Canonical 预设 ID（如 "HonkaiStarRail", "WutheringWaves"）
     pub id: String,
-    /// Legacy 别名（如 "SRMI", "WWMI", "WuWa"）
+    /// Legacy 别名（历史兼容）
     #[serde(default)]
     pub legacy_ids: Vec<String>,
     /// 英文显示名
@@ -63,9 +63,6 @@ pub struct GamePreset {
     /// 可选语音包（主要用于 HoYoverse）
     #[serde(default)]
     pub audio_languages: Vec<PresetAudioLanguage>,
-    /// 3DMigoto GitHub releases API URL
-    #[serde(default)]
-    pub migoto_repo_api: Option<String>,
     /// 需要屏蔽的遥测服务器列表
     #[serde(default)]
     pub telemetry_servers: Vec<String>,
@@ -254,12 +251,17 @@ mod tests {
     }
 
     #[test]
-    fn alias_wuwa_resolves_to_canonical() {
+    fn legacy_alias_list_is_optional() {
         let map = load_presets_from_db();
         assert!(map.contains_key("WutheringWaves"));
-        assert_eq!(
-            crate::configs::game_identity::normalize_game_key_or_alias("WuWa"),
-            Some("WutheringWaves".to_string())
+        let preset = map
+            .get("WutheringWaves")
+            .expect("WutheringWaves preset should exist");
+        assert!(
+            !preset
+                .legacy_ids
+                .iter()
+                .any(|alias| alias.ends_with("MI"))
         );
     }
 
@@ -276,13 +278,13 @@ mod tests {
     }
 
     #[test]
-    fn normalize_legacy_default_folder() {
+    fn normalize_default_folder_keeps_canonical_path() {
         assert_eq!(
-            normalize_default_folder("WutheringWaves", "WWMI"),
+            normalize_default_folder("WutheringWaves", "WutheringWaves"),
             "WutheringWaves".to_string()
         );
         assert_eq!(
-            normalize_default_folder("HonkaiStarRail", "SRMI/StarRail"),
+            normalize_default_folder("HonkaiStarRail", "HonkaiStarRail/StarRail"),
             "HonkaiStarRail/StarRail".to_string()
         );
     }

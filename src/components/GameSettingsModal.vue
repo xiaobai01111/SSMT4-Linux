@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, reactive, computed, onMounted, onUnmounted } from 'vue';
+import { ref, watch, reactive, computed } from 'vue';
 import {
   loadGameConfig as apiLoadGameConfig,
   saveGameConfig as apiSaveGameConfig,
@@ -10,14 +10,9 @@ import {
   resetGameIcon as apiResetGameIcon,
   // updateGameBackground as apiUpdateGameBackground,
   resetGameBackground as apiResetGameBackground,
-  get3dmigotoLatestRelease,
-  install3dmigotoUpdate as apiInstall3dmigotoUpdate,
-  ensureDirectory,
-  openInExplorer,
   openFileDialog,
   showMessage,
   askConfirm,
-  joinPath,
   scanWineVersions,
   getGameWineConfig,
   setGameWineConfig,
@@ -30,11 +25,7 @@ import {
   uninstallDxvk,
   scanLocalDxvk,
   detectDxvkStatus,
-  fetchDxvkVersions,
-  fetchRemoteProton,
-  downloadProton,
   getLocalVersion,
-  listenEvent,
   type WineVersion,
   type ProtonSettings,
   type PrefixInfo,
@@ -42,12 +33,10 @@ import {
   type VulkanInfo,
   type DisplayInfo,
   type DxvkLocalVersion,
-  type DxvkRemoteVersion,
   type DxvkInstalledStatus,
-  type RemoteWineVersion,
   type RuntimeEnv,
 } from '../api';
-import { loadGames, appSettings, gamesList, switchToGame } from '../store';
+import { loadGames, gamesList, switchToGame } from '../store';
 import { useI18n } from 'vue-i18n';
 import { inject } from 'vue';
 import { useGameInfoEditor } from '../composables/useGameInfoEditor';
@@ -75,37 +64,11 @@ interface GameConfig {
     runtimeEnv: 'wine' | 'steam' | 'linux';
     backgroundType?: 'Image' | 'Video';
   };
-  threeDMigoto: {
-    installDir: string;
-    targetExePath: string;
-    launcherExePath: string;
-    launchArgs: string;
-    showErrorPopup: boolean;
-    autoSetAnalyseOptions: boolean;
-    useShell: boolean;
-    useUpx: boolean;
-    delay: number;
-    autoExitSeconds: number;
-    extraDll: string;
-  };
   other: any;
 }
 
 const config = reactive<GameConfig>({
   basic: { gamePreset: 'GenshinImpact', runtimeEnv: 'wine' },
-  threeDMigoto: {
-    installDir: '',
-    targetExePath: '',
-    launcherExePath: '',
-    launchArgs: '',
-    showErrorPopup: true,
-    autoSetAnalyseOptions: true,
-    useShell: false,
-    useUpx: false,
-    delay: 0,
-    autoExitSeconds: 0,
-    extraDll: ''
-  },
   other: {}
 });
 
@@ -139,9 +102,6 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const asString = (value: unknown, fallback = ''): string =>
   typeof value === 'string' ? value : fallback;
 
-const asNumber = (value: unknown, fallback: number): number =>
-  typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-
 const canonicalPreset = (value: string): string => {
   return value.trim();
 };
@@ -149,8 +109,28 @@ const canonicalPreset = (value: string): string => {
 const normalizeLoadedConfig = (raw: unknown): GameConfig => {
   const root = isRecord(raw) ? raw : {};
   const basicRaw = isRecord(root.basic) ? root.basic : {};
-  const migotoRaw = isRecord(root.threeDMigoto) ? root.threeDMigoto : {};
   const otherRaw = isRecord(root.other) ? root.other : {};
+  const droppedLegacyModKeys = new Set([
+    'threeDMigoto',
+    '3DmigotoPath',
+    'TargetPath',
+    'LaunchPath',
+    'LaunchArgs',
+    'WorkSpace',
+    'MigotoPackage',
+    'AutoSetAnalyseOptions',
+    'AutoSetAnalyseOptionsSelectedIndex',
+    'GithubPackageVersion',
+    'DllInitializationDelay',
+    'DllReplaceSelectedIndex',
+    'DllPreProcessSelectedIndex',
+    'RunWithShell',
+    'AutoRunIgnoreErrorGIPlugin',
+    'Delay',
+    'LaunchItems',
+    'PureGameMode',
+    'd3dxPath',
+  ]);
 
   const gamePreset =
     asString(basicRaw.gamePreset) ||
@@ -164,36 +144,22 @@ const normalizeLoadedConfig = (raw: unknown): GameConfig => {
   const runtimeEnv: 'wine' | 'steam' | 'linux' =
     runtimeEnvRaw === 'steam' ? 'steam' : runtimeEnvRaw === 'linux' ? 'linux' : 'wine';
 
-  let autoSetAnalyseOptions = true;
-  if (typeof migotoRaw.autoSetAnalyseOptions === 'boolean') {
-    autoSetAnalyseOptions = migotoRaw.autoSetAnalyseOptions;
-  } else if (typeof root.AutoSetAnalyseOptions === 'boolean') {
-    autoSetAnalyseOptions = root.AutoSetAnalyseOptions;
-  } else if (typeof root.AutoSetAnalyseOptionsSelectedIndex === 'number') {
-    autoSetAnalyseOptions = root.AutoSetAnalyseOptionsSelectedIndex === 0;
-  }
-
-  const showErrorPopup =
-    typeof migotoRaw.showErrorPopup === 'boolean'
-      ? migotoRaw.showErrorPopup
-      : typeof root.AutoRunIgnoreErrorGIPlugin === 'boolean'
-        ? !root.AutoRunIgnoreErrorGIPlugin
-        : true;
-
   const mergedOther: Record<string, unknown> = { ...otherRaw };
   for (const [key, value] of Object.entries(root)) {
-    if (key === 'basic' || key === 'threeDMigoto' || key === 'other') continue;
+    if (key === 'basic' || key === 'other' || droppedLegacyModKeys.has(key)) continue;
     if (mergedOther[key] === undefined) {
       mergedOther[key] = value;
     }
+  }
+  for (const key of droppedLegacyModKeys) {
+    delete mergedOther[key];
   }
 
   const legacyGamePath =
     asString(mergedOther.gamePath) ||
     asString(mergedOther.game_path) ||
     asString(root.gamePath) ||
-    asString(root.game_path) ||
-    asString(root.TargetPath);
+    asString(root.game_path);
   if (legacyGamePath) {
     mergedOther.gamePath = legacyGamePath;
   }
@@ -202,38 +168,6 @@ const normalizeLoadedConfig = (raw: unknown): GameConfig => {
     basic: {
       gamePreset: canonicalPreset(gamePreset),
       runtimeEnv,
-    },
-    threeDMigoto: {
-      installDir:
-        asString(migotoRaw.installDir) || asString(root['3DmigotoPath']),
-      targetExePath:
-        asString(migotoRaw.targetExePath) || asString(root.TargetPath),
-      launcherExePath:
-        asString(migotoRaw.launcherExePath) || asString(root.LaunchPath),
-      launchArgs: asString(migotoRaw.launchArgs) || asString(root.LaunchArgs),
-      showErrorPopup,
-      autoSetAnalyseOptions,
-      useShell:
-        typeof migotoRaw.useShell === 'boolean'
-          ? migotoRaw.useShell
-          : typeof root.RunWithShell === 'boolean'
-            ? root.RunWithShell
-            : false,
-      useUpx:
-        typeof migotoRaw.useUpx === 'boolean'
-          ? migotoRaw.useUpx
-          : typeof root.DllReplaceSelectedIndex === 'number'
-            ? root.DllReplaceSelectedIndex > 0
-            : false,
-      delay:
-        typeof migotoRaw.delay === 'number'
-          ? migotoRaw.delay
-          : asNumber(root.DllInitializationDelay, 100),
-      autoExitSeconds:
-        typeof migotoRaw.autoExitSeconds === 'number'
-          ? migotoRaw.autoExitSeconds
-          : asNumber(root.Delay, 5),
-      extraDll: asString(migotoRaw.extraDll),
     },
     other: mergedOther,
   };
@@ -267,54 +201,6 @@ const newEnvValue = ref('');
 // 系统选项状态
 const selectedGpuIndex = ref(-1); // -1 = 自动
 const gameLang = ref(''); // '' = 跟随系统
-
-// 远程 Proton 版本管理
-const remoteProtonVersions = ref<RemoteWineVersion[]>([]);
-const isProtonFetching = ref(false);
-const isProtonDownloading = ref(false);
-const protonDownloadTag = ref('');
-
-// 组件下载进度（Proton/DXVK）
-interface ComponentDlProgress {
-  component: string;
-  phase: string;
-  downloaded: number;
-  total: number;
-}
-const componentDlProgress = ref<ComponentDlProgress | null>(null);
-let unlistenComponentDl: (() => void) | null = null;
-
-const doFetchRemoteProton = async () => {
-  if (isProtonFetching.value) return;
-  try {
-    isProtonFetching.value = true;
-    remoteProtonVersions.value = await fetchRemoteProton();
-  } catch (e) {
-    await showMessage(`获取远程 Proton 版本失败: ${e}`, { title: '错误', kind: 'error' });
-  } finally {
-    isProtonFetching.value = false;
-  }
-};
-
-const doDownloadProton = async (rv: RemoteWineVersion) => {
-  if (isProtonDownloading.value) return;
-  try {
-    isProtonDownloading.value = true;
-    protonDownloadTag.value = rv.tag;
-    notify?.info('Proton 下载', `开始下载 ${rv.tag}...`);
-    const result = await downloadProton(rv.download_url, rv.tag, rv.variant);
-    notify?.success('Proton 下载完成', result);
-    // 刷新本地版本列表
-    wineVersions.value = await scanWineVersions();
-    // 刷新远程列表标记
-    await doFetchRemoteProton();
-  } catch (e) {
-    notify?.error('Proton 下载失败', `${e}`);
-  } finally {
-    isProtonDownloading.value = false;
-    protonDownloadTag.value = '';
-  }
-};
 
 const loadWineState = async () => {
   try {
@@ -388,15 +274,6 @@ const variantLabel = (variant: string) => {
   return labels[variant] || variant;
 };
 
-const variantBadgeClass = (variant: string) => {
-  const v = variant.toLowerCase().replace(/[- ]/g, '');
-  if (v.includes('geproton') || v.includes('ge')) return 'ge';
-  if (v.includes('dwproton') || v.includes('dw')) return 'dw';
-  if (v.includes('wine') || v.includes('winege') || v.includes('winebuilds')) return 'wine';
-  if (v.includes('tkg')) return 'tkg';
-  return 'default';
-};
-
 // Jadeite 状态
 const jadeiteStatus = ref<JadeiteStatus | null>(null);
 const isJadeiteInstalling = ref(false);
@@ -442,45 +319,11 @@ const loadPrefixState = async () => {
   }
 };
 
-// DXVK 版本管理
+// DXVK 版本管理（本地安装/卸载，无远程下载）
 const dxvkLocalVersions = ref<DxvkLocalVersion[]>([]);
-const dxvkRemoteVersions = ref<DxvkRemoteVersion[]>([]);
 const dxvkInstalledStatus = ref<DxvkInstalledStatus | null>(null);
-const dxvkSelectedVersion = ref('');
+const dxvkSelectedKey = ref('');  // "version|variant" 格式
 const isDxvkBusy = ref(false);
-const isDxvkFetching = ref(false);
-
-// 合并的版本列表（远程 + 本地）
-const dxvkVersionList = computed(() => {
-  const map = new Map<string, { version: string; isLocal: boolean; isRemote: boolean; fileSize: number; publishedAt: string }>();
-
-  // 先添加远程版本
-  for (const rv of dxvkRemoteVersions.value) {
-    map.set(rv.version, {
-      version: rv.version,
-      isLocal: rv.is_local,
-      isRemote: true,
-      fileSize: rv.file_size,
-      publishedAt: rv.published_at,
-    });
-  }
-
-  // 补充仅在本地的版本
-  for (const lv of dxvkLocalVersions.value) {
-    if (!map.has(lv.version)) {
-      map.set(lv.version, {
-        version: lv.version,
-        isLocal: true,
-        isRemote: false,
-        fileSize: 0,
-        publishedAt: '',
-      });
-    }
-  }
-
-  // 按版本号降序排列
-  return Array.from(map.values()).sort((a, b) => b.version.localeCompare(a.version));
-});
 
 const loadDxvkState = async () => {
   if (!props.gameName) return;
@@ -492,43 +335,33 @@ const loadDxvkState = async () => {
     dxvkLocalVersions.value = local;
     dxvkInstalledStatus.value = status;
 
-    // 如果已安装且检测到版本号，自动选中
     if (status.installed && status.version) {
-      dxvkSelectedVersion.value = status.version;
-    } else if (local.length > 0 && !dxvkSelectedVersion.value) {
-      dxvkSelectedVersion.value = local[0].version;
+      // 自动匹配已安装版本对应的本地缓存
+      const match = local.find(lv => lv.version === status.version);
+      dxvkSelectedKey.value = match
+        ? `${match.version}|${match.variant}`
+        : `${status.version}|dxvk`;
+    } else if (local.length > 0 && !dxvkSelectedKey.value) {
+      dxvkSelectedKey.value = `${local[0].version}|${local[0].variant}`;
     }
   } catch (e) {
     console.warn('[dxvk] 加载状态失败:', e);
   }
 };
 
-const doFetchDxvkVersions = async () => {
-  if (isDxvkFetching.value) return;
-  try {
-    isDxvkFetching.value = true;
-    dxvkRemoteVersions.value = await fetchDxvkVersions();
-    // 如果当前没选中版本且有远程版本，选最新的
-    if (!dxvkSelectedVersion.value && dxvkRemoteVersions.value.length > 0) {
-      dxvkSelectedVersion.value = dxvkRemoteVersions.value[0].version;
-    }
-  } catch (e) {
-    await showMessage(`获取 DXVK 版本列表失败: ${e}`, { title: '错误', kind: 'error' });
-  } finally {
-    isDxvkFetching.value = false;
-  }
-};
-
 const doInstallDxvk = async () => {
-  if (isDxvkBusy.value || !dxvkSelectedVersion.value) return;
+  if (isDxvkBusy.value || !dxvkSelectedKey.value) return;
+  const [version, variant] = dxvkSelectedKey.value.split('|');
+  if (!version || !variant) return;
   try {
     isDxvkBusy.value = true;
-    notify?.info('DXVK', `正在安装 DXVK ${dxvkSelectedVersion.value}...`);
-    const result = await installDxvk(props.gameName, dxvkSelectedVersion.value);
-    notify?.success('DXVK 安装完成', result);
+    const label = variant === 'gplasync' ? 'DXVK-GPLAsync' : 'DXVK';
+    notify?.info(label, `正在应用 ${label} ${version}...`);
+    const result = await installDxvk(props.gameName, version, variant);
+    notify?.success(`${label} 应用完成`, result);
     await loadDxvkState();
   } catch (e) {
-    notify?.error('DXVK 安装失败', `${e}`);
+    notify?.error('DXVK 应用失败', `${e}`);
   } finally {
     isDxvkBusy.value = false;
   }
@@ -550,19 +383,12 @@ const doUninstallDxvk = async () => {
   }
 };
 
-const formatFileSize = (bytes: number): string => {
-  if (bytes <= 0) return '';
-  if (bytes < 1048576) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / 1048576).toFixed(1)} MB`;
-};
-
 // Tabs（参考 Lutris 风格：5个标签页）
 const activeTab = ref('info');
 const tabs = computed(() => [
   { id: 'info', label: '游戏信息' },
   { id: 'game', label: '游戏选项' },
   { id: 'runtime', label: '运行环境' },
-  { id: '3dmigoto', label: '3Dmigoto' },
   { id: 'system', label: '系统选项' },
 ]);
 
@@ -738,18 +564,6 @@ const loadConfig = async () => {
     const data = await apiLoadGameConfig(props.gameName);
     const normalized = normalizeLoadedConfig(data);
     config.basic = normalized.basic;
-    config.threeDMigoto = normalized.threeDMigoto;
-
-    // Default Logic for installDir if empty on first load (user requirement)
-    if (!config.threeDMigoto.installDir && appSettings.dataDir) {
-      try {
-        // "SSMT Data/3Dmigoto/GameName"
-        config.threeDMigoto.installDir = await joinPath(appSettings.dataDir, '3Dmigoto', props.gameName);
-      } catch (err) {
-        console.error(t('gamesettingsmodal.error.failconstructdefaultpath'), err);
-      }
-    }
-
     config.other = normalized.other || {};
     // 恢复系统选项
     selectedGpuIndex.value = typeof config.other.gpuIndex === 'number' ? config.other.gpuIndex : -1;
@@ -792,7 +606,6 @@ const resetToDefault = async () => {
     // 重置配置为默认值
     await apiSaveGameConfig(props.gameName, {
       basic: { gamePreset: 'GenshinImpact', runtimeEnv: 'wine' },
-      threeDMigoto: {},
       other: {}
     } as any);
     await loadConfig();
@@ -860,160 +673,6 @@ const resetBackgroundToDefault = async () => {
 // const canAutoUpdate = computed(() => false);
 // const autoUpdateBackground — 功能保留但暂时注释，待资源目录准备好后启用
 
-// 3Dmigoto Helper Functions
-const pick3dmigotoDir = async () => {
-  try {
-    const selected = await openFileDialog({
-      directory: true,
-      multiple: false,
-      title: '选择3Dmigoto所在目录'
-    });
-    if (selected && typeof selected === 'string') {
-      config.threeDMigoto.installDir = selected;
-    }
-  } catch (e) { console.error(e); }
-};
-
-const open3dmigotoDir = async () => {
-  if (!config.threeDMigoto.installDir) {
-    await showMessage('请先设置 3Dmigoto 目录', { title: '提示', kind: 'info' });
-    return;
-  }
-  try {
-    await ensureDirectory(config.threeDMigoto.installDir);
-    await openInExplorer(config.threeDMigoto.installDir);
-  } catch (e) {
-    console.error(t('gamesettingsmodal.error.failedopendir'), { e: e });
-    await showMessage(`打开目录失败: ${e}`, { title: '错误', kind: 'error' });
-  }
-};
-
-const packageSupportedPresets = [
-  'GenshinImpact',
-  'HonkaiImpact3rd',
-  'HonkaiStarRail',
-  'ZenlessZoneZero',
-  'WutheringWaves',
-  'SnowbreakContainmentZone',
-  'AEMI',
-];
-const canUpdatePackage = computed(() => packageSupportedPresets.includes(config.basic.gamePreset));
-
-const check3DMigotoPackageUpdate = async () => {
-  // 1. Initial Confirmation
-  const checkConfirm = await askConfirm(
-    t('gamesettingsmodal.confirm.checkUpdate.message', {
-      gamePreset: config.basic.gamePreset
-    }),
-    {
-      title: t('gamesettingsmodal.confirm.checkUpdate.title'),
-      kind: 'info'
-    }
-  );
-  if (!checkConfirm) return;
-
-  try {
-    isLoading.value = true;
-
-    // 2. Fetch Info
-    const info = await get3dmigotoLatestRelease(config.basic.gamePreset);
-
-    isLoading.value = false;
-
-    // 3. Show info and ask for second confirmation
-    const updateConfirm = await askConfirm(
-      t('gamesettingsmodal.confirm.versionUpdate.message', {
-        version: info.version,
-        description: info.description
-      }),
-      {
-        title: t('gamesettingsmodal.confirm.versionUpdate.title'),
-        kind: 'info'
-      }
-    );
-
-    if (!updateConfirm) return;
-
-    // 4. Perform Update
-    isLoading.value = true;
-    await apiInstall3dmigotoUpdate(props.gameName, info.downloadUrl);
-
-    await showMessage(
-      t('gamesettingsmodal.message.success.updatedToVersion', {
-        version: info.version
-      }),
-      {
-        title: t('gamesettingsmodal.message.success.title'),
-        kind: 'info'
-      }
-    );
-
-  } catch (e) {
-    console.error(e);
-    await showMessage(
-      t('gamesettingsmodal.message.error.operationFailed', { error: e }),
-      {
-        title: t('gamesettingsmodal.message.error.title'),
-        kind: 'error'
-      }
-    );
-  } finally {
-    isLoading.value = false;
-  }
-};
-
-const pickExe = async (field: 'targetExePath' | 'launcherExePath') => {
-  try {
-    const selected = await openFileDialog({
-      multiple: false,
-      filters: [{ 
-        name: '可执行文件', 
-        extensions: ['exe', 'sh', 'AppImage', 'desktop', '*'] 
-      }],
-      title: '选择可执行文件'
-    });
-    if (selected && typeof selected === 'string') {
-      config.threeDMigoto[field] = selected;
-    }
-  } catch (e) { console.error(e); }
-};
-
-const openExeDir = async (field: 'targetExePath' | 'launcherExePath') => {
-  const path = config.threeDMigoto[field];
-  if (!path) {
-    await showMessage('请先选择文件路径', { title: '提示', kind: 'info' });
-    return;
-  }
-  try {
-    const lastSlash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
-    if (lastSlash > -1) {
-      const dir = path.substring(0, lastSlash);
-      await openInExplorer(dir);
-    } else {
-      await openInExplorer(path);
-    }
-  } catch (e) {
-    console.error(e);
-    await showMessage(`打开目录失败: ${e}`, { title: '错误', kind: 'error' });
-  }
-};
-
-const pickDll = async () => {
-  try {
-    const selected = await openFileDialog({
-      multiple: false,
-      filters: [{ 
-        name: t('gamesettingsmodal.filePicker.dllFilterName'), 
-        extensions: ['dll'] 
-      }],
-      title: t('gamesettingsmodal.filePicker.dllTitle')
-    });
-    if (selected && typeof selected === 'string') {
-      config.threeDMigoto.extraDll = selected;
-    }
-  } catch (e) { console.error(e); }
-};
-
 const pickGameExe = async () => {
   try {
     const selected = await openFileDialog({
@@ -1026,17 +685,6 @@ const pickGameExe = async () => {
       await refreshGameVersion();
     }
   } catch (e) { console.error(e); }
-};
-
-const setDefaultDll = async () => {
-  if (config.threeDMigoto.installDir) {
-    try {
-      const dllPath = await joinPath(config.threeDMigoto.installDir, 'd3d11.dll');
-      config.threeDMigoto.extraDll = dllPath;
-    } catch (e) {
-      console.error(t('gamesettingsmodal.log.joinPathFailed', { error: e }));
-    }
-  }
 };
 
 const createNewConfig = async () => {
@@ -1155,25 +803,6 @@ watch(() => props.gameName, async (newGame, oldGame) => {
   }
 });
 
-// 组件下载进度事件监听
-onMounted(async () => {
-  unlistenComponentDl = await listenEvent('component-download-progress', (event: any) => {
-    const data = event.payload as ComponentDlProgress;
-    if (data.phase === 'done') {
-      componentDlProgress.value = null;
-    } else {
-      componentDlProgress.value = data;
-    }
-  });
-});
-
-onUnmounted(() => {
-  if (unlistenComponentDl) {
-    unlistenComponentDl();
-    unlistenComponentDl = null;
-  }
-});
-
 const close = async () => {
   if (hasUnsavedInfoChanges.value) {
     const discard = await askConfirm(t('gamesettingsmodal.info.unsavedPrompt'), {
@@ -1189,16 +818,6 @@ const close = async () => {
 defineExpose({
   switchTab: (tabId: string) => {
     activeTab.value = tabId;
-  },
-  runPackageUpdate: () => {
-    // Ensure we are on the right tab visually
-    activeTab.value = '3dmigoto';
-    // Run the update check
-    if (canUpdatePackage.value) {
-      check3DMigotoPackageUpdate();
-    } else {
-      showMessage(t('gamesettingsmodal.no_auto_update'), { title: 'Info', kind: 'info' });
-    }
   }
 });
 </script>
@@ -1403,66 +1022,16 @@ defineExpose({
                 </div>
               </div>
 
-              <!-- 远程 Proton 版本下载 -->
+              <!-- Proton 版本提示 -->
               <div class="setting-group">
-                <div class="setting-label">下载 Proton 版本</div>
-                <div class="button-row" style="margin-bottom:10px;">
-                  <button class="action-btn" @click="doFetchRemoteProton" :disabled="isProtonFetching">
-                    {{ isProtonFetching ? '获取中...' : '获取可用版本' }}
-                  </button>
-                </div>
-
-                <div v-if="remoteProtonVersions.length > 0" class="version-list">
-                  <div v-for="rv in remoteProtonVersions" :key="rv.tag" class="version-item">
-                    <div class="version-info">
-                      <span class="version-tag">{{ rv.tag }}</span>
-                      <span class="badge" :class="'badge-' + variantBadgeClass(rv.variant)" style="margin-left:6px;">{{ rv.variant }}</span>
-                      <span v-if="rv.file_size > 0" class="text-muted" style="margin-left:8px;">{{ formatFileSize(rv.file_size) }}</span>
-                    </div>
-                    <div class="version-action">
-                      <span v-if="rv.installed" class="text-ok" style="font-size:13px;">✓ 已安装</span>
-                      <button v-else class="action-btn highlight" style="padding:4px 12px; font-size:12px;"
-                        @click="doDownloadProton(rv)"
-                        :disabled="isProtonDownloading">
-                        {{ isProtonDownloading && protonDownloadTag === rv.tag ? '下载中...' : '下载' }}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <div v-else class="info-sub">
-                  点击"获取可用版本"从 GitHub 获取 GE-Proton 等版本列表。
-                </div>
-
-                <!-- 组件下载进度条 -->
-                <div v-if="componentDlProgress" class="component-dl-progress">
-                  <div class="component-dl-header">
-                    <span class="component-dl-name">{{ componentDlProgress.component }}</span>
-                    <span class="component-dl-phase">
-                      {{ componentDlProgress.phase === 'downloading' ? '下载中' : componentDlProgress.phase === 'extracting' ? '解压中...' : componentDlProgress.phase }}
-                    </span>
-                    <span v-if="componentDlProgress.total > 0 && componentDlProgress.phase === 'downloading'" class="component-dl-pct">
-                      {{ Math.round(componentDlProgress.downloaded / componentDlProgress.total * 100) }}%
-                    </span>
-                  </div>
-                  <div class="component-dl-track">
-                    <div class="component-dl-fill" :class="{ 'component-dl-extracting': componentDlProgress.phase === 'extracting' }"
-                      :style="{ width: componentDlProgress.total > 0 ? Math.round(componentDlProgress.downloaded / componentDlProgress.total * 100) + '%' : '100%' }">
-                    </div>
-                  </div>
-                  <div v-if="componentDlProgress.total > 0 && componentDlProgress.phase === 'downloading'" class="component-dl-size">
-                    {{ formatFileSize(componentDlProgress.downloaded) }} / {{ formatFileSize(componentDlProgress.total) }}
-                  </div>
+                <div class="info-sub" style="margin-top:4px;">
+                  如需下载更多 Proton 版本，请前往「设置 → Proton 管理」页面。
                 </div>
               </div>
 
               <!-- DXVK 版本管理 -->
               <div class="setting-group">
                 <div class="setting-label">DXVK (DirectX → Vulkan)</div>
-
-                <!-- DXVK 未安装警告 -->
-                <div v-if="dxvkInstalledStatus && !dxvkInstalledStatus.installed" class="dxvk-warning">
-                  ⚠ DXVK 未安装。DirectX 9/10/11 游戏需要 DXVK 才能正常渲染，建议在下方选择版本并安装。
-                </div>
 
                 <!-- 当前安装状态 -->
                 <div class="info-card" style="margin-bottom: 10px;">
@@ -1472,7 +1041,7 @@ defineExpose({
                       {{ dxvkInstalledStatus.installed ? '✓ 已安装' : '✗ 未安装' }}
                     </span>
                     <template v-if="dxvkInstalledStatus.installed">
-                      <span class="info-key">检测版本</span>
+                      <span class="info-key">当前版本</span>
                       <span class="info-val">{{ dxvkInstalledStatus.version || '未知' }}</span>
                       <span class="info-key">DLL 文件</span>
                       <span class="info-val">{{ dxvkInstalledStatus.dlls_found.join(', ') }}</span>
@@ -1481,36 +1050,37 @@ defineExpose({
                   <div v-else class="text-muted" style="font-size:13px">加载中...</div>
                 </div>
 
-                <!-- 版本选择 -->
-                <div class="flex-row" style="align-items:flex-end; gap:8px; margin-top:8px;">
-                  <div style="flex:1">
-                    <select v-model="dxvkSelectedVersion" class="custom-input" style="width:100%">
-                      <option value="" disabled>选择 DXVK 版本...</option>
-                      <option v-for="v in dxvkVersionList" :key="v.version" :value="v.version">
-                        {{ v.version }}
-                        {{ v.isLocal ? ' [本地]' : '' }}
-                        {{ v.fileSize > 0 ? ` (${formatFileSize(v.fileSize)})` : '' }}
-                      </option>
-                    </select>
+                <!-- 本地版本安装/卸载 -->
+                <div v-if="dxvkLocalVersions.length > 0">
+                  <div class="flex-row" style="align-items:flex-end; gap:8px; margin-top:8px;">
+                    <div style="flex:1">
+                      <select v-model="dxvkSelectedKey" class="custom-input" style="width:100%">
+                        <option value="" disabled>选择本地已缓存的 DXVK 版本...</option>
+                        <optgroup v-if="dxvkLocalVersions.some(v => v.variant === 'dxvk')" label="DXVK (官方)">
+                          <option v-for="lv in dxvkLocalVersions.filter(v => v.variant === 'dxvk')" :key="`${lv.version}|dxvk`" :value="`${lv.version}|dxvk`">
+                            {{ lv.version }}
+                          </option>
+                        </optgroup>
+                        <optgroup v-if="dxvkLocalVersions.some(v => v.variant === 'gplasync')" label="DXVK-GPLAsync">
+                          <option v-for="lv in dxvkLocalVersions.filter(v => v.variant === 'gplasync')" :key="`${lv.version}|gplasync`" :value="`${lv.version}|gplasync`">
+                            {{ lv.version }}
+                          </option>
+                        </optgroup>
+                      </select>
+                    </div>
                   </div>
-                  <button class="action-btn" @click="doFetchDxvkVersions" :disabled="isDxvkFetching" style="flex:0 0 auto; white-space:nowrap;">
-                    {{ isDxvkFetching ? '获取中...' : '刷新列表' }}
-                  </button>
+                  <div class="button-row" style="margin-top:8px;">
+                    <button class="action-btn highlight" @click="doInstallDxvk" :disabled="isDxvkBusy || !dxvkSelectedKey">
+                      {{ isDxvkBusy ? '应用中...' : '应用 / 切换版本' }}
+                    </button>
+                    <button class="action-btn delete" @click="doUninstallDxvk" :disabled="isDxvkBusy || !dxvkInstalledStatus?.installed">
+                      卸载 DXVK
+                    </button>
+                  </div>
                 </div>
 
-                <!-- 操作按钮 -->
-                <div class="button-row" style="margin-top:8px;">
-                  <button class="action-btn highlight" @click="doInstallDxvk" :disabled="isDxvkBusy || !dxvkSelectedVersion">
-                    {{ isDxvkBusy ? '安装中...' : '安装 / 切换版本' }}
-                  </button>
-                  <button class="action-btn delete" @click="doUninstallDxvk" :disabled="isDxvkBusy || !dxvkInstalledStatus?.installed">
-                    卸载 DXVK
-                  </button>
-                </div>
-
-                <!-- 本地缓存信息 -->
-                <div v-if="dxvkLocalVersions.length > 0" class="info-sub" style="margin-top:8px;">
-                  本地已缓存 {{ dxvkLocalVersions.length }} 个版本：{{ dxvkLocalVersions.map(v => v.version).join(', ') }}
+                <div class="info-sub" style="margin-top:8px;">
+                  如需下载更多 DXVK 版本，请前往「设置 → DXVK 管理」页面。
                 </div>
               </div>
 
@@ -1590,97 +1160,6 @@ defineExpose({
               <div class="button-row">
                 <button class="action-btn highlight" @click="saveRuntimeTabSettings">保存运行环境配置</button>
               </div>
-            </div>
-
-            <!-- ==================== Tab 4: 3Dmigoto ==================== -->
-            <div v-if="activeTab === '3dmigoto'" class="tab-pane">
-
-              <div class="setting-group">
-                <div class="setting-label">{{ t('gamesettingsmodal.migotodir') }}</div>
-                <input v-model="config.threeDMigoto.installDir" type="text" class="custom-input"
-                  :placeholder="t('gamesettingsmodal.migotodir_placeholder')" />
-                <div class="button-row">
-                  <button class="action-btn" @click="pick3dmigotoDir">{{ t('gamesettingsmodal.selectfolder') }}</button>
-                  <button class="action-btn" @click="open3dmigotoDir">{{ t('gamesettingsmodal.openfolder') }}</button>
-                  <button v-if="canUpdatePackage" class="action-btn highlight"
-                    @click="check3DMigotoPackageUpdate">{{ t('gamesettingsmodal.updatepackage') }}</button>
-                </div>
-              </div>
-
-              <div class="setting-group">
-                <div class="setting-label">{{ t('gamesettingsmodal.targetexe') }}</div>
-                <input v-model="config.threeDMigoto.targetExePath" type="text" class="custom-input"
-                  :placeholder="t('gamesettingsmodal.targetexe_placeholder')" />
-                <div class="button-row">
-                  <button class="action-btn" @click="pickExe('targetExePath')">{{ t('gamesettingsmodal.selectfile') }}</button>
-                  <button class="action-btn" @click="openExeDir('targetExePath')">{{ t('gamesettingsmodal.openlocation') }}</button>
-                </div>
-              </div>
-
-              <div class="setting-group">
-                <div class="setting-label">{{ t('gamesettingsmodal.launcherexe') }}</div>
-                <input v-model="config.threeDMigoto.launcherExePath" type="text" class="custom-input"
-                  :placeholder="t('gamesettingsmodal.launcherexe_placeholder')" />
-                <div class="button-row">
-                  <button class="action-btn" @click="pickExe('launcherExePath')">{{ t('gamesettingsmodal.selectfile') }}</button>
-                  <button class="action-btn" @click="openExeDir('launcherExePath')">{{ t('gamesettingsmodal.openlocation') }}</button>
-                </div>
-              </div>
-
-              <div class="setting-group">
-                <div class="setting-label">{{ t('gamesettingsmodal.launchargs') }}</div>
-                <input v-model="config.threeDMigoto.launchArgs" type="text" class="custom-input"
-                  :placeholder="t('gamesettingsmodal.launchargs_placeholder')" />
-              </div>
-
-              <div class="setting-checkbox-row">
-                <label class="checkbox-label">
-                  <input type="checkbox" v-model="config.threeDMigoto.showErrorPopup" />
-                  {{ t('gamesettingsmodal.show_warnings') }}
-                </label>
-              </div>
-
-              <div class="setting-checkbox-row">
-                <label class="checkbox-label">
-                  <input type="checkbox" v-model="config.threeDMigoto.autoSetAnalyseOptions" />
-                  {{ t('gamesettingsmodal.auto_analyse') }}
-                </label>
-              </div>
-
-              <div class="setting-checkbox-row">
-                <label class="checkbox-label">
-                  <input type="checkbox" v-model="config.threeDMigoto.useShell" />
-                  {{ t('gamesettingsmodal.use_shell') }}
-                </label>
-              </div>
-
-              <div class="setting-checkbox-row">
-                <label class="checkbox-label">
-                  <input type="checkbox" v-model="config.threeDMigoto.useUpx" />
-                  {{ t('gamesettingsmodal.use_upx') }}
-                </label>
-              </div>
-
-              <div class="flex-row">
-                <div class="setting-group half-width">
-                  <div class="setting-label">{{ t('gamesettingsmodal.dll_delay') }}</div>
-                  <input v-model.number="config.threeDMigoto.delay" type="number" class="custom-input" />
-                </div>
-                <div class="setting-group half-width">
-                  <div class="setting-label">{{ t('gamesettingsmodal.auto_exit') }}</div>
-                  <input v-model.number="config.threeDMigoto.autoExitSeconds" type="number" class="custom-input" />
-                </div>
-              </div>
-
-              <div class="setting-group">
-                <div class="setting-label">{{ t('gamesettingsmodal.extra_dll') }}</div>
-                <input v-model="config.threeDMigoto.extraDll" type="text" class="custom-input" :placeholder="t('gamesettingsmodal.extra_dll_placeholder')" />
-                <div class="button-row">
-                  <button class="action-btn" @click="pickDll">{{ t('gamesettingsmodal.selectfile') }}</button>
-                  <button class="action-btn highlight" @click="setDefaultDll">{{ t('gamesettingsmodal.setdefaultdll') }}</button>
-                </div>
-              </div>
-
             </div>
 
             <!-- ==================== Tab 5: 系统选项 ==================== -->

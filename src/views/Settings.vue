@@ -2,26 +2,36 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { appSettings } from '../store'
 import {
+  downloadDxvk,
   downloadProton,
+  fetchDxvkVersions,
   fetchRemoteProtonGrouped,
+  getVersionCheckInfo,
   getProtonCatalog,
   openFileDialog,
   openLogWindow,
   saveProtonCatalog,
+  scanLocalDxvk,
   scanLocalProtonGrouped,
   showMessage,
+  type DxvkLocalVersion,
+  type DxvkRemoteVersion,
   type ProtonCatalog,
   type ProtonFamily,
   type ProtonFamilyLocalGroup,
   type ProtonFamilyRemoteGroup,
   type ProtonRemoteVersionItem,
   type ProtonSource,
+  type VersionCheckInfo,
 } from '../api';
 import { useI18n } from 'vue-i18n';
 
 const { t } = useI18n()
 
 const activeMenu = ref('basic')
+const versionInfo = ref<VersionCheckInfo | null>(null);
+const isVersionChecking = ref(false);
+const versionCheckLoaded = ref(false);
 
 const protonCatalog = ref<ProtonCatalog>({ families: [], sources: [] });
 const localGroups = ref<ProtonFamilyLocalGroup[]>([]);
@@ -46,6 +56,19 @@ const editableSources = ref<ProtonSource[]>([]);
 const tr = (key: string, fallback: string) => {
   const value = t(key);
   return value === key ? fallback : value;
+};
+
+const checkVersionInfo = async () => {
+  if (isVersionChecking.value) return;
+  try {
+    isVersionChecking.value = true;
+    versionInfo.value = await getVersionCheckInfo();
+    versionCheckLoaded.value = true;
+  } catch (e) {
+    await showMessage(`版本检查失败: ${e}`, { title: '错误', kind: 'error' });
+  } finally {
+    isVersionChecking.value = false;
+  }
 };
 
 const remoteItemKey = (item: ProtonRemoteVersionItem) => `${item.tag}@@${item.source_repo}`;
@@ -317,11 +340,14 @@ const installSelectedForFamily = async (familyKey: string) => {
     isDownloading.value = true;
     downloadingFamilyKey.value = familyKey;
     downloadingTag.value = item.tag;
+    showDlDialog('下载 Proton', `正在下载 ${item.tag}，请稍候...`);
     const message = await downloadProton(item.download_url, item.tag, familyKey);
-    await showMessage(message, { title: '下载完成', kind: 'info' });
+    dlDialogStatus.value = 'success';
+    dlDialogMessage.value = message;
     await Promise.all([refreshLocalGrouped(), refreshRemoteGrouped()]);
   } catch (e) {
-    await showMessage(`下载 Proton 失败: ${e}`, { title: '错误', kind: 'error' });
+    dlDialogStatus.value = 'error';
+    dlDialogMessage.value = `下载 Proton 失败: ${e}`;
   } finally {
     isDownloading.value = false;
     downloadingFamilyKey.value = '';
@@ -351,6 +377,155 @@ const familyCards = computed(() => {
     }));
 });
 
+// ============================================================
+// 下载弹窗状态
+// ============================================================
+const dlDialogVisible = ref(false);
+const dlDialogTitle = ref('');
+const dlDialogMessage = ref('');
+const dlDialogStatus = ref<'downloading' | 'success' | 'error'>('downloading');
+
+const showDlDialog = (title: string, message: string) => {
+  dlDialogTitle.value = title;
+  dlDialogMessage.value = message;
+  dlDialogStatus.value = 'downloading';
+  dlDialogVisible.value = true;
+};
+
+const closeDlDialog = () => {
+  dlDialogVisible.value = false;
+};
+
+// ============================================================
+// DXVK 管理
+// ============================================================
+const dxvkLocalVersions = ref<DxvkLocalVersion[]>([]);
+const dxvkRemoteVersions = ref<DxvkRemoteVersion[]>([]);
+const dxvkSelectedKey = ref('');  // "version|variant" 格式
+const isDxvkFetching = ref(false);
+const isDxvkDownloading = ref(false);
+const dxvkLoaded = ref(false);
+
+interface DxvkVersionItem {
+  version: string;
+  variant: string;
+  key: string;       // "version|variant"
+  isLocal: boolean;
+  isRemote: boolean;
+  fileSize: number;
+  publishedAt: string;
+}
+
+const dxvkVersionList = computed<DxvkVersionItem[]>(() => {
+  const map = new Map<string, DxvkVersionItem>();
+
+  for (const rv of dxvkRemoteVersions.value) {
+    const key = `${rv.version}|${rv.variant}`;
+    map.set(key, {
+      version: rv.version,
+      variant: rv.variant,
+      key,
+      isLocal: rv.is_local,
+      isRemote: true,
+      fileSize: rv.file_size,
+      publishedAt: rv.published_at,
+    });
+  }
+
+  for (const lv of dxvkLocalVersions.value) {
+    const key = `${lv.version}|${lv.variant}`;
+    if (!map.has(key)) {
+      map.set(key, {
+        version: lv.version,
+        variant: lv.variant,
+        key,
+        isLocal: true,
+        isRemote: false,
+        fileSize: 0,
+        publishedAt: '',
+      });
+    }
+  }
+
+  return Array.from(map.values()).sort((a, b) => {
+    const cmp = b.version.localeCompare(a.version);
+    return cmp !== 0 ? cmp : a.variant.localeCompare(b.variant);
+  });
+});
+
+const selectedDxvkItem = computed(() =>
+  dxvkVersionList.value.find(v => v.key === dxvkSelectedKey.value)
+);
+
+const dxvkGroupedList = computed(() => [
+  {
+    label: 'DXVK (官方)',
+    items: dxvkVersionList.value.filter(v => v.variant === 'dxvk'),
+  },
+  {
+    label: 'DXVK-GPLAsync',
+    items: dxvkVersionList.value.filter(v => v.variant === 'gplasync'),
+  },
+].filter(g => g.items.length > 0));
+
+const refreshDxvkLocal = async () => {
+  try {
+    dxvkLocalVersions.value = await scanLocalDxvk();
+  } catch (e) {
+    console.warn('[dxvk] 扫描本地版本失败:', e);
+  }
+};
+
+const dxvkFetchWarning = ref('');
+
+const refreshDxvkRemote = async () => {
+  if (isDxvkFetching.value) return;
+  dxvkFetchWarning.value = '';
+  try {
+    isDxvkFetching.value = true;
+    dxvkRemoteVersions.value = await fetchDxvkVersions();
+    if (!dxvkSelectedKey.value && dxvkRemoteVersions.value.length > 0) {
+      const first = dxvkRemoteVersions.value[0];
+      dxvkSelectedKey.value = `${first.version}|${first.variant}`;
+    }
+    // 检查是否有缺失的 variant
+    const hasDxvk = dxvkRemoteVersions.value.some(v => v.variant === 'dxvk');
+    const hasGpl = dxvkRemoteVersions.value.some(v => v.variant === 'gplasync');
+    const missing: string[] = [];
+    if (!hasDxvk) missing.push('官方 DXVK (GitHub API 限流)');
+    if (!hasGpl) missing.push('DXVK-GPLAsync');
+    if (missing.length > 0) {
+      dxvkFetchWarning.value = `部分版本获取失败: ${missing.join('、')}，请稍后重试。`;
+    }
+  } catch (e) {
+    await showMessage(`获取 DXVK 版本列表失败: ${e}`, { title: '错误', kind: 'error' });
+  } finally {
+    isDxvkFetching.value = false;
+  }
+};
+
+const doDownloadDxvk = async () => {
+  const item = selectedDxvkItem.value;
+  if (isDxvkDownloading.value || !item) return;
+  try {
+    isDxvkDownloading.value = true;
+    const label = item.variant === 'gplasync' ? 'DXVK-GPLAsync' : 'DXVK';
+    showDlDialog(`下载 ${label}`, `正在下载 ${label} ${item.version}，请稍候...`);
+    const result = await downloadDxvk(item.version, item.variant);
+    dlDialogStatus.value = 'success';
+    dlDialogMessage.value = result;
+    await refreshDxvkLocal();
+    dxvkRemoteVersions.value = await fetchDxvkVersions();
+  } catch (e) {
+    dlDialogStatus.value = 'error';
+    dlDialogMessage.value = `下载失败: ${e}`;
+  } finally {
+    isDxvkDownloading.value = false;
+  }
+};
+
+const dxvkLocalCount = computed(() => dxvkLocalVersions.value.length);
+
 const selectCacheDir = async () => {
   const selected = await openFileDialog({
     directory: true,
@@ -378,13 +553,20 @@ const selectDataDir = async () => {
 watch(
   () => activeMenu.value,
   async (menu) => {
-    if (menu !== 'proton') return;
-    if (protonLoaded.value) return;
-
-    await loadCatalog();
-    await refreshLocalGrouped();
-    await refreshRemoteGrouped();
-    protonLoaded.value = true;
+    if (menu === 'version' && !versionCheckLoaded.value) {
+      await checkVersionInfo();
+    }
+    if (menu === 'proton' && !protonLoaded.value) {
+      await loadCatalog();
+      await refreshLocalGrouped();
+      await refreshRemoteGrouped();
+      protonLoaded.value = true;
+    }
+    if (menu === 'dxvk' && !dxvkLoaded.value) {
+      await refreshDxvkLocal();
+      await refreshDxvkRemote();
+      dxvkLoaded.value = true;
+    }
   },
   { immediate: true }
 );
@@ -411,9 +593,17 @@ watch(
           <el-icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></el-icon>
           <span>{{ t('settings.page_display') }}</span>
         </el-menu-item>
+        <el-menu-item index="version">
+          <el-icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6v6l4 2"/><circle cx="12" cy="12" r="9"/></svg></el-icon>
+          <span>{{ tr('settings.version_check_title', '版本检查') }}</span>
+        </el-menu-item>
         <el-menu-item index="proton">
           <el-icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 16V8a2 2 0 0 0-1-1.73l-6-3.46a2 2 0 0 0-2 0L5 6.27A2 2 0 0 0 4 8v8a2 2 0 0 0 1 1.73l6 3.46a2 2 0 0 0 2 0l6-3.46A2 2 0 0 0 20 16z"></path><polyline points="7.5 4.21 12 6.81 16.5 4.21"></polyline><polyline points="7.5 19.79 7.5 14.6 3 12"></polyline><polyline points="21 12 16.5 14.6 16.5 19.79"></polyline><polyline points="12 22.08 12 16.9 7.5 14.3"></polyline><polyline points="12 16.9 16.5 14.3"></polyline><polyline points="12 6.81 12 12"></polyline></svg></el-icon>
           <span>{{ tr('settings.proton_manage_title', 'Proton 管理') }}</span>
+        </el-menu-item>
+        <el-menu-item index="dxvk">
+          <el-icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20h20"/><path d="M5 20V8l7-5 7 5v12"/><path d="M9 20v-4h6v4"/><path d="M9 12h6"/><path d="M9 16h6"/></svg></el-icon>
+          <span>{{ tr('settings.dxvk_manage_title', 'DXVK 管理') }}</span>
         </el-menu-item>
       </el-menu>
     </div>
@@ -492,9 +682,6 @@ watch(
       <div v-show="activeMenu === 'display'" class="settings-panel">
         <div class="panel-title">{{ t('settings.page_display') }}</div>
         <el-form label-width="140px">
-          <el-form-item :label="t('settings.modpage')">
-            <el-switch v-model="appSettings.showMods" />
-          </el-form-item>
           <el-form-item :label="t('settings.websitepage')">
             <el-switch v-model="appSettings.showWebsites" />
           </el-form-item>
@@ -679,7 +866,137 @@ watch(
           </div>
         </div>
       </div>
+
+      <!-- DXVK 管理 -->
+      <div v-show="activeMenu === 'dxvk'" class="settings-panel dxvk-panel">
+        <div class="panel-title">{{ tr('settings.dxvk_manage_title', 'DXVK 管理') }}</div>
+
+        <div class="section-block">
+          <div class="section-header">
+            <div>
+              <div class="section-title">DXVK (DirectX → Vulkan)</div>
+              <div class="section-hint">
+                {{ tr('settings.dxvk_hint', '在此下载和管理 DXVK 版本，并安装到游戏的 Wine Prefix 中。') }}
+              </div>
+            </div>
+            <div class="toolbar-actions">
+              <el-button size="small" @click="refreshDxvkLocal">
+                {{ tr('settings.dxvk_refresh_local', '刷新本地') }}
+              </el-button>
+              <el-button size="small" @click="refreshDxvkRemote" :loading="isDxvkFetching">
+                {{ isDxvkFetching ? tr('settings.dxvk_fetching', '获取中...') : tr('settings.dxvk_refresh_remote', '获取可用版本') }}
+              </el-button>
+            </div>
+          </div>
+
+          <!-- 本地已缓存版本 -->
+          <div class="dxvk-section">
+            <div class="editor-subtitle" style="margin-top: 14px;">
+              {{ tr('settings.dxvk_local_title', '本地已缓存') }}
+              <span class="dxvk-count">({{ dxvkLocalCount }} {{ tr('settings.dxvk_versions', '个版本') }})</span>
+            </div>
+            <div v-if="dxvkLocalVersions.length === 0" class="row-sub" style="margin-top: 8px;">
+              {{ tr('settings.dxvk_no_local', '暂无本地缓存版本，请先获取可用版本并下载。') }}
+            </div>
+            <div v-else class="dxvk-local-list">
+              <div v-for="lv in dxvkLocalVersions" :key="`${lv.version}|${lv.variant}`" class="dxvk-local-item">
+                <div class="dxvk-local-ver">{{ lv.version }}</div>
+                <el-tag v-if="lv.variant === 'gplasync'" type="warning" size="small">GPLAsync</el-tag>
+                <el-tag v-if="lv.extracted" type="success" size="small">{{ tr('settings.dxvk_extracted', '已解压') }}</el-tag>
+                <el-tag v-else type="info" size="small">{{ tr('settings.dxvk_archive_only', '仅存档') }}</el-tag>
+                <div class="dxvk-local-path">{{ lv.path }}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 版本选择 + 下载 -->
+          <div class="dxvk-section" style="margin-top: 16px;">
+            <div class="editor-subtitle">{{ tr('settings.dxvk_download_title', '下载 DXVK 版本') }}</div>
+            <div v-if="dxvkFetchWarning" class="dxvk-fetch-warning" style="margin-bottom: 8px;">
+              ⚠ {{ dxvkFetchWarning }}
+            </div>
+            <div class="dxvk-download-row">
+              <el-select
+                v-model="dxvkSelectedKey"
+                :placeholder="tr('settings.dxvk_select_version', '选择版本...')"
+                class="dxvk-version-select"
+                filterable
+              >
+                <el-option-group
+                  v-for="group in dxvkGroupedList"
+                  :key="group.label"
+                  :label="group.label"
+                >
+                  <el-option
+                    v-for="v in group.items"
+                    :key="v.key"
+                    :label="`${v.variant === 'gplasync' ? '[GPLAsync] ' : ''}${v.version}${v.isLocal ? ' [本地]' : ''}${v.fileSize > 0 ? ` (${formatBytes(v.fileSize)})` : ''}`"
+                    :value="v.key"
+                  >
+                    <div class="remote-option-row">
+                      <span>
+                        {{ v.version }}
+                        <el-tag v-if="v.isLocal" type="success" size="small" style="margin-left: 6px;">{{ tr('settings.dxvk_cached', '已缓存') }}</el-tag>
+                      </span>
+                      <span class="remote-option-meta">
+                        {{ v.fileSize > 0 ? formatBytes(v.fileSize) : '' }}
+                        {{ v.publishedAt ? `· ${formatDate(v.publishedAt)}` : '' }}
+                      </span>
+                    </div>
+                  </el-option>
+                </el-option-group>
+              </el-select>
+              <el-button
+                type="primary"
+                :disabled="!selectedDxvkItem || isDxvkDownloading || selectedDxvkItem?.isLocal"
+                :loading="isDxvkDownloading"
+                @click="doDownloadDxvk"
+              >
+                {{
+                  isDxvkDownloading
+                    ? tr('settings.dxvk_downloading', '下载中...')
+                    : selectedDxvkItem?.isLocal
+                      ? tr('settings.dxvk_already_cached', '已缓存')
+                      : tr('settings.dxvk_download', '下载')
+                }}
+              </el-button>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </div>
+
+    <!-- 下载进度弹窗 -->
+    <el-dialog
+      v-model="dlDialogVisible"
+      :title="dlDialogTitle"
+      width="420px"
+      :close-on-click-modal="dlDialogStatus !== 'downloading'"
+      :close-on-press-escape="dlDialogStatus !== 'downloading'"
+      :show-close="dlDialogStatus !== 'downloading'"
+      align-center
+    >
+      <div class="dl-dialog-body">
+        <div v-if="dlDialogStatus === 'downloading'" class="dl-dialog-loading">
+          <el-icon class="dl-dialog-spinner"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg></el-icon>
+          <div class="dl-dialog-text">{{ dlDialogMessage }}</div>
+        </div>
+        <div v-else-if="dlDialogStatus === 'success'" class="dl-dialog-result dl-dialog-success">
+          <el-icon style="font-size: 32px; color: #67c23a;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></el-icon>
+          <div class="dl-dialog-text">{{ dlDialogMessage }}</div>
+        </div>
+        <div v-else class="dl-dialog-result dl-dialog-error">
+          <el-icon style="font-size: 32px; color: #f56c6c;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></el-icon>
+          <div class="dl-dialog-text">{{ dlDialogMessage }}</div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button v-if="dlDialogStatus !== 'downloading'" type="primary" @click="closeDlDialog">
+          确定
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -910,6 +1227,147 @@ watch(
 
 .provider-select {
   width: 100%;
+}
+
+.dxvk-panel {
+  max-width: 860px;
+}
+
+.dxvk-section {
+  margin-top: 8px;
+}
+
+.dxvk-local-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.dxvk-local-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.14);
+}
+
+.dxvk-local-ver {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e8e8e8;
+  min-width: 60px;
+}
+
+.dxvk-local-path {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
+  word-break: break-all;
+  flex: 1;
+}
+
+.dxvk-count {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 400;
+  margin-left: 6px;
+}
+
+.dxvk-download-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.dxvk-version-select {
+  flex: 1;
+}
+
+.dxvk-game-status {
+  margin-top: 8px;
+}
+
+.dxvk-status-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.14);
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dxvk-status-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: #e0e0e0;
+}
+
+.dxvk-status-label {
+  min-width: 70px;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+}
+
+.text-ok {
+  color: #67c23a;
+}
+
+.text-err {
+  color: #f56c6c;
+}
+
+.dl-dialog-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16px 0;
+}
+
+.dl-dialog-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.dl-dialog-spinner {
+  font-size: 36px;
+  color: #409eff;
+  animation: dl-spin 1.2s linear infinite;
+}
+
+@keyframes dl-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.dl-dialog-result {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.dl-dialog-text {
+  font-size: 14px;
+  color: #e0e0e0;
+  text-align: center;
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+.dxvk-fetch-warning {
+  font-size: 12px;
+  color: #e6a23c;
+  background: rgba(230, 162, 60, 0.1);
+  border: 1px solid rgba(230, 162, 60, 0.3);
+  border-radius: 4px;
+  padding: 6px 10px;
 }
 
 @media (max-width: 1280px) {

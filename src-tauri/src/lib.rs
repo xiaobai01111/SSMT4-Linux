@@ -28,7 +28,6 @@ pub fn run() {
             }
         }))
         .manage(Mutex::new(AppConfig::default()))
-        .manage(Mutex::new(commands::mod_manager::ModWatcher::default()))
         .setup(bootstrap::setup)
         .invoke_handler(commands_registry::handler())
         .run(tauri::generate_context!())

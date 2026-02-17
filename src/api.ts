@@ -24,7 +24,6 @@ export interface AppSettings {
   cacheDir: string;
   currentConfigName: string;
   githubToken: string;
-  showMods: boolean;
   showWebsites: boolean;
   showDocuments: boolean;
   locale: string;
@@ -48,7 +47,6 @@ export interface GameConfig {
     gamePreset: string;
     backgroundType?: 'Image' | 'Video';
   };
-  threeDMigoto: any;
   other: any;
 }
 
@@ -88,7 +86,6 @@ export interface PresetCatalogItem {
   defaultFolder: string;
   supportedDownload: boolean;
   supportedProtection: boolean;
-  supported3dmigoto: boolean;
 }
 
 export interface GameInfoMetaPatch {
@@ -145,24 +142,6 @@ export interface GameKeyMigrationResult {
   message: string;
   backupDir?: string | null;
   conflicts: string[];
-}
-
-export interface ModScanResult {
-  mods: any[];
-  groups: any[];
-}
-
-export interface ArchivePreview {
-  root_dirs: string[];
-  file_count: number;
-  has_ini: boolean;
-  format: string;
-}
-
-export interface UpdateInfo {
-  version: string;
-  description: string;
-  downloadUrl: string;
 }
 
 // ============================================================
@@ -250,12 +229,14 @@ export interface PrefixTemplate {
 // DXVK 版本管理
 export interface DxvkLocalVersion {
   version: string;
+  variant: string;
   extracted: boolean;
   path: string;
 }
 
 export interface DxvkRemoteVersion {
   version: string;
+  variant: string;
   tag_name: string;
   download_url: string;
   file_size: number;
@@ -439,6 +420,17 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
   return invoke('save_settings', { settings });
 }
 
+export interface VersionCheckInfo {
+  currentVersion: string;
+  latestVersion: string;
+  hasUpdate: boolean;
+  updateLog: string;
+}
+
+export async function getVersionCheckInfo(): Promise<VersionCheckInfo> {
+  return invoke<VersionCheckInfo>('get_version_check_info');
+}
+
 // ============================================================
 // Common Commands
 // ============================================================
@@ -591,16 +583,6 @@ export async function updateGameBackground(
   return invoke('update_game_background', { gameName, gamePreset, bgType });
 }
 
-export async function get3dmigotoLatestRelease(gamePreset: string): Promise<UpdateInfo> {
-  return invoke<UpdateInfo>('get_3dmigoto_latest_release', { gamePreset });
-}
-
-export async function install3dmigotoUpdate(
-  gameName: string, downloadUrl: string
-): Promise<void> {
-  return invoke('install_3dmigoto_update', { gameName, downloadUrl });
-}
-
 // ============================================================
 // Game Launcher Commands
 // ============================================================
@@ -609,125 +591,6 @@ export async function startGame(
   gameName: string, gameExePath: string, wineVersionId: string
 ): Promise<string> {
   return invoke<string>('start_game', { gameName, gameExePath, wineVersionId });
-}
-
-export async function check3dmigotoIntegrity(gameName: string, gamePath: string): Promise<boolean> {
-  return invoke<boolean>('check_3dmigoto_integrity', { gameName, gamePath });
-}
-
-export async function toggleSymlink(gamePath: string, enabled: boolean): Promise<boolean> {
-  return invoke<boolean>('toggle_symlink', { gamePath, enabled });
-}
-
-export async function getSymlinkStatus(gamePath: string): Promise<boolean> {
-  return invoke<boolean>('get_symlink_status', { gamePath });
-}
-
-// ============================================================
-// Mod Manager Commands
-// ============================================================
-
-export async function scanMods(gameName: string): Promise<ModScanResult> {
-  return invoke<ModScanResult>('scan_mods', { gameName });
-}
-
-export async function toggleMod(
-  gameName: string, modRelativePath: string, enable: boolean
-): Promise<string> {
-  return invoke<string>('toggle_mod', { gameName, modRelativePath, enable });
-}
-
-export async function watchMods(gameName: string): Promise<void> {
-  return invoke('watch_mods', { gameName });
-}
-
-export async function unwatchMods(): Promise<void> {
-  return invoke('unwatch_mods');
-}
-
-export async function createModGroup(gameName: string, groupName: string): Promise<void> {
-  return invoke('create_mod_group', { gameName, groupName });
-}
-
-export async function setModGroupIcon(
-  gameName: string, groupPath: string, iconPath: string
-): Promise<void> {
-  return invoke('set_mod_group_icon', { gameName, groupPath, iconPath });
-}
-
-export async function openModGroupFolder(gameName: string, groupPath: string): Promise<void> {
-  return invoke('open_mod_group_folder', { gameName, groupPath });
-}
-
-export async function openGameModsFolder(gameName: string): Promise<void> {
-  return invoke('open_game_mods_folder', { gameName });
-}
-
-export async function renameModGroup(
-  gameName: string, oldGroup: string, newGroup: string
-): Promise<void> {
-  return invoke('rename_mod_group', { gameName, oldGroup, newGroup });
-}
-
-export async function deleteModGroup(gameName: string, groupName: string): Promise<void> {
-  return invoke('delete_mod_group', { gameName, groupName });
-}
-
-export async function deleteMod(gameName: string, modRelativePath: string): Promise<void> {
-  return invoke('delete_mod', { gameName, modRelativePath });
-}
-
-export async function moveModToGroup(
-  gameName: string, modId: string, newGroup: string
-): Promise<void> {
-  return invoke('move_mod_to_group', { gameName, modId, newGroup });
-}
-
-export async function previewModArchive(path: string): Promise<ArchivePreview> {
-  const raw = await invoke<ArchivePreview | string[]>('preview_mod_archive', { path });
-
-  // Backward compatibility: older backend may return string[] file list.
-  if (Array.isArray(raw)) {
-    const files = raw.filter((item): item is string => typeof item === 'string');
-    const rootDirs: string[] = [];
-    const seen = new Set<string>();
-    let hasIni = false;
-
-    for (const file of files) {
-      const normalized = file.replace(/\\/g, '/').replace(/^\.?\//, '').replace(/^\/+/, '');
-      if (!normalized) continue;
-
-      if (normalized.toLowerCase().endsWith('.ini')) {
-        hasIni = true;
-      }
-
-      const idx = normalized.indexOf('/');
-      if (idx > 0) {
-        const root = normalized.slice(0, idx);
-        if (!seen.has(root)) {
-          seen.add(root);
-          rootDirs.push(root);
-        }
-      }
-    }
-
-    const ext = path.split('.').pop()?.toLowerCase() || 'unknown';
-    return {
-      root_dirs: rootDirs,
-      file_count: files.length,
-      has_ini: hasIni,
-      format: ext,
-    };
-  }
-
-  return raw;
-}
-
-export async function installModArchive(
-  gameName: string, archivePath: string, targetName: string,
-  targetGroup: string, password?: string | null
-): Promise<void> {
-  return invoke('install_mod_archive', { gameName, archivePath, targetName, targetGroup, password });
 }
 
 // ============================================================
@@ -784,8 +647,8 @@ export async function getPrefixInfo(gameId: string): Promise<PrefixInfo> {
   return invoke<PrefixInfo>('get_prefix_info', { gameId });
 }
 
-export async function installDxvk(gameId: string, version: string): Promise<string> {
-  return invoke<string>('install_dxvk', { gameId, version });
+export async function installDxvk(gameId: string, version: string, variant: string): Promise<string> {
+  return invoke<string>('install_dxvk', { gameId, version, variant });
 }
 
 export async function uninstallDxvk(gameId: string): Promise<string> {
@@ -803,6 +666,10 @@ export async function detectDxvkStatus(gameId: string): Promise<DxvkInstalledSta
 
 export async function fetchDxvkVersions(): Promise<DxvkRemoteVersion[]> {
   return invoke<DxvkRemoteVersion[]>('fetch_dxvk_versions');
+}
+
+export async function downloadDxvk(version: string, variant: string): Promise<string> {
+  return invoke<string>('download_dxvk', { version, variant });
 }
 
 export async function installVkd3d(gameId: string, version: string): Promise<string> {

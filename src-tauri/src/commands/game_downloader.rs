@@ -437,14 +437,121 @@ fn read_local_version_from_dir(game_folder: &Path) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-/// 根据游戏预设返回对应的 launcher API URL（配置驱动，硬编码兜底）
+fn read_non_empty_string(v: Option<&serde_json::Value>) -> Option<String> {
+    v.and_then(|x| x.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+}
+
+fn build_launcher_api_from_config(
+    game_preset: &str,
+    config: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    let root = config.as_object();
+    let other = config.get("other").and_then(|v| v.as_object());
+
+    let launcher_api = read_non_empty_string(
+        other
+            .and_then(|m| m.get("launcherApi"))
+            .or_else(|| root.and_then(|m| m.get("launcherApi"))),
+    );
+
+    let launcher_download_api = read_non_empty_string(
+        other
+            .and_then(|m| m.get("launcherDownloadApi"))
+            .or_else(|| root.and_then(|m| m.get("launcherDownloadApi"))),
+    );
+
+    let mut servers = Vec::new();
+    if let Some(server_list) = other
+        .and_then(|m| m.get("downloadServers"))
+        .or_else(|| root.and_then(|m| m.get("downloadServers")))
+        .and_then(|v| v.as_array())
+    {
+        for (idx, item) in server_list.iter().enumerate() {
+            let Some(obj) = item.as_object() else {
+                continue;
+            };
+            let api = read_non_empty_string(obj.get("launcherApi"));
+            let Some(api) = api else {
+                continue;
+            };
+            let id = read_non_empty_string(obj.get("id")).unwrap_or_else(|| {
+                if idx == 0 {
+                    "custom".to_string()
+                } else {
+                    format!("custom-{}", idx + 1)
+                }
+            });
+            let label = read_non_empty_string(obj.get("label")).unwrap_or_else(|| "自定义".to_string());
+            let biz_prefix = read_non_empty_string(obj.get("bizPrefix")).unwrap_or_default();
+            servers.push(serde_json::json!({
+                "id": id,
+                "label": label,
+                "launcherApi": api,
+                "bizPrefix": biz_prefix,
+            }));
+        }
+    }
+
+    if servers.is_empty() {
+        if let Some(api) = launcher_api.as_ref() {
+            servers.push(serde_json::json!({
+                "id": "custom",
+                "label": "自定义",
+                "launcherApi": api,
+                "bizPrefix": "",
+            }));
+        }
+    }
+
+    if servers.is_empty() {
+        return None;
+    }
+
+    let default_folder = read_non_empty_string(
+        other
+            .and_then(|m| m.get("defaultFolder"))
+            .or_else(|| root.and_then(|m| m.get("defaultFolder"))),
+    )
+    .unwrap_or_else(|| game_preset.to_string());
+
+    let mut result = serde_json::json!({
+        "supported": true,
+        "defaultFolder": default_folder,
+        "servers": servers,
+        "audioLanguages": other
+            .and_then(|m| m.get("audioLanguages"))
+            .or_else(|| root.and_then(|m| m.get("audioLanguages")))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([])),
+    });
+    if let Some(api) = launcher_api {
+        result["launcherApi"] = serde_json::Value::String(api);
+    }
+    if let Some(api) = launcher_download_api {
+        result["launcherDownloadApi"] = serde_json::Value::String(api);
+    }
+
+    Some(result)
+}
+
+fn read_launcher_api_override_from_game_config(game_preset: &str) -> Option<serde_json::Value> {
+    let config_json = crate::configs::database::get_game_config(game_preset)?;
+    let config: serde_json::Value = serde_json::from_str(&config_json).ok()?;
+    build_launcher_api_from_config(game_preset, &config)
+}
+
+/// 根据游戏预设返回对应的 launcher API URL（预设默认值 + 用户配置覆盖）
 #[tauri::command]
 pub fn get_game_launcher_api(game_preset: String) -> Result<serde_json::Value, String> {
     use crate::configs::game_presets;
     let game_preset = crate::configs::game_identity::to_canonical_or_keep(&game_preset);
+    let override_obj = read_launcher_api_override_from_game_config(&game_preset);
 
     let Some(preset) = game_presets::get_preset(&game_preset) else {
-        return Ok(serde_json::json!({ "supported": false }));
+        return Ok(override_obj.unwrap_or_else(|| serde_json::json!({ "supported": false })));
     };
 
     let mut obj = serde_json::json!({
@@ -459,6 +566,23 @@ pub fn get_game_launcher_api(game_preset: String) -> Result<serde_json::Value, S
     }
     if let Some(ref api) = preset.launcher_download_api {
         obj["launcherDownloadApi"] = serde_json::Value::String(api.clone());
+    }
+
+    if let Some(override_value) = override_obj {
+        if let Some(override_map) = override_value.as_object() {
+            for key in [
+                "supported",
+                "defaultFolder",
+                "servers",
+                "audioLanguages",
+                "launcherApi",
+                "launcherDownloadApi",
+            ] {
+                if let Some(value) = override_map.get(key) {
+                    obj[key] = value.clone();
+                }
+            }
+        }
     }
 
     Ok(obj)

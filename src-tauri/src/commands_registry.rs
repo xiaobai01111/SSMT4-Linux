@@ -11,6 +11,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         // Settings
         commands::settings::load_settings,
         commands::settings::save_settings,
+        commands::settings::get_version_check_info,
         // Process
         commands::process::run_resource_executable,
         // Game scanner
@@ -40,28 +41,8 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         commands::game_config::reset_game_icon,
         commands::game_config::reset_game_background,
         commands::game_config::update_game_background,
-        commands::game_config::get_3dmigoto_latest_release,
-        commands::game_config::install_3dmigoto_update,
         // Game launcher (pressure-vessel + Wine/Proton)
         commands::game_launcher::start_game,
-        commands::game_launcher::check_3dmigoto_integrity,
-        commands::game_launcher::toggle_symlink,
-        commands::game_launcher::get_symlink_status,
-        // Mod manager
-        commands::mod_manager::scan_mods,
-        commands::mod_manager::toggle_mod,
-        commands::mod_manager::watch_mods,
-        commands::mod_manager::unwatch_mods,
-        commands::mod_manager::create_mod_group,
-        commands::mod_manager::rename_mod_group,
-        commands::mod_manager::delete_mod_group,
-        commands::mod_manager::set_mod_group_icon,
-        commands::mod_manager::delete_mod,
-        commands::mod_manager::move_mod_to_group,
-        commands::mod_manager::open_game_mods_folder,
-        commands::mod_manager::open_mod_group_folder,
-        commands::mod_manager::preview_mod_archive,
-        commands::mod_manager::install_mod_archive,
         // Wine manager
         commands::wine_manager::scan_wine_versions,
         commands::wine_manager::get_game_wine_config,
@@ -92,6 +73,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         commands::wine_manager::scan_local_dxvk,
         commands::wine_manager::detect_dxvk_status,
         commands::wine_manager::fetch_dxvk_versions,
+        commands::wine_manager::download_dxvk,
         // 遥测防护
         commands::telemetry::check_telemetry_status,
         commands::telemetry::check_game_protection_status,
