@@ -744,6 +744,50 @@ export async function getGameProtectionInfo(gamePreset: string): Promise<any> {
   return invoke('get_game_protection_info', { gamePreset });
 }
 
+export interface ChannelProtectionState {
+  required: boolean;
+  enabled: boolean;
+  mode?: 'init' | 'protected' | string;
+  launchEnforcement?: 'warn' | 'block' | string;
+  channelKey?: string;
+  currentValue?: number;
+  initValue?: number;
+  expectedValue?: number;
+  protectedValue?: number;
+  configPath?: string;
+  error?: string;
+  backupExists?: boolean;
+}
+
+export interface ChannelProtectionStatus {
+  gamePreset: string;
+  supported: boolean;
+  gameRoot?: string;
+  channel: ChannelProtectionState;
+}
+
+export async function getChannelProtectionStatus(
+  gamePreset: string,
+  gamePath?: string,
+): Promise<ChannelProtectionStatus> {
+  return invoke<ChannelProtectionStatus>('get_channel_protection_status', {
+    gamePreset,
+    gamePath: gamePath || null,
+  });
+}
+
+export async function setChannelProtectionMode(
+  gamePreset: string,
+  mode: 'init' | 'protected',
+  gamePath: string,
+): Promise<ChannelProtectionStatus> {
+  return invoke<ChannelProtectionStatus>('set_channel_protection_mode', {
+    gamePreset,
+    mode,
+    gamePath,
+  });
+}
+
 // ============================================================
 // Game Download Commands
 // ============================================================

@@ -175,7 +175,16 @@ const ensureProtectionEnabled = async (gameName: string, gameConfig: any) => {
       }
     }
     const enforceAtLaunch = status?.enforceAtLaunch === true;
-    if (!enforceAtLaunch) return true;
+    if (!enforceAtLaunch) {
+      const missing = Array.isArray(status?.missing) ? status.missing : [];
+      if (missing.length > 0) {
+        await showMessage(
+          `当前为告警模式，不阻止启动。\n建议处理以下项：\n- ${missing.join('\n- ')}`,
+          { title: '防护告警', kind: 'warning' },
+        );
+      }
+      return true;
+    }
 
     const enabled = !!status?.enabled;
     if (enabled) return true;
@@ -198,22 +207,31 @@ const ensureProtectionEnabled = async (gameName: string, gameConfig: any) => {
 };
 
 const launchGame = async () => {
-  if (isLaunching.value) return;
+  // 立即检查，防止竞态条件
+  if (isLaunching.value || isGameRunning.value) {
+    console.log('游戏正在启动或已运行，忽略重复点击');
+    return;
+  }
+  // 先置位，避免 await 期间重复触发
+  isLaunching.value = true;
 
   const gameName = appSettings.currentConfigName;
   if (!gameName || gameName === 'Default') {
     await showMessage('请先选择一个游戏配置', { title: '提示', kind: 'info' });
+    isLaunching.value = false;
     return;
   }
 
   if (!(await ensureRiskAcknowledged())) {
+    isLaunching.value = false;
     return;
   }
-  
+
   try {
       // Load game config to resolve paths
       const data = await loadGameConfig(gameName);
       if (!(await ensureProtectionEnabled(gameName, data))) {
+        isLaunching.value = false;
         return;
       }
 
@@ -229,26 +247,25 @@ const launchGame = async () => {
       
       if (!gameExePath) {
         await showMessage('请先在游戏设置中配置游戏可执行文件路径', { title: '提示', kind: 'info' });
+        isLaunching.value = false;
         return;
       }
 
       if (!wineVersionId) {
         await showMessage('请先在游戏设置中选择 Wine/Proton 版本', { title: '提示', kind: 'info' });
+        isLaunching.value = false;
         return;
       }
 
-      isLaunching.value = true;
       await apiStartGame(gameName, gameExePath, wineVersionId);
+      // 启动成功后，等待 game-lifecycle 事件来更新状态
+      // 不在这里重置 isLaunching，由事件处理器负责
       
   } catch (e: any) {
     console.error('Start Game Error:', e);
+    // 只在启动失败时重置状态
+    isLaunching.value = false;
     await showMessage(`启动失败: ${e}`, { title: '错误', kind: 'error' });
-  } finally {
-    if(isLaunching.value) {
-        setTimeout(() => {
-            isLaunching.value = false;
-        }, 1500);
-    }
   }
 }
 
@@ -266,12 +283,17 @@ onMounted(async () => {
   unlistenLifecycle = await listenEvent('game-lifecycle', (event: any) => {
     const data = event.payload;
     if (data.event === 'started') {
+      // 游戏启动成功，更新状态
       isGameRunning.value = true;
       runningGameName.value = data.game || '';
+      isLaunching.value = false;
+      console.log(`游戏 ${data.game} 已启动 (PID: ${data.pid})`);
     } else if (data.event === 'exited') {
+      // 游戏退出，重置所有状态
       isGameRunning.value = false;
       runningGameName.value = '';
       isLaunching.value = false;
+      console.log(`游戏 ${data.game} 已退出`);
     }
   });
   unlistenComponentDl = await listenEvent('component-download-progress', (event: any) => {
@@ -379,7 +401,7 @@ onUnmounted(() => {
 
     <div class="action-bar">
       <!-- Start Game Button -->
-      <div class="start-game-btn" @click="isGameRunning ? null : (gameHasExe ? launchGame() : (showDownload = true))" :class="{ 'disabled': isLaunching, 'running': isGameRunning }">
+      <div class="start-game-btn" @click="(isGameRunning || isLaunching) ? null : (gameHasExe ? launchGame() : (showDownload = true))" :class="{ 'disabled': isLaunching, 'running': isGameRunning }">
         <div class="icon-wrapper">
           <div class="play-triangle" v-if="gameHasExe && !isGameRunning"></div>
           <div v-else-if="isGameRunning" class="running-indicator"></div>

@@ -82,6 +82,8 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         commands::telemetry::remove_telemetry_files,
         commands::telemetry::apply_game_protection,
         commands::telemetry::get_game_protection_info,
+        commands::telemetry::get_channel_protection_status,
+        commands::telemetry::set_channel_protection_mode,
         // Game downloader
         commands::game_downloader::get_launcher_info,
         commands::game_downloader::get_game_state,

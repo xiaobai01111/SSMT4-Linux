@@ -27,8 +27,17 @@ pub struct ChannelProtectionConfig {
     pub config_relative_path: String,
     /// 需要切换的 JSON 字段名（例如 KR_ChannelId）
     pub channel_key: String,
+    /// 初始化阶段值（例如 19）
+    #[serde(default)]
+    pub init_value: Option<i64>,
     /// 启用防护时写入的目标值
     pub protected_value: i64,
+    /// 默认模式：init/protected
+    #[serde(default)]
+    pub default_mode: Option<String>,
+    /// 启动约束：block/warn
+    #[serde(default)]
+    pub launch_enforcement: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -287,5 +296,21 @@ mod tests {
             normalize_default_folder("HonkaiStarRail", "HonkaiStarRail/StarRail"),
             "HonkaiStarRail/StarRail".to_string()
         );
+    }
+
+    #[test]
+    fn wuthering_channel_protection_supports_staged_fields() {
+        let map = load_presets_from_db();
+        let preset = map
+            .get("WutheringWaves")
+            .expect("WutheringWaves preset should exist");
+        let channel = preset
+            .channel_protection
+            .as_ref()
+            .expect("WutheringWaves channel protection should exist");
+        assert_eq!(channel.init_value, Some(19));
+        assert_eq!(channel.protected_value, 205);
+        assert_eq!(channel.default_mode.as_deref(), Some("init"));
+        assert_eq!(channel.launch_enforcement.as_deref(), Some("warn"));
     }
 }

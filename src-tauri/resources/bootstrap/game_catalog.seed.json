@@ -30,7 +30,7 @@
       "id": "WutheringWaves",
       "displayNameEn": "Wuthering Waves",
       "supported": true,
-      "requireProtectionBeforeLaunch": true,
+      "requireProtectionBeforeLaunch": false,
       "defaultUmuRun": true,
       "forceDirectProton": false,
       "forceDisablePressureVessel": false,
@@ -65,7 +65,10 @@
       "channelProtection": {
         "configRelativePath": "Client/Binaries/Win64/ThirdParty/KrPcSdk_Mainland/KRSDKRes/KRSDKConfig.json",
         "channelKey": "KR_ChannelId",
-        "protectedValue": 205
+        "initValue": 19,
+        "protectedValue": 205,
+        "defaultMode": "init",
+        "launchEnforcement": "warn"
       },
       "telemetryServers": [],
       "telemetryDlls": []

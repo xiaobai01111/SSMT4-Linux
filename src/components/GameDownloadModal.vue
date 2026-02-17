@@ -8,6 +8,8 @@ import {
   getGameProtectionInfo,
   applyGameProtection,
   checkGameProtectionStatus,
+  getChannelProtectionStatus,
+  setChannelProtectionMode,
   restoreTelemetry,
   askConfirm,
   openFileDialog,
@@ -16,6 +18,7 @@ import {
   saveGameConfig,
   type GameState,
   type PresetCatalogItem,
+  type ChannelProtectionStatus,
 } from '../api';
 import { appSettings } from '../store';
 import { dlState, isActiveFor, fireDownload, fireVerify, cancelActive } from '../downloadStore';
@@ -43,6 +46,8 @@ const protectionInfo = ref<any>(null);
 const protectionApplied = ref(false);
 const protectionEnforceAtLaunch = ref(false);
 const isProtectionBusy = ref(false);
+const channelProtection = ref<ChannelProtectionStatus | null>(null);
+const isChannelModeBusy = ref(false);
 
 // 语言包选择
 interface AudioLangOption {
@@ -75,8 +80,19 @@ const protectionStatusClass = computed(() => {
   return protectionApplied.value ? 'enabled' : 'disabled';
 });
 
+const normalizePresetKey = (value: string): string => value.trim().toLowerCase().replace(/[_\s-]+/g, '');
+
+const WUTHERING_PRESET_KEYS = new Set(['wutheringwaves', 'wwmi', 'wuwa']);
+
+const isWutheringPreset = (value: string): boolean => WUTHERING_PRESET_KEYS.has(normalizePresetKey(value));
+
+const hideDisableProtectionButton = computed(() => isWutheringPreset(getProtectionPreset()));
+
 const canonicalPreset = (value: string): string => {
-  return value.trim();
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  if (isWutheringPreset(trimmed)) return 'WutheringWaves';
+  return trimmed;
 };
 
 const getProtectionPreset = () => canonicalPreset(gamePreset.value || props.gameName);
@@ -165,17 +181,43 @@ const refreshProtectionStatus = async () => {
 
     if (!info?.hasProtections) {
       protectionApplied.value = true;
+      channelProtection.value = null;
       return;
     }
 
     const status = await checkGameProtectionStatus(preset, gameFolder.value || undefined);
     protectionApplied.value = !!status?.enabled;
     protectionEnforceAtLaunch.value = status?.enforceAtLaunch !== false;
+    channelProtection.value = await getChannelProtectionStatus(preset, gameFolder.value || undefined);
   } catch (e) {
     console.warn('[防护] 刷新状态失败:', e);
     protectionInfo.value = null;
     protectionApplied.value = false;
     protectionEnforceAtLaunch.value = false;
+    channelProtection.value = null;
+  }
+};
+
+const setChannelMode = async (mode: 'init' | 'protected') => {
+  if (isChannelModeBusy.value) return;
+  if (!gameFolder.value) {
+    await showMessage('请先选择游戏安装目录', { title: '提示', kind: 'warning' });
+    return;
+  }
+  try {
+    isChannelModeBusy.value = true;
+    const preset = getProtectionPreset();
+    channelProtection.value = await setChannelProtectionMode(preset, mode, gameFolder.value);
+    await refreshProtectionStatus();
+    await showMessage(
+      mode === 'init' ? '已切换到初始化模式 (KR_ChannelId=19)' : '已切换到联机模式 (KR_ChannelId=205)',
+      { title: '渠道模式', kind: 'info' },
+    );
+  } catch (e) {
+    console.warn('[防护] 切换渠道模式失败:', e);
+    await showMessage(`切换渠道模式失败: ${e}`, { title: '错误', kind: 'error' });
+  } finally {
+    isChannelModeBusy.value = false;
   }
 };
 
@@ -413,13 +455,11 @@ const disableProtection = async () => {
 
     const result = await restoreTelemetry(preset, gameFolder.value || undefined);
     await refreshProtectionStatus();
-    const channelRestored = result?.channel?.restored;
-    if (channelRestored === false) {
-      const reason = result?.channel?.reason || '未找到可恢复的原始值';
-      await showMessage(`防护已禁用，但渠道参数未恢复：${reason}`, { title: '部分完成', kind: 'warning' });
-    } else {
-      await showMessage('已禁用防护（已恢复原始渠道参数）', { title: '已禁用', kind: 'info' });
-    }
+    const channelTip = result?.channel?.message;
+    await showMessage(
+      channelTip ? `已禁用域名/文件防护。\n${channelTip}` : '已禁用防护',
+      { title: '已禁用', kind: 'info' },
+    );
   } catch (e) {
     console.warn('[防护] 禁用失败:', e);
     await showMessage(`禁用防护失败: ${e}`, { title: '错误', kind: 'error' });
@@ -606,6 +646,46 @@ watch(() => props.modelValue, (val) => {
               </div>
             </div>
 
+            <div
+              v-if="channelProtection?.supported && channelProtection.channel?.required && !isWorking"
+              class="channel-mode-card"
+            >
+              <div class="channel-mode-head">
+                <span class="channel-mode-title">渠道模式</span>
+                <span
+                  class="channel-mode-pill"
+                  :class="{ ok: channelProtection.channel?.enabled, warn: !channelProtection.channel?.enabled }"
+                >
+                  {{ channelProtection.channel?.enabled ? '已匹配' : '未匹配' }}
+                </span>
+              </div>
+              <div class="channel-mode-meta">
+                <span>当前值: {{ channelProtection.channel?.currentValue ?? '未知' }}</span>
+                <span>目标值: {{ channelProtection.channel?.expectedValue ?? '未知' }}</span>
+                <span>当前模式: {{ channelProtection.channel?.mode || '-' }}</span>
+              </div>
+              <div class="channel-mode-actions">
+                <button class="action-btn sm" @click="setChannelMode('init')" :disabled="isChannelModeBusy || !gameFolder">
+                  切换初始化模式(19)
+                </button>
+                <button class="action-btn sm primary" @click="setChannelMode('protected')" :disabled="isChannelModeBusy || !gameFolder">
+                  切换联机模式(205)
+                </button>
+                <button class="action-btn sm" @click="setChannelMode('init')" :disabled="isChannelModeBusy || !gameFolder">
+                  恢复默认(19)
+                </button>
+              </div>
+              <p v-if="channelProtection.channel?.mode === 'init'" class="channel-mode-hint">
+                当前处于初始化模式。完成首次初始化后，请手动切换到联机模式(205)。
+              </p>
+              <p
+                v-else-if="!channelProtection.channel?.enabled"
+                class="channel-mode-hint warning"
+              >
+                当前模式与配置值不一致，建议重新应用当前模式。
+              </p>
+            </div>
+
             <!-- 安装目录（始终显示，下载前必须确认） -->
             <div v-if="!isWorking" class="install-dir-section">
               <label class="install-dir-label">安装目录</label>
@@ -618,7 +698,7 @@ watch(() => props.modelValue, (val) => {
                   </svg>
                 </button>
               </div>
-              <p class="install-dir-hint">游戏文件将下载到此目录，请确保有足够磁盘空间（约 30GB+）</p>
+              <p class="install-dir-hint">游戏文件将下载到此目录，请确保有足够磁盘空间（约 130GB+）</p>
             </div>
 
             <!-- 语言包选择 -->
@@ -679,7 +759,7 @@ watch(() => props.modelValue, (val) => {
               </button>
               <button
                 class="action-btn danger-soft"
-                v-if="protectionInfo?.hasProtections && protectionApplied"
+                v-if="protectionInfo?.hasProtections && protectionApplied && !hideDisableProtectionButton"
                 @click="disableProtection"
                 :disabled="isProtectionBusy"
               >
@@ -832,6 +912,72 @@ watch(() => props.modelValue, (val) => {
 .state-versions {
   margin-top:6px; font-size:12px; color:rgba(255,255,255,0.45);
   display:flex; gap:16px;
+}
+
+.channel-mode-card {
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+
+.channel-mode-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.channel-mode-title {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.channel-mode-pill {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.channel-mode-pill.ok {
+  color: #67c23a;
+  border-color: rgba(103, 194, 58, 0.4);
+  background: rgba(103, 194, 58, 0.1);
+}
+
+.channel-mode-pill.warn {
+  color: #e6a23c;
+  border-color: rgba(230, 162, 60, 0.4);
+  background: rgba(230, 162, 60, 0.1);
+}
+
+.channel-mode-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+.channel-mode-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.channel-mode-hint {
+  margin: 8px 0 0 0;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+}
+
+.channel-mode-hint.warning {
+  color: #e6a23c;
 }
 
 /* 安装目录 */

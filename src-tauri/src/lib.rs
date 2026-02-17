@@ -3,6 +3,7 @@ mod commands;
 mod commands_registry;
 mod configs;
 mod downloader;
+mod process_monitor;
 mod utils;
 mod wine;
 

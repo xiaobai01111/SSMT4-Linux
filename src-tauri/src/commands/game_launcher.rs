@@ -1,4 +1,5 @@
 use crate::configs::database as db;
+use crate::process_monitor;
 use crate::wine::{detector, prefix};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -14,6 +15,17 @@ pub async fn start_game(
     wine_version_id: String,
 ) -> Result<String, String> {
     let game_name = crate::configs::game_identity::to_canonical_or_keep(&game_name);
+    let _launch_guard = process_monitor::acquire_launch_guard(&game_name)?;
+    
+    // 检查游戏是否已在运行
+    if process_monitor::is_game_running(&game_name).await {
+        warn!("游戏 {} 已在运行，拒绝重复启动", game_name);
+        return Err("游戏已在运行中，请勿重复启动".to_string());
+    }
+    
+    // 清理已结束的进程记录
+    process_monitor::cleanup_stale_processes().await;
+    
     let game_exe = PathBuf::from(&game_exe_path);
     if !game_exe.exists() {
         return Err(format!("Game executable not found: {}", game_exe_path));
@@ -67,6 +79,30 @@ pub async fn start_game(
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
         }
+    }
+    if let Some(channel) = protection_status.get("channel") {
+        let mode = channel
+            .get("mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("n/a");
+        let current = channel
+            .get("currentValue")
+            .and_then(|v| v.as_i64())
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "n/a".to_string());
+        let expected = channel
+            .get("expectedValue")
+            .and_then(|v| v.as_i64())
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "n/a".to_string());
+        let enforcement = channel
+            .get("launchEnforcement")
+            .and_then(|v| v.as_str())
+            .unwrap_or("n/a");
+        info!(
+            "Channel mode={}, current={}, expected={}, enforcement={}",
+            mode, current, expected, enforcement
+        );
     }
     if !protection_required {
         let blocked_domains: Vec<String> = protection_status
@@ -444,6 +480,14 @@ pub async fn start_game(
     let pid = child.id().unwrap_or(0);
     info!("Game launched with PID {}", pid);
 
+    // 注册游戏进程到监控系统
+    process_monitor::register_game_process(
+        game_name.clone(),
+        pid,
+        game_exe_path.clone(),
+    )
+    .await;
+
     // 通知前端游戏已启动
     let game_name_clone = game_name.clone();
     app.emit(
@@ -456,17 +500,56 @@ pub async fn start_game(
     )
     .ok();
 
-    // 后台等待进程退出，退出后通知前端（仅 wait，不累积输出）
+    // 后台监控进程，包括子进程和孙进程
     let app_clone = app.clone();
+    let game_name_for_monitor = game_name.clone();
+    let exe_name = launch_exe
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+    
     tokio::spawn(async move {
+        // 等待直接子进程
         match child.wait().await {
             Ok(status) => {
-                info!("Game process exited with status: {}", status);
+                info!("Direct child process exited with status: {}", status);
             }
             Err(e) => {
-                error!("Failed to wait for game process: {}", e);
+                error!("Failed to wait for child process: {}", e);
             }
         }
+        
+        // 子进程退出后，继续监控可能存在的孙进程
+        info!("检查游戏 {} 的子进程是否仍在运行...", game_name_for_monitor);
+        
+        let mut check_count = 0;
+        let max_checks = 30; // 最多检查30次（30秒）
+        
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            
+            let processes = process_monitor::find_game_processes(&exe_name).await;
+            
+            if processes.is_empty() {
+                info!("游戏 {} 的所有进程已退出", game_name_for_monitor);
+                break;
+            }
+            
+            check_count += 1;
+            if check_count >= max_checks {
+                info!("游戏 {} 进程检查超时，假定已退出", game_name_for_monitor);
+                break;
+            }
+            
+            if check_count % 5 == 0 {
+                info!("游戏 {} 仍有 {} 个进程在运行", game_name_for_monitor, processes.len());
+            }
+        }
+        
+        // 注销游戏进程
+        process_monitor::unregister_game_process(&game_name).await;
+        
         // 通知前端游戏已退出
         app_clone
             .emit(
