@@ -111,10 +111,6 @@
     "opacity": "不透明度 (Opacity)",
     "blur": "模糊度 (Blur)",
     "page_display": "页面显示设置",
-<<<<<<< HEAD
-=======
-    "modpage": "Mod管理页面",
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
     "websitepage": "常用网址页面",
     "docpage": "使用文档页面",
     "selectdatadir": "选择 SSMT4 数据目录",

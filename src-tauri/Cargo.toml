@@ -1,10 +1,6 @@
 [package]
 name = "SSMT4-linux"
-<<<<<<< HEAD
 version = "0.0.1-beta"
-=======
-version = "0.0.8-beta"
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
 description = "SSMT4 - Linux Game Launcher"
 authors = ["you"]
 edition = "2021"
@@ -44,10 +40,7 @@ flate2 = "1"
 tar = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 once_cell = "1"
-<<<<<<< HEAD
 lazy_static = "1.4"
-=======
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
 rusqlite = { version = "0.31", features = ["bundled"] }
 percent-encoding = "2"
 http = "1"

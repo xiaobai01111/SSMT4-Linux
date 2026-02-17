@@ -111,10 +111,6 @@
     "opacity": "不透明度 (Opacity)",
     "blur": "模糊度 (Blur)",
     "page_display": "頁面顯示設定",
-<<<<<<< HEAD
-=======
-    "modpage": "Mod管理頁面",
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
     "websitepage": "常用網址頁面",
     "docpage": "使用文檔頁面",
     "selectdatadir": "選擇 SSMT4 資料目錄",

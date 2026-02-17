@@ -8,11 +8,8 @@ import {
   getGameProtectionInfo,
   applyGameProtection,
   checkGameProtectionStatus,
-<<<<<<< HEAD
   getChannelProtectionStatus,
   setChannelProtectionMode,
-=======
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
   restoreTelemetry,
   askConfirm,
   openFileDialog,
@@ -21,10 +18,7 @@ import {
   saveGameConfig,
   type GameState,
   type PresetCatalogItem,
-<<<<<<< HEAD
   type ChannelProtectionStatus,
-=======
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
 } from '../api';
 import { appSettings } from '../store';
 import { dlState, isActiveFor, fireDownload, fireVerify, cancelActive } from '../downloadStore';
@@ -52,11 +46,8 @@ const protectionInfo = ref<any>(null);
 const protectionApplied = ref(false);
 const protectionEnforceAtLaunch = ref(false);
 const isProtectionBusy = ref(false);
-<<<<<<< HEAD
 const channelProtection = ref<ChannelProtectionStatus | null>(null);
 const isChannelModeBusy = ref(false);
-=======
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
 
 // 语言包选择
 interface AudioLangOption {
@@ -89,7 +80,6 @@ const protectionStatusClass = computed(() => {
   return protectionApplied.value ? 'enabled' : 'disabled';
 });
 
-<<<<<<< HEAD
 const normalizePresetKey = (value: string): string => value.trim().toLowerCase().replace(/[_\s-]+/g, '');
 
 const WUTHERING_PRESET_KEYS = new Set(['wutheringwaves', 'wwmi', 'wuwa']);
@@ -103,10 +93,6 @@ const canonicalPreset = (value: string): string => {
   if (!trimmed) return '';
   if (isWutheringPreset(trimmed)) return 'WutheringWaves';
   return trimmed;
-=======
-const canonicalPreset = (value: string): string => {
-  return value.trim();
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
 };
 
 const getProtectionPreset = () => canonicalPreset(gamePreset.value || props.gameName);
@@ -195,26 +181,19 @@ const refreshProtectionStatus = async () => {
 
     if (!info?.hasProtections) {
       protectionApplied.value = true;
-<<<<<<< HEAD
       channelProtection.value = null;
-=======
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
       return;
     }
 
     const status = await checkGameProtectionStatus(preset, gameFolder.value || undefined);
     protectionApplied.value = !!status?.enabled;
     protectionEnforceAtLaunch.value = status?.enforceAtLaunch !== false;
-<<<<<<< HEAD
     channelProtection.value = await getChannelProtectionStatus(preset, gameFolder.value || undefined);
-=======
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
   } catch (e) {
     console.warn('[防护] 刷新状态失败:', e);
     protectionInfo.value = null;
     protectionApplied.value = false;
     protectionEnforceAtLaunch.value = false;
-<<<<<<< HEAD
     channelProtection.value = null;
   }
 };
@@ -239,8 +218,6 @@ const setChannelMode = async (mode: 'init' | 'protected') => {
     await showMessage(`切换渠道模式失败: ${e}`, { title: '错误', kind: 'error' });
   } finally {
     isChannelModeBusy.value = false;
-=======
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
   }
 };
 
@@ -478,21 +455,11 @@ const disableProtection = async () => {
 
     const result = await restoreTelemetry(preset, gameFolder.value || undefined);
     await refreshProtectionStatus();
-<<<<<<< HEAD
     const channelTip = result?.channel?.message;
     await showMessage(
       channelTip ? `已禁用域名/文件防护。\n${channelTip}` : '已禁用防护',
       { title: '已禁用', kind: 'info' },
     );
-=======
-    const channelRestored = result?.channel?.restored;
-    if (channelRestored === false) {
-      const reason = result?.channel?.reason || '未找到可恢复的原始值';
-      await showMessage(`防护已禁用，但渠道参数未恢复：${reason}`, { title: '部分完成', kind: 'warning' });
-    } else {
-      await showMessage('已禁用防护（已恢复原始渠道参数）', { title: '已禁用', kind: 'info' });
-    }
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
   } catch (e) {
     console.warn('[防护] 禁用失败:', e);
     await showMessage(`禁用防护失败: ${e}`, { title: '错误', kind: 'error' });
@@ -679,7 +646,6 @@ watch(() => props.modelValue, (val) => {
               </div>
             </div>
 
-<<<<<<< HEAD
             <div
               v-if="channelProtection?.supported && channelProtection.channel?.required && !isWorking"
               class="channel-mode-card"
@@ -720,8 +686,6 @@ watch(() => props.modelValue, (val) => {
               </p>
             </div>
 
-=======
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
             <!-- 安装目录（始终显示，下载前必须确认） -->
             <div v-if="!isWorking" class="install-dir-section">
               <label class="install-dir-label">安装目录</label>
@@ -734,11 +698,7 @@ watch(() => props.modelValue, (val) => {
                   </svg>
                 </button>
               </div>
-<<<<<<< HEAD
               <p class="install-dir-hint">游戏文件将下载到此目录，请确保有足够磁盘空间（约 130GB+）</p>
-=======
-              <p class="install-dir-hint">游戏文件将下载到此目录，请确保有足够磁盘空间（约 30GB+）</p>
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
             </div>
 
             <!-- 语言包选择 -->
@@ -799,11 +759,7 @@ watch(() => props.modelValue, (val) => {
               </button>
               <button
                 class="action-btn danger-soft"
-<<<<<<< HEAD
                 v-if="protectionInfo?.hasProtections && protectionApplied && !hideDisableProtectionButton"
-=======
-                v-if="protectionInfo?.hasProtections && protectionApplied"
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
                 @click="disableProtection"
                 :disabled="isProtectionBusy"
               >
@@ -958,7 +914,6 @@ watch(() => props.modelValue, (val) => {
   display:flex; gap:16px;
 }
 
-<<<<<<< HEAD
 .channel-mode-card {
   background: rgba(0, 0, 0, 0.22);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1025,8 +980,6 @@ watch(() => props.modelValue, (val) => {
   color: #e6a23c;
 }
 
-=======
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
 /* 安装目录 */
 .install-dir-section { margin-bottom:16px; }
 .install-dir-label {
