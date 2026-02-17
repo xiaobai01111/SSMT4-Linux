@@ -1,6 +1,7 @@
 <template>
   <div class="page-container" style="padding: 24px 24px 56px 24px;">
     <h1>常用网址 (Websites)</h1>
+    <p>SSMT4 Linux 的一些常用网址</p>
     <el-space wrap>
       <el-link type="primary" href="https://element-plus.org" target="_blank">Element Plus</el-link>
       <el-link type="success" href="https://vuejs.org" target="_blank">Vue.js</el-link>
