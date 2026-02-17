@@ -27,3 +27,9 @@ dist-ssr
 packaging/
 pkg/
 src-tauri/target/release/bundle/
+
+# Exclude build and untracked wiki/installation package
+Installation package/
+scripts/build-install-packages.sh
+wiki/
+

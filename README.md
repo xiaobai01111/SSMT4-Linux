@@ -112,6 +112,7 @@ npm run tauri dev
 
 ## 反馈与支持
 
+- 使用文档（Wiki）：<https://github.com/xiaobai01111/SSMT4-Linux/wiki>
 - Issues：<https://github.com/xiaobai01111/SSMT4-Linux/issues>
 - 讨论/建议：<https://github.com/xiaobai01111/SSMT4-Linux/discussions>
 - 反馈 QQ 群：`836016004`
