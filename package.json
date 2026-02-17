@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "sync-version": "bash scripts/sync-version.sh",
+    "package:linux": "bash scripts/build-install-packages.sh",
     "dev": "bun run sync-version && vite",
     "build": "bun run sync-version && vue-tsc --noEmit && vite build",
     "preview": "vite preview",

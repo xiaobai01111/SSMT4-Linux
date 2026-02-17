@@ -691,6 +691,55 @@ watch(
         </el-form>
       </div>
 
+      <!-- 版本检查 -->
+      <div v-show="activeMenu === 'version'" class="settings-panel version-panel">
+        <div class="panel-title">{{ tr('settings.version_check_title', '版本检查') }}</div>
+
+        <div class="section-block">
+          <div class="section-header">
+            <div>
+              <div class="section-title">{{ tr('settings.version_check_overview', '当前版本信息') }}</div>
+              <div class="section-hint">
+                {{ tr('settings.version_check_hint', '从项目根目录 version 和 version-log 读取最新版本与更新日志。') }}
+              </div>
+            </div>
+            <div class="toolbar-actions">
+              <el-button type="primary" size="small" @click="checkVersionInfo" :loading="isVersionChecking">
+                {{ isVersionChecking ? tr('settings.version_checking', '检查中...') : tr('settings.version_check_action', '检查更新') }}
+              </el-button>
+            </div>
+          </div>
+
+          <div v-if="versionInfo" class="version-grid">
+            <div class="version-row">
+              <div class="version-label">{{ tr('settings.version_current', '当前版本') }}</div>
+              <div class="version-value">{{ versionInfo.currentVersion }}</div>
+            </div>
+            <div class="version-row">
+              <div class="version-label">{{ tr('settings.version_latest', '最新版本') }}</div>
+              <div class="version-value">{{ versionInfo.latestVersion }}</div>
+            </div>
+            <div class="version-row">
+              <div class="version-label">{{ tr('settings.version_status', '更新状态') }}</div>
+              <div class="version-value">
+                <el-tag v-if="versionInfo.hasUpdate" type="warning">{{ tr('settings.version_has_update', '有可用更新') }}</el-tag>
+                <el-tag v-else type="success">{{ tr('settings.version_up_to_date', '已是最新') }}</el-tag>
+              </div>
+            </div>
+            <div class="version-row version-log-row">
+              <div class="version-label">{{ tr('settings.version_log', '更新日志') }}</div>
+              <div class="version-value">
+                <pre class="version-log-content">{{ versionInfo.updateLog || tr('settings.version_log_empty', '暂无更新日志') }}</pre>
+              </div>
+            </div>
+          </div>
+
+          <div v-else class="row-sub">
+            {{ tr('settings.version_not_loaded', '尚未获取版本信息，请点击“检查更新”。') }}
+          </div>
+        </div>
+      </div>
+
       <!-- Proton 管理 -->
       <div v-show="activeMenu === 'proton'" class="settings-panel proton-panel">
         <div class="panel-title">{{ tr('settings.proton_manage_title', 'Proton 管理') }}</div>
@@ -1125,6 +1174,50 @@ watch(
   font-size: 12px;
 }
 
+.version-panel {
+  max-width: 900px;
+}
+
+.version-grid {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.version-row {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.version-label {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.version-value {
+  font-size: 13px;
+  color: #e6e6e6;
+}
+
+.version-log-row {
+  align-items: stretch;
+}
+
+.version-log-content {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.6;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.16);
+  padding: 10px;
+}
+
 .family-card {
   margin-top: 12px;
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1377,6 +1470,10 @@ watch(
   }
 
   .family-row {
+    grid-template-columns: 1fr;
+  }
+
+  .version-row {
     grid-template-columns: 1fr;
   }
 }
