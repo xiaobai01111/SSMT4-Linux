@@ -1,0 +1,320 @@
+{
+  "games": {
+    "GenshinImpact": "原神",
+    "HonkaiStarRail": "崩坏：星穹铁道",
+    "ZenlessZoneZero": "绝区零",
+    "WutheringWaves": "鸣潮",
+    "HonkaiImpact3rd": "崩坏3",
+    "SnowbreakContainmentZone": "尘白禁区"
+  },
+  "home": {
+    "hidegame": {
+      "fail": "隐藏游戏失败:"
+    },
+    "css": {
+      "startgame": "开始游戏",
+      "downloadgame": "下载游戏"
+    },
+    "contextmenu": {
+      "hidegame": "不显示此游戏"
+    },
+    "dropdown": {
+      "gamesettings": "游戏设置",
+      "enablesymlink": "开启Symlink",
+      "disablesymlink": "关闭Symlink"
+    }
+  },
+  "gamelibrary": {
+    "addToSidebar": "添加到侧边栏",
+    "removeFromSidebar": "从侧边栏移除",
+    "deleteGame": "删除游戏",
+    "deleteConfirmTitle": "删除确认",
+    "deleteConfirmMsg": "确定要删除游戏 \"{name}\" 吗？此操作将删除该游戏的所有配置文件，不可恢复。",
+    "importConfig": "导入游戏配置",
+    "openTemplatesFolder": "打开配置模板文件夹",
+    "loading": "加载中...",
+    "noTemplates": "配置模板文件夹为空。\n请将游戏配置文件夹放入 GameTemplates 目录中。",
+    "alreadyExists": "已存在",
+    "importOverwriteTitle": "覆盖确认",
+    "importOverwriteMsg": "游戏 \"{name}\" 已存在，是否覆盖现有配置？",
+    "importSuccess": "已成功导入游戏配置: {name}",
+    "importFailed": "导入失败: {error}"
+  },
+  "websites": {
+    "title": "常用网址 (Websites)",
+    "desc": "项目相关链接与全部游戏官网（国服/国际服），便于快速访问。",
+    "search_placeholder": "搜索名称、描述或网址",
+    "project_links": "项目链接",
+    "game_links": "游戏官网",
+    "tag_project": "项目",
+    "tag_game": "游戏",
+    "server_cn": "国服",
+    "server_global": "国际服",
+    "server_unavailable": "暂无链接",
+    "empty": "没有匹配的链接",
+    "items": {
+      "github": {
+        "name": "SSMT4 Linux GitHub",
+        "desc": "项目仓库主页"
+      },
+      "releases": {
+        "name": "Releases",
+        "desc": "下载安装包与历史版本"
+      },
+      "issues": {
+        "name": "Issues",
+        "desc": "问题反馈与需求建议"
+      },
+      "docs": {
+        "name": "在线文档",
+        "desc": "项目使用文档"
+      },
+      "genshin": {
+        "name": "原神 (Genshin Impact)",
+        "desc": "官方网站"
+      },
+      "hsr": {
+        "name": "崩坏：星穹铁道 (Honkai: Star Rail)",
+        "desc": "官方网站"
+      },
+      "zzz": {
+        "name": "绝区零 (Zenless Zone Zero)",
+        "desc": "官方网站"
+      },
+      "hi3": {
+        "name": "崩坏3 (Honkai Impact 3rd)",
+        "desc": "官方网站"
+      },
+      "ww": {
+        "name": "鸣潮 (Wuthering Waves)",
+        "desc": "官方网站"
+      },
+      "snowbreak": {
+        "name": "尘白禁区 (Snowbreak: Containment Zone)",
+        "desc": "官方网站"
+      }
+    }
+  },
+  "settings": {
+    "language": "界面语言",
+    "basicsettings": "基础设置",
+    "datadir": "SSMT4 数据目录",
+    "datadir_placeholder": "默认: ~/.local/share/ssmt4（留空使用默认路径）",
+    "datadir_hint": "软件数据存放目录（游戏下载、Games 文件夹等）。配置文件始终保存在 ~/.config/ssmt4。",
+    "selectfolder": "选择文件夹",
+    "cachedir": "SSMT缓存文件夹",
+    "cachedir_placeholder": "请选择或输入缓存文件夹路径",
+    "github_token": "GitHub Token",
+    "github_token_placeholder": "可选: 填写Token可提高API请求限额",
+    "appearance": "外观设置",
+    "content_style": "内容区样式 (Content)",
+    "opacity": "不透明度 (Opacity)",
+    "blur": "模糊度 (Blur)",
+    "page_display": "页面显示设置",
+<<<<<<< HEAD
+=======
+    "modpage": "Mod管理页面",
+>>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
+    "websitepage": "常用网址页面",
+    "docpage": "使用文档页面",
+    "selectdatadir": "选择 SSMT4 数据目录",
+    "selectcachedir": "选择 SSMT 缓存文件夹",
+    "version_check_title": "版本检查",
+    "version_check_overview": "当前版本信息",
+    "version_check_hint": "从项目根目录 version 和 version-log 读取最新版本与更新日志。",
+    "version_checking": "检查中...",
+    "version_check_action": "检查更新",
+    "version_current": "当前版本",
+    "version_latest": "最新版本",
+    "version_status": "更新状态",
+    "version_has_update": "有可用更新",
+    "version_up_to_date": "已是最新",
+    "version_log": "更新日志",
+    "version_log_empty": "暂无更新日志",
+    "version_not_loaded": "尚未获取版本信息，请点击“检查更新”。",
+    "proton_manage_title": "Proton 管理",
+    "proton_tab_hint": "每个 Proton 家族独立管理（本地/远程双下拉）",
+    "proton_local_remote_hint": "本页仅管理 Proton 版本下载与目录，不直接修改单个游戏的运行环境。",
+    "proton_refreshing": "刷新中...",
+    "proton_fetching": "获取中...",
+    "proton_refresh_local": "刷新本地",
+    "proton_refresh_remote": "刷新远程",
+    "proton_local_versions": "本地已安装",
+    "proton_remote_versions": "远程可下载",
+    "proton_select_local": "选择本地版本",
+    "proton_select_remote": "选择远程版本",
+    "proton_selected_path": "路径",
+    "proton_selected_version": "版本",
+    "proton_no_local": "该家族暂无本地版本",
+    "proton_no_remote": "该家族暂无远程版本（可尝试刷新远程）",
+    "proton_missing_source_hint": "该家族未配置来源，请在下方目录编辑器新增 source。",
+    "proton_downloading": "下载中...",
+    "proton_installed": "已安装",
+    "proton_download": "下载选中版本",
+    "proton_catalog_editor": "Proton 目录可视化维护",
+    "proton_catalog_hint": "修改家族/来源后保存即可生效，无需改代码。",
+    "proton_reload_catalog": "重载目录",
+    "proton_save_catalog": "保存目录",
+    "proton_families": "家族定义",
+    "proton_sources": "来源定义",
+    "proton_add_family": "新增家族",
+    "proton_add_source": "新增来源",
+    "proton_family_key": "family_key",
+    "proton_family_name": "显示名称",
+    "proton_detect_patterns": "检测规则，每行一个（支持 regex）",
+    "proton_builtin": "内置",
+    "proton_enabled": "启用",
+    "proton_remove": "删除",
+    "proton_source_provider": "provider",
+    "proton_source_repo": "owner/repo",
+    "proton_source_endpoint": "完整 API endpoint（可选）",
+    "proton_source_url_template": "下载 URL 模板（actions 用，含 {id}）",
+    "proton_source_asset_pattern": "资产匹配 regex",
+    "proton_source_tag_pattern": "tag 匹配 regex",
+    "proton_source_prerelease": "预发布",
+    "proton_source_note": "备注",
+    "proton_editor_saved": "Proton 目录已保存",
+    "proton_editor_reloaded": "已重载 Proton 目录",
+    "proton_invalid_family_key": "family_key 非法或重复",
+    "proton_empty_fields": "必填字段不能为空"
+  },
+  "gamesettingsmodal": {
+    "title": "游戏设置",
+    "basicsettings": "基本设置",
+    "wine": "Wine / Proton",
+    "other": "其他设置",
+    "processing": "处理中...",
+    "configname": "配置名称 (文件夹名)",
+    "configname_placeholder": "请输入配置名称",
+    "createnew": "以此名称创建新配置",
+    "deletecurrent": "删除当前配置",
+    "resetdefault": "恢复默认设置",
+    "resetconfirm_title": "确认重置",
+    "resetconfirm_msg": "确定要恢复默认设置吗？这将清除所有自定义配置。",
+    "gamepreset": "游戏预设",
+    "gameicon": "游戏图标",
+    "selecticon": "选择图标文件 (.png)",
+    "bgsettings": "背景设置",
+    "image": "图片",
+    "video": "视频",
+    "selectbgvideo": "选择背景视频",
+    "selectbgimage": "选择背景图片",
+    "autoupdatebg": "自动更新背景",
+    "selectfolder": "选择文件夹",
+    "openfolder": "打开文件夹",
+    "selectfile": "选择文件",
+    "openlocation": "打开所在位置",
+    "launchargs": "启动参数",
+    "launchargs_placeholder": "例如: -popupwindow",
+    "sysinfo": "系统环境",
+    "displayserver": "显示服务器",
+    "gpu_driver": "GPU 驱动",
+    "unknown": "未知",
+    "notdetected": "未检测到",
+    "detected": "已检测到",
+    "gamepad": "手柄",
+    "wineversion": "Wine / Proton 版本",
+    "wineversion_placeholder": "选择 Wine/Proton 版本",
+    "protonsettings": "Proton 设置",
+    "pressure_vessel": "使用 pressure-vessel 容器 (推荐)",
+    "wayland": "启用 Wayland 支持",
+    "no_d3d12": "禁用 D3D12 (PROTON_NO_D3D12)",
+    "gstreamer": "使用 GStreamer 媒体后端",
+    "mangohud": "启用 MangoHud 性能覆盖",
+    "steamdeck": "Steam Deck 兼容模式",
+    "custom_env": "自定义环境变量",
+    "add": "添加",
+    "save_wine": "保存 Wine 设置",
+    "gamepath": "游戏可执行文件路径",
+    "gamepath_placeholder": "游戏 .exe 文件的完整路径",
+    "more_coming": "更多设置将在后续版本中添加",
+    "error": {
+      "failloadconfig": "游戏配置加载失败: ",
+      "configfailedsaving": "当前配置保存失败: {e}",
+      "failedopendir": "打开路径失败: {e}"
+    },
+    "log": {
+      "saving": "[GameSettingsModal] 正在为 {gameName} 保存配置",
+      "currentstate": "[GameSettingsModal] 当前配置状态: {currentState}",
+      "configsaved": "[GameSettingsModal] 当前配置已保存.",
+      "joinPathFailed": "路径合并失败：{error}",
+      "configCreated": "已创建新配置：{configName}",
+      "configCreateFailed": "创建新配置失败：{error}"
+    },
+    "message": {
+      "success": {
+        "title": "成功",
+        "backgroundupdated": "背景更新成功!",
+        "updatedToVersion": "更新成功！已更新至版本 {version}"
+      },
+      "error": {
+        "title": "错误",
+        "updateFailed": "更新失败: {error}",
+        "operationFailed": "操作失败：{error}"
+      }
+    },
+    "confirm": {
+      "versionUpdate": {
+        "title": "版本详情",
+        "message": "发现新版本: {version}\n\n更新内容:\n{description}\n\n是否立即更新？（将覆盖当前文件）"
+      },
+      "createConfig": {
+        "title": "创建确认",
+        "message": "确定要创建新配置 \"{configName}\" 吗？"
+      }
+    },
+    "filePicker": {
+      "title": "选择可执行文件",
+      "filterName": "可执行文件",
+      "dllTitle": "选择 DLL 文件",
+      "dllFilterName": "DLL 文件"
+    },
+    "info": {
+      "configName": "配置名称",
+      "configNamePlaceholder": "输入配置名称...",
+      "createConfig": "新建配置",
+      "deleteConfig": "删除配置",
+      "resetConfig": "恢复默认",
+      "displayName": "显示名称",
+      "displayNamePlaceholder": "用于页面显示，可与配置名称不同",
+      "saveMeta": "保存元信息",
+      "saving": "保存中...",
+      "runtimeEnv": "运行环境",
+      "runtimeEnvPlaceholder": "选择运行环境",
+      "runtimeWine": "Wine / Proton",
+      "runtimeSteam": "Steam (Proton)",
+      "runtimeLinux": "Linux 原生",
+      "runtimeWineHint": "使用 Wine 或 Proton 运行 Windows 游戏，需在“运行环境”标签页配置 Wine 版本。",
+      "runtimeSteamHint": "通过 Steam 启动游戏，使用 Steam 内置 Proton 兼容层。",
+      "runtimeLinuxHint": "直接以 Linux 原生方式运行，无需兼容层。",
+      "saveRuntime": "保存运行环境",
+      "gamePreset": "游戏预设",
+      "gamePresetPlaceholder": "选择预设",
+      "capabilityDownload": "支持下载",
+      "capabilityNoDownload": "不支持下载",
+      "capabilityProtection": "支持防护",
+      "capabilityNoProtection": "无防护能力",
+      "capabilityLimitedHint": "该预设当前不支持完整下载流程，可继续编辑但部分功能受限。",
+      "backgroundType": "背景类型",
+      "backgroundTypePlaceholder": "选择背景类型",
+      "gameIcon": "游戏图标",
+      "selectIcon": "选择图标",
+      "backgroundImage": "背景图片",
+      "backgroundVideo": "背景视频",
+      "selectBackground": "选择背景图片",
+      "selectBackgroundVideo": "选择背景视频",
+      "resetBackground": "恢复默认资源",
+      "saveAssets": "保存资源设置",
+      "readonlyWarning": "配置已降级为 legacy 只读模式（{code}），请检查迁移日志。",
+      "readonlyGeneric": "配置处于只读模式，当前仅允许查看。",
+      "unsavedPrompt": "游戏信息页存在未保存更改，确定要关闭吗？",
+      "unsavedTitle": "未保存更改",
+      "gameVersion": "游戏版本",
+      "versionUnknown": "未检测到版本",
+      "versionLoading": "正在检测版本...",
+      "versionRefreshing": "刷新中...",
+      "refreshVersion": "刷新版本",
+      "versionPath": "检测路径"
+    }
+  }
+}

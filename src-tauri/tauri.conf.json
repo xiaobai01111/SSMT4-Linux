@@ -1,0 +1,94 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SSMT4-Linux-Dev",
+<<<<<<< HEAD
+  "version": "0.0.1-beta",
+=======
+  "version": "0.0.8-beta",
+>>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
+  "identifier": "ssmt4-dev",
+  "build": {
+    "beforeDevCommand": "bun run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "bun run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "center": true,
+        "title": "SSMT4",
+        "width": 1280,
+        "height": 720,
+        "minWidth": 1056,
+        "minHeight": 594,
+        "decorations": false,
+        "backgroundColor": "#000000"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' 'unsafe-inline' asset: https: data: stream:; media-src 'self' asset: https: data: stream: blob:; img-src 'self' asset: https: data:; connect-src 'self' https:; frame-src 'none'; script-src 'self' 'unsafe-inline'",
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$APP/**",
+          "$RESOURCE/**",
+          "$LOCALDATA/**",
+          "$APPCONFIG/**",
+          "$HOME/**"
+        ]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "rpm"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "resources/**/*",
+      "../version",
+      "../version-log"
+    ],
+    "linux": {
+      "deb": {
+        "depends": [
+          "libgtk-3-0",
+          "libwebkit2gtk-4.1-0",
+          "libsoup-3.0-0",
+          "xdg-utils"
+        ],
+        "recommends": [
+          "xwayland",
+          "wine",
+          "winetricks",
+          "libayatana-appindicator3-1"
+        ]
+      },
+      "rpm": {
+        "depends": [
+          "gtk3",
+          "webkit2gtk4.1",
+          "libsoup3",
+          "xdg-utils"
+        ],
+        "recommends": [
+          "xorg-x11-server-Xwayland",
+          "wine",
+          "winetricks",
+          "libayatana-appindicator"
+        ]
+      }
+    }
+  },
+  "plugins": {
+    "shell": {
+      "open": true
+    }
+  }
+}

@@ -1,0 +1,43 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Project specific ignores
+packaging/
+pkg/
+src-tauri/target/release/bundle/
+
+# Exclude build and untracked wiki/installation package
+Installation package/
+<<<<<<< HEAD
+
+wiki/
+
+=======
+scripts/build-install-packages.sh
+wiki/
+
+
+ProtonPlus/
+>>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1

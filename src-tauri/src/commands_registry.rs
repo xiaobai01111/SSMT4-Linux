@@ -1,0 +1,109 @@
+use crate::commands;
+
+/// 生成 Tauri invoke_handler，集中注册所有前端可调用的命令
+pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
+    tauri::generate_handler![
+        // Common
+        commands::common::greet,
+        commands::common::get_resource_path,
+        commands::common::ensure_directory,
+        commands::common::open_in_explorer,
+        // Settings
+        commands::settings::load_settings,
+        commands::settings::save_settings,
+        commands::settings::get_version_check_info,
+        // Process
+        commands::process::run_resource_executable,
+        // Game scanner
+        commands::game_scanner::scan_games,
+        commands::game_scanner::set_game_visibility,
+        // Game templates
+        commands::game_scanner::get_game_templates_dir,
+        commands::game_scanner::list_game_templates,
+        commands::game_scanner::import_game_template,
+        // Game config
+        commands::game_config::load_game_config,
+        commands::game_config::save_game_config,
+        commands::game_config::list_game_presets_for_info,
+        commands::game_config::load_game_info_v2,
+        commands::game_config::save_game_info_meta,
+        commands::game_config::save_game_info_runtime,
+        commands::game_config::save_game_info_assets,
+        commands::game_config::validate_game_config_name,
+        commands::game_config::migrate_game_config_to_v2,
+        commands::game_config::get_game_key_migration_status,
+        commands::game_config::preview_game_key_migration,
+        commands::game_config::execute_game_key_migration,
+        commands::game_config::create_new_config,
+        commands::game_config::delete_game_config_folder,
+        commands::game_config::set_game_icon,
+        commands::game_config::set_game_background,
+        commands::game_config::reset_game_icon,
+        commands::game_config::reset_game_background,
+        commands::game_config::update_game_background,
+        // Game launcher (pressure-vessel + Wine/Proton)
+        commands::game_launcher::start_game,
+        // Wine manager
+        commands::wine_manager::scan_wine_versions,
+        commands::wine_manager::get_game_wine_config,
+        commands::wine_manager::set_game_wine_config,
+        commands::wine_manager::create_prefix,
+        commands::wine_manager::delete_prefix,
+        commands::wine_manager::get_prefix_info,
+        commands::wine_manager::install_dxvk,
+        commands::wine_manager::uninstall_dxvk,
+        commands::wine_manager::install_vkd3d,
+        commands::wine_manager::check_vulkan,
+        commands::wine_manager::install_runtime,
+        commands::wine_manager::list_available_runtimes,
+        commands::wine_manager::get_installed_runtimes,
+        commands::wine_manager::get_display_info,
+        commands::wine_manager::get_recent_logs,
+        commands::wine_manager::open_log_folder,
+        commands::wine_manager::list_prefix_templates,
+        commands::wine_manager::save_prefix_template,
+        commands::wine_manager::get_proton_catalog,
+        commands::wine_manager::save_proton_catalog,
+        commands::wine_manager::scan_local_proton_grouped,
+        commands::wine_manager::fetch_remote_proton_grouped,
+        // Wine/Proton 远程版本管理
+        commands::wine_manager::fetch_remote_proton,
+        commands::wine_manager::download_proton,
+        // DXVK 版本管理
+        commands::wine_manager::scan_local_dxvk,
+        commands::wine_manager::detect_dxvk_status,
+        commands::wine_manager::fetch_dxvk_versions,
+        commands::wine_manager::download_dxvk,
+        // 遥测防护
+        commands::telemetry::check_telemetry_status,
+        commands::telemetry::check_game_protection_status,
+        commands::telemetry::disable_telemetry,
+        commands::telemetry::restore_telemetry,
+        commands::telemetry::remove_telemetry_files,
+        commands::telemetry::apply_game_protection,
+        commands::telemetry::get_game_protection_info,
+<<<<<<< HEAD
+        commands::telemetry::get_channel_protection_status,
+        commands::telemetry::set_channel_protection_mode,
+=======
+>>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
+        // Game downloader
+        commands::game_downloader::get_launcher_info,
+        commands::game_downloader::get_game_state,
+        commands::game_downloader::download_game,
+        commands::game_downloader::update_game,
+        commands::game_downloader::update_game_patch,
+        commands::game_downloader::verify_game_files,
+        commands::game_downloader::cancel_download,
+        commands::game_downloader::get_local_version,
+        commands::game_downloader::get_game_launcher_api,
+        commands::game_downloader::get_default_game_folder,
+        // Jadeite 反作弊补丁
+        commands::jadeite::get_jadeite_status,
+        commands::jadeite::install_jadeite,
+        // 日志查看器
+        commands::log_viewer::get_log_dir,
+        commands::log_viewer::read_log_file,
+        commands::log_viewer::open_log_window,
+    ]
+}

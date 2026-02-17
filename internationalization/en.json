@@ -1,0 +1,317 @@
+{
+  "games": {
+    "GenshinImpact": "Genshin Impact",
+    "HonkaiStarRail": "Honkai: Star Rail",
+    "ZenlessZoneZero": "Zenless Zone Zero",
+    "WutheringWaves": "Wuthering Waves",
+    "HonkaiImpact3rd": "Honkai Impact 3rd",
+    "SnowbreakContainmentZone": "Snowbreak: Containment Zone"
+  },
+  "home": {
+    "hidegame": {
+      "fail": "Failed to hide game:"
+    },
+    "css": {
+      "startgame": "Start Game",
+      "downloadgame": "Download Game"
+    },
+    "contextmenu": {
+      "hidegame": "Hide this game"
+    },
+    "dropdown": {
+      "gamesettings": "Game Settings",
+      "enablesymlink": "Enable Symlink",
+      "disablesymlink": "Disable Symlink"
+    }
+  },
+  "gamelibrary": {
+    "addToSidebar": "Add to Sidebar",
+    "removeFromSidebar": "Remove from Sidebar",
+    "deleteGame": "Delete Game",
+    "deleteConfirmTitle": "Delete Confirmation",
+    "deleteConfirmMsg": "Are you sure you want to delete \"{name}\"? This will remove all config files for this game and cannot be undone.",
+    "importConfig": "Import Game Config",
+    "openTemplatesFolder": "Open Templates Folder",
+    "loading": "Loading...",
+    "noTemplates": "No templates found.\nPlace game config folders into the GameTemplates directory.",
+    "alreadyExists": "Exists",
+    "importOverwriteTitle": "Overwrite Confirmation",
+    "importOverwriteMsg": "Game \"{name}\" already exists. Overwrite existing config?",
+    "importSuccess": "Successfully imported: {name}",
+    "importFailed": "Import failed: {error}"
+  },
+  "websites": {
+    "title": "Websites",
+    "desc": "Project links and official websites for all supported games (CN / Global).",
+    "search_placeholder": "Search name, description, or URL",
+    "project_links": "Project Links",
+    "game_links": "Official Game Websites",
+    "tag_project": "Project",
+    "tag_game": "Game",
+    "server_cn": "CN",
+    "server_global": "Global",
+    "server_unavailable": "N/A",
+    "empty": "No matching links",
+    "items": {
+      "github": {
+        "name": "SSMT4 Linux GitHub",
+        "desc": "Project repository homepage"
+      },
+      "releases": {
+        "name": "Releases",
+        "desc": "Download installers and previous versions"
+      },
+      "issues": {
+        "name": "Issues",
+        "desc": "Bug reports and feature requests"
+      },
+      "docs": {
+        "name": "Online Docs",
+        "desc": "Project documentation"
+      },
+      "genshin": {
+        "name": "Genshin Impact",
+        "desc": "Official website"
+      },
+      "hsr": {
+        "name": "Honkai: Star Rail",
+        "desc": "Official website"
+      },
+      "zzz": {
+        "name": "Zenless Zone Zero",
+        "desc": "Official website"
+      },
+      "hi3": {
+        "name": "Honkai Impact 3rd",
+        "desc": "Official website"
+      },
+      "ww": {
+        "name": "Wuthering Waves",
+        "desc": "Official website"
+      },
+      "snowbreak": {
+        "name": "Snowbreak: Containment Zone",
+        "desc": "Official website"
+      }
+    }
+  },
+  "settings": {
+    "language": "Interface Language",
+    "basicsettings": "Basic Settings",
+    "datadir": "SSMT4 Data Directory",
+    "datadir_placeholder": "Default: ~/.local/share/ssmt4 (leave empty for default)",
+    "datadir_hint": "Application data directory (game downloads, Games folder, etc). Config files are always saved in ~/.config/ssmt4.",
+    "selectfolder": "Select Folder",
+    "cachedir": "SSMT Cache Folder",
+    "cachedir_placeholder": "Select or enter cache folder path",
+    "github_token": "GitHub Token",
+    "github_token_placeholder": "Optional: Token to increase API rate limit",
+    "appearance": "Appearance",
+    "content_style": "Content Style",
+    "opacity": "Opacity",
+    "blur": "Blur",
+    "page_display": "Page Display Settings",
+    "modpage": "Mod Manager Page",
+    "websitepage": "Bookmarks Page",
+    "docpage": "Documentation Page",
+    "selectdatadir": "Select SSMT4 Data Directory",
+    "selectcachedir": "Select SSMT Cache Folder",
+    "version_check_title": "Version Check",
+    "version_check_overview": "Current Version Info",
+    "version_check_hint": "Read latest version and changelog from repository root files: version and version-log.",
+    "version_checking": "Checking...",
+    "version_check_action": "Check Updates",
+    "version_current": "Current Version",
+    "version_latest": "Latest Version",
+    "version_status": "Update Status",
+    "version_has_update": "Update available",
+    "version_up_to_date": "Up to date",
+    "version_log": "Changelog",
+    "version_log_empty": "No changelog available",
+    "version_not_loaded": "Version info not loaded yet. Click \"Check Updates\".",
+    "proton_manage_title": "Proton Management",
+    "proton_tab_hint": "Manage each Proton family independently (local/remote dropdowns)",
+    "proton_local_remote_hint": "This page manages Proton downloads and catalog only. Per-game runtime is configured in Game Settings.",
+    "proton_refreshing": "Refreshing...",
+    "proton_fetching": "Fetching...",
+    "proton_refresh_local": "Refresh Local",
+    "proton_refresh_remote": "Refresh Remote",
+    "proton_local_versions": "Installed Local Versions",
+    "proton_remote_versions": "Remote Downloadable Versions",
+    "proton_select_local": "Select local version",
+    "proton_select_remote": "Select remote version",
+    "proton_selected_path": "Path",
+    "proton_selected_version": "Version",
+    "proton_no_local": "No local version in this family",
+    "proton_no_remote": "No remote version in this family (try refresh remote)",
+    "proton_missing_source_hint": "No source configured for this family. Add one in the catalog editor below.",
+    "proton_downloading": "Downloading...",
+    "proton_installed": "Installed",
+    "proton_download": "Download Selected",
+    "proton_catalog_editor": "Proton Catalog Editor",
+    "proton_catalog_hint": "Changes to families/sources take effect after saving, no code changes required.",
+    "proton_reload_catalog": "Reload Catalog",
+    "proton_save_catalog": "Save Catalog",
+    "proton_families": "Families",
+    "proton_sources": "Sources",
+    "proton_add_family": "Add Family",
+    "proton_add_source": "Add Source",
+    "proton_family_key": "family_key",
+    "proton_family_name": "Display Name",
+    "proton_detect_patterns": "Detection rules, one per line (regex supported)",
+    "proton_builtin": "Builtin",
+    "proton_enabled": "Enabled",
+    "proton_remove": "Remove",
+    "proton_source_provider": "provider",
+    "proton_source_repo": "owner/repo",
+    "proton_source_endpoint": "Full API endpoint (optional)",
+    "proton_source_url_template": "Download URL template (for actions, include {id})",
+    "proton_source_asset_pattern": "Asset regex",
+    "proton_source_tag_pattern": "Tag regex",
+    "proton_source_prerelease": "Prerelease",
+    "proton_source_note": "Note",
+    "proton_editor_saved": "Proton catalog saved",
+    "proton_editor_reloaded": "Proton catalog reloaded",
+    "proton_invalid_family_key": "Invalid or duplicated family_key",
+    "proton_empty_fields": "Required fields cannot be empty"
+  },
+  "gamesettingsmodal": {
+    "title": "Game Settings",
+    "basicsettings": "Basic Settings",
+    "wine": "Wine / Proton",
+    "other": "Other Settings",
+    "processing": "Processing...",
+    "configname": "Config Name (Folder Name)",
+    "configname_placeholder": "Enter config name",
+    "createnew": "Create New Config",
+    "deletecurrent": "Delete Current Config",
+    "resetdefault": "Reset to Default",
+    "resetconfirm_title": "Confirm Reset",
+    "resetconfirm_msg": "Are you sure you want to reset to default settings? This will clear all custom configurations.",
+    "gamepreset": "Game Preset",
+    "gameicon": "Game Icon",
+    "selecticon": "Select Icon (.png)",
+    "bgsettings": "Background Settings",
+    "image": "Image",
+    "video": "Video",
+    "selectbgvideo": "Select Background Video",
+    "selectbgimage": "Select Background Image",
+    "autoupdatebg": "Auto Update Background",
+    "selectfolder": "Select Folder",
+    "openfolder": "Open Folder",
+    "selectfile": "Select File",
+    "openlocation": "Open Location",
+    "launchargs": "Launch Arguments",
+    "launchargs_placeholder": "e.g. -popupwindow",
+    "sysinfo": "System Environment",
+    "displayserver": "Display Server",
+    "gpu_driver": "GPU Driver",
+    "unknown": "Unknown",
+    "notdetected": "Not detected",
+    "detected": "Detected",
+    "gamepad": "Gamepad",
+    "wineversion": "Wine / Proton Version",
+    "wineversion_placeholder": "Select Wine/Proton version",
+    "protonsettings": "Proton Settings",
+    "pressure_vessel": "Use pressure-vessel container (recommended)",
+    "wayland": "Enable Wayland support",
+    "no_d3d12": "Disable D3D12 (PROTON_NO_D3D12)",
+    "gstreamer": "Use GStreamer media backend",
+    "mangohud": "Enable MangoHud overlay",
+    "steamdeck": "Steam Deck compatibility mode",
+    "custom_env": "Custom Environment Variables",
+    "add": "Add",
+    "save_wine": "Save Wine Settings",
+    "gamepath": "Game Executable Path",
+    "gamepath_placeholder": "Full path to game .exe file",
+    "more_coming": "More settings coming in future updates",
+    "error": {
+      "failloadconfig": "Failed to load game config: ",
+      "configfailedsaving": "Failed to save current conifg: {e}",
+      "failedopendir": "Open direction failed: {e}"
+    },
+    "log": {
+      "saving": "[GameSettingsModal] Starting saveConfig for: {gameName}",
+      "currentstate": "[GameSettingsModal] Current config state: {currentState}",
+      "configsaved": "[GameSettingsModal] Current config saved.",
+      "joinPathFailed": "Failed to join path: {error}",
+      "configCreated": "Created new config: {configName}",
+      "configCreateFailed": "Failed to create new config: {error}"
+    },
+    "message": {
+      "success": {
+        "title": "Success",
+        "backgroundupdated": "Background updated successfully!",
+        "updatedToVersion": "Update successful! Updated to version {version}"
+      },
+      "error": {
+        "title": "Error",
+        "updateFailed": "Update failed: {error}",
+        "operationFailed": "Operation failed: {error}"
+      }
+    },
+    "confirm": {
+      "versionUpdate": {
+        "title": "Version Details",
+        "message": "New version found: {version}\n\nChangelog:\n{description}\n\nUpdate now? (Current files will be overwritten)"
+      },
+      "createConfig": {
+        "title": "Confirm Creation",
+        "message": "Are you sure you want to create new config \"{configName}\"?"
+      }
+    },
+    "filePicker": {
+      "title": "Select Executable",
+      "filterName": "Executables",
+      "dllTitle": "Select DLL File",
+      "dllFilterName": "DLL Files"
+    },
+    "info": {
+      "configName": "Config Name",
+      "configNamePlaceholder": "Enter config name...",
+      "createConfig": "Create Config",
+      "deleteConfig": "Delete Config",
+      "resetConfig": "Reset Default",
+      "displayName": "Display Name",
+      "displayNamePlaceholder": "Shown in UI, can differ from config name",
+      "saveMeta": "Save Metadata",
+      "saving": "Saving...",
+      "runtimeEnv": "Runtime Environment",
+      "runtimeEnvPlaceholder": "Select runtime environment",
+      "runtimeWine": "Wine / Proton",
+      "runtimeSteam": "Steam (Proton)",
+      "runtimeLinux": "Native Linux",
+      "runtimeWineHint": "Run Windows games with Wine or Proton. Configure Wine version in Runtime tab.",
+      "runtimeSteamHint": "Launch through Steam and use Steam built-in Proton compatibility layer.",
+      "runtimeLinuxHint": "Run in native Linux mode without a compatibility layer.",
+      "saveRuntime": "Save Runtime",
+      "gamePreset": "Game Preset",
+      "gamePresetPlaceholder": "Select preset",
+      "capabilityDownload": "Download Supported",
+      "capabilityNoDownload": "No Download Support",
+      "capabilityProtection": "Protection Supported",
+      "capabilityNoProtection": "No Protection Support",
+      "capabilityLimitedHint": "This preset currently has limited download capability. Editing remains available.",
+      "backgroundType": "Background Type",
+      "backgroundTypePlaceholder": "Select background type",
+      "gameIcon": "Game Icon",
+      "selectIcon": "Select Icon",
+      "backgroundImage": "Background Image",
+      "backgroundVideo": "Background Video",
+      "selectBackground": "Select Background",
+      "selectBackgroundVideo": "Select Background Video",
+      "resetBackground": "Restore Default Assets",
+      "saveAssets": "Save Assets",
+      "readonlyWarning": "Config is in legacy read-only fallback mode ({code}). Check migration logs.",
+      "readonlyGeneric": "Config is currently read-only.",
+      "unsavedPrompt": "There are unsaved changes in Game Info. Close anyway?",
+      "unsavedTitle": "Unsaved Changes",
+      "gameVersion": "Game Version",
+      "versionUnknown": "Version not detected",
+      "versionLoading": "Detecting version...",
+      "versionRefreshing": "Refreshing...",
+      "refreshVersion": "Refresh Version",
+      "versionPath": "Path"
+    }
+  }
+}

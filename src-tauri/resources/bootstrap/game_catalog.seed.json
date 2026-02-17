@@ -1,0 +1,248 @@
+{
+  "identities": [
+    {
+      "canonicalKey": "WutheringWaves",
+      "displayNameEn": "Wuthering Waves"
+    },
+    {
+      "canonicalKey": "GenshinImpact",
+      "displayNameEn": "Genshin Impact"
+    },
+    {
+      "canonicalKey": "HonkaiStarRail",
+      "displayNameEn": "Honkai: Star Rail"
+    },
+    {
+      "canonicalKey": "ZenlessZoneZero",
+      "displayNameEn": "Zenless Zone Zero"
+    },
+    {
+      "canonicalKey": "HonkaiImpact3rd",
+      "displayNameEn": "Honkai Impact 3rd"
+    },
+    {
+      "canonicalKey": "SnowbreakContainmentZone",
+      "displayNameEn": "Snowbreak: Containment Zone"
+    }
+  ],
+  "presets": [
+    {
+      "id": "WutheringWaves",
+      "displayNameEn": "Wuthering Waves",
+      "supported": true,
+<<<<<<< HEAD
+      "requireProtectionBeforeLaunch": false,
+=======
+      "requireProtectionBeforeLaunch": true,
+>>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
+      "defaultUmuRun": true,
+      "forceDirectProton": false,
+      "forceDisablePressureVessel": false,
+      "enableNetworkLogByDefault": false,
+      "umuGameId": "umu-3513350",
+      "umuStore": "none",
+      "envDefaults": {
+        "SteamOS": "1",
+        "SteamDeck": "1",
+        "steamdeck": "1",
+        "STEAMDECK": "1",
+        "UMU_USE_STEAM": "1"
+      },
+      "defaultFolder": "Wuthering Waves Game",
+      "launcherApi": "https://prod-cn-alicdn-gamestarter.kurogame.com/launcher/game/G152/10003_Y8xXrXk65DqFHEDgApn3cpK5lfczpFx5/index.json",
+      "launcherDownloadApi": "https://prod-cn-alicdn-gamestarter.kurogame.com/launcher/launcher/10003_Y8xXrXk65DqFHEDgApn3cpK5lfczpFx5/G152/index.json",
+      "downloadServers": [
+        {
+          "id": "cn",
+          "label": "国服",
+          "launcherApi": "https://prod-cn-alicdn-gamestarter.kurogame.com/launcher/game/G152/10003_Y8xXrXk65DqFHEDgApn3cpK5lfczpFx5/index.json",
+          "bizPrefix": ""
+        },
+        {
+          "id": "global",
+          "label": "国际服",
+          "launcherApi": "https://prod-alicdn-gamestarter.kurogame.com/launcher/game/G153/50004_obOHXFrFanqsaIEOmuKroCcbZkQRBC7c/index.json",
+          "bizPrefix": ""
+        }
+      ],
+      "audioLanguages": [],
+      "channelProtection": {
+        "configRelativePath": "Client/Binaries/Win64/ThirdParty/KrPcSdk_Mainland/KRSDKRes/KRSDKConfig.json",
+        "channelKey": "KR_ChannelId",
+<<<<<<< HEAD
+        "initValue": 19,
+        "protectedValue": 205,
+        "defaultMode": "init",
+        "launchEnforcement": "warn"
+=======
+        "protectedValue": 205
+>>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
+      },
+      "telemetryServers": [],
+      "telemetryDlls": []
+    },
+    {
+      "id": "HonkaiStarRail",
+      "displayNameEn": "Honkai: Star Rail",
+      "supported": true,
+      "defaultFolder": "StarRail",
+      "downloadServers": [
+        {
+          "id": "cn",
+          "label": "国服",
+          "launcherApi": "https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1",
+          "bizPrefix": "hkrpg_"
+        },
+        {
+          "id": "global",
+          "label": "国际服",
+          "launcherApi": "https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8",
+          "bizPrefix": "hkrpg_"
+        }
+      ],
+      "audioLanguages": [
+        { "code": "zh-cn", "label": "中文" },
+        { "code": "en-us", "label": "English" },
+        { "code": "ja-jp", "label": "日本語" },
+        { "code": "ko-kr", "label": "한국어" }
+      ],
+      "telemetryServers": [
+        "log-upload.mihoyo.com",
+        "uspider.yuanshen.com",
+        "log-upload-os.hoyoverse.com",
+        "overseauspider.yuanshen.com",
+        "sg-public-data-api.hoyoverse.com",
+        "public-data-api.mihoyo.com"
+      ],
+      "telemetryDlls": [
+        "StarRail_Data/Plugins/x86_64/Telemetry.dll",
+        "StarRail_Data/Plugins/x86_64/telemetry.dll"
+      ]
+    },
+    {
+      "id": "ZenlessZoneZero",
+      "displayNameEn": "Zenless Zone Zero",
+      "supported": true,
+      "defaultFolder": "ZenlessZoneZero",
+      "downloadServers": [
+        {
+          "id": "cn",
+          "label": "国服",
+          "launcherApi": "https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1",
+          "bizPrefix": "nap_"
+        },
+        {
+          "id": "global",
+          "label": "国际服",
+          "launcherApi": "https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8",
+          "bizPrefix": "nap_"
+        }
+      ],
+      "audioLanguages": [
+        { "code": "zh-cn", "label": "中文" },
+        { "code": "en-us", "label": "English" },
+        { "code": "ja-jp", "label": "日本語" },
+        { "code": "ko-kr", "label": "한국어" }
+      ],
+      "telemetryServers": [
+        "log-upload.mihoyo.com",
+        "uspider.yuanshen.com",
+        "log-upload-os.hoyoverse.com",
+        "overseauspider.yuanshen.com",
+        "sg-public-data-api.hoyoverse.com",
+        "public-data-api.mihoyo.com"
+      ],
+      "telemetryDlls": [
+        "ZenlessZoneZero_Data/Plugins/x86_64/Telemetry.dll",
+        "ZenlessZoneZero_Data/Plugins/x86_64/telemetry.dll"
+      ]
+    },
+    {
+      "id": "GenshinImpact",
+      "displayNameEn": "Genshin Impact",
+      "supported": true,
+      "defaultFolder": "GenshinImpact",
+      "downloadServers": [
+        {
+          "id": "cn",
+          "label": "国服",
+          "launcherApi": "https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1",
+          "bizPrefix": "hk4e_"
+        },
+        {
+          "id": "global",
+          "label": "国际服",
+          "launcherApi": "https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8",
+          "bizPrefix": "hk4e_"
+        }
+      ],
+      "audioLanguages": [
+        { "code": "zh-cn", "label": "中文" },
+        { "code": "en-us", "label": "English" },
+        { "code": "ja-jp", "label": "日本語" },
+        { "code": "ko-kr", "label": "한국어" }
+      ],
+      "telemetryServers": [
+        "log-upload.mihoyo.com",
+        "uspider.yuanshen.com",
+        "log-upload-os.hoyoverse.com",
+        "overseauspider.yuanshen.com",
+        "sg-public-data-api.hoyoverse.com",
+        "public-data-api.mihoyo.com"
+      ],
+      "telemetryDlls": [
+        "GenshinImpact_Data/Plugins/x86_64/Telemetry.dll",
+        "GenshinImpact_Data/Plugins/x86_64/telemetry.dll",
+        "YuanShen_Data/Plugins/x86_64/Telemetry.dll",
+        "YuanShen_Data/Plugins/x86_64/telemetry.dll"
+      ]
+    },
+    {
+      "id": "HonkaiImpact3rd",
+      "displayNameEn": "Honkai Impact 3rd",
+      "supported": true,
+      "defaultFolder": "HonkaiImpact3rd",
+      "downloadServers": [
+        {
+          "id": "cn",
+          "label": "国服",
+          "launcherApi": "https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1",
+          "bizPrefix": "bh3_"
+        },
+        {
+          "id": "global",
+          "label": "国际服",
+          "launcherApi": "https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8",
+          "bizPrefix": "bh3_"
+        }
+      ],
+      "audioLanguages": [],
+      "telemetryServers": [
+        "log-upload.mihoyo.com",
+        "uspider.yuanshen.com",
+        "log-upload-os.hoyoverse.com",
+        "overseauspider.yuanshen.com",
+        "sg-public-data-api.hoyoverse.com",
+        "public-data-api.mihoyo.com"
+      ],
+      "telemetryDlls": []
+    },
+    {
+      "id": "SnowbreakContainmentZone",
+      "displayNameEn": "Snowbreak: Containment Zone",
+      "supported": true,
+      "defaultFolder": "SnowbreakContainmentZone",
+      "downloadServers": [
+        {
+          "id": "global",
+          "label": "国际服",
+          "launcherApi": "snowbreak://manifest",
+          "bizPrefix": ""
+        }
+      ],
+      "audioLanguages": [],
+      "telemetryServers": [],
+      "telemetryDlls": []
+    }
+  ]
+}
