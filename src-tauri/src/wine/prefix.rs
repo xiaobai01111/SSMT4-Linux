@@ -79,7 +79,6 @@ fn resolve_best_legacy_prefix(game_id: &str) -> Option<PathBuf> {
 
 pub fn get_prefix_dir(game_id: &str) -> PathBuf {
     let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
-<<<<<<< HEAD
     // 如果找到游戏根目录，总是使用游戏目录下的 prefix/
     if let Some(game_root) = resolve_game_root_from_db(&game_id) {
         let preferred = game_root.join("prefix");
@@ -102,20 +101,6 @@ pub fn get_prefix_dir(game_id: &str) -> PathBuf {
         return preferred;
     }
     // 只有在无法解析游戏根目录时才回退到 ~/.config
-=======
-    // 优先使用游戏安装目录下的 prefix/
-    if let Some(game_root) = resolve_game_root_from_db(&game_id) {
-        let preferred = game_root.join("prefix");
-        if preferred.exists() {
-            return preferred;
-        }
-        if let Some(legacy) = resolve_best_legacy_prefix(&game_id) {
-            return legacy;
-        }
-        return preferred;
-    }
-    // 回退到旧位置 (~/.config/ssmt4/prefixes/{game_id})
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
     if let Some(best) = resolve_best_legacy_prefix(&game_id) {
         let canonical_path = file_manager::get_prefixes_dir().join(&game_id);
         if best != canonical_path && !canonical_path.exists() {

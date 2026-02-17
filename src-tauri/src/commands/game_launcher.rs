@@ -1,8 +1,5 @@
 use crate::configs::database as db;
-<<<<<<< HEAD
 use crate::process_monitor;
-=======
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
 use crate::wine::{detector, prefix};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -18,7 +15,6 @@ pub async fn start_game(
     wine_version_id: String,
 ) -> Result<String, String> {
     let game_name = crate::configs::game_identity::to_canonical_or_keep(&game_name);
-<<<<<<< HEAD
     let _launch_guard = process_monitor::acquire_launch_guard(&game_name)?;
     
     // 检查游戏是否已在运行
@@ -30,8 +26,6 @@ pub async fn start_game(
     // 清理已结束的进程记录
     process_monitor::cleanup_stale_processes().await;
     
-=======
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
     let game_exe = PathBuf::from(&game_exe_path);
     if !game_exe.exists() {
         return Err(format!("Game executable not found: {}", game_exe_path));
@@ -86,7 +80,6 @@ pub async fn start_game(
                 .unwrap_or(true);
         }
     }
-<<<<<<< HEAD
     if let Some(channel) = protection_status.get("channel") {
         let mode = channel
             .get("mode")
@@ -111,8 +104,6 @@ pub async fn start_game(
             mode, current, expected, enforcement
         );
     }
-=======
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
     if !protection_required {
         let blocked_domains: Vec<String> = protection_status
             .pointer("/telemetry/blocked")
@@ -489,7 +480,6 @@ pub async fn start_game(
     let pid = child.id().unwrap_or(0);
     info!("Game launched with PID {}", pid);
 
-<<<<<<< HEAD
     // 注册游戏进程到监控系统
     process_monitor::register_game_process(
         game_name.clone(),
@@ -498,8 +488,6 @@ pub async fn start_game(
     )
     .await;
 
-=======
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
     // 通知前端游戏已启动
     let game_name_clone = game_name.clone();
     app.emit(
@@ -512,7 +500,6 @@ pub async fn start_game(
     )
     .ok();
 
-<<<<<<< HEAD
     // 后台监控进程，包括子进程和孙进程
     let app_clone = app.clone();
     let game_name_for_monitor = game_name.clone();
@@ -563,19 +550,6 @@ pub async fn start_game(
         // 注销游戏进程
         process_monitor::unregister_game_process(&game_name).await;
         
-=======
-    // 后台等待进程退出，退出后通知前端（仅 wait，不累积输出）
-    let app_clone = app.clone();
-    tokio::spawn(async move {
-        match child.wait().await {
-            Ok(status) => {
-                info!("Game process exited with status: {}", status);
-            }
-            Err(e) => {
-                error!("Failed to wait for game process: {}", e);
-            }
-        }
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
         // 通知前端游戏已退出
         app_clone
             .emit(

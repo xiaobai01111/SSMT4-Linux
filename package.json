@@ -1,11 +1,7 @@
 {
   "name": "ssmt4",
   "private": true,
-<<<<<<< HEAD
   "version": "0.0.1-beta",
-=======
-  "version": "0.0.8-beta",
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
   "type": "module",
   "scripts": {
     "sync-version": "bash scripts/sync-version.sh",

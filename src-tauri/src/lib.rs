@@ -3,10 +3,7 @@ mod commands;
 mod commands_registry;
 mod configs;
 mod downloader;
-<<<<<<< HEAD
 mod process_monitor;
-=======
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
 mod utils;
 mod wine;
 

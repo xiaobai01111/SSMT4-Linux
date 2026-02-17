@@ -36,7 +36,6 @@ fn require_protection_before_launch(game_preset: &str) -> bool {
         .unwrap_or(true)
 }
 
-<<<<<<< HEAD
 const CHANNEL_MODE_INIT: &str = "init";
 const CHANNEL_MODE_PROTECTED: &str = "protected";
 const CHANNEL_ENFORCEMENT_BLOCK: &str = "block";
@@ -96,8 +95,6 @@ fn expected_channel_value(config: &game_presets::ChannelProtectionConfig, mode: 
     }
 }
 
-=======
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
 fn normalize_game_root(game_path: Option<&str>) -> Option<PathBuf> {
     let raw = game_path?.trim();
     if raw.is_empty() {
@@ -196,21 +193,16 @@ struct ChannelProtectionState {
     enabled: bool,
     channel_key: Option<String>,
     current_value: Option<i64>,
-<<<<<<< HEAD
     init_value: Option<i64>,
     expected_value: Option<i64>,
     protected_value: Option<i64>,
     mode: Option<String>,
     launch_enforcement: String,
-=======
-    protected_value: Option<i64>,
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
     config_path: Option<String>,
     error: Option<String>,
     backup_exists: bool,
 }
 
-<<<<<<< HEAD
 fn channel_state_json(state: &ChannelProtectionState) -> serde_json::Value {
     serde_json::json!({
         "required": state.required,
@@ -228,8 +220,6 @@ fn channel_state_json(state: &ChannelProtectionState) -> serde_json::Value {
     })
 }
 
-=======
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
 fn parse_i64_json(value: &serde_json::Value) -> Option<i64> {
     value
         .as_i64()
@@ -303,15 +293,11 @@ fn evaluate_channel_protection(
             enabled: true,
             channel_key: None,
             current_value: None,
-<<<<<<< HEAD
             init_value: None,
             expected_value: None,
             protected_value: None,
             mode: None,
             launch_enforcement: CHANNEL_ENFORCEMENT_BLOCK.to_string(),
-=======
-            protected_value: None,
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
             config_path: None,
             error: None,
             backup_exists: false,
@@ -319,12 +305,9 @@ fn evaluate_channel_protection(
     };
 
     let channel_key = config.channel_key.trim().to_string();
-<<<<<<< HEAD
     let mode = resolve_channel_mode(game_preset, &config);
     let expected_value = expected_channel_value(&config, &mode);
     let launch_enforcement = normalize_launch_enforcement(config.launch_enforcement.as_deref());
-=======
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
     let protected_value = config.protected_value;
     if channel_key.is_empty() {
         return ChannelProtectionState {
@@ -332,15 +315,11 @@ fn evaluate_channel_protection(
             enabled: false,
             channel_key: None,
             current_value: None,
-<<<<<<< HEAD
             init_value: config.init_value,
             expected_value: Some(expected_value),
             protected_value: Some(protected_value),
             mode: Some(mode),
             launch_enforcement,
-=======
-            protected_value: Some(protected_value),
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
             config_path: None,
             error: Some("渠道防护配置缺少 channel_key".to_string()),
             backup_exists: false,
@@ -353,15 +332,11 @@ fn evaluate_channel_protection(
             enabled: false,
             channel_key: Some(channel_key),
             current_value: None,
-<<<<<<< HEAD
             init_value: config.init_value,
             expected_value: Some(expected_value),
             protected_value: Some(protected_value),
             mode: Some(mode),
             launch_enforcement,
-=======
-            protected_value: Some(protected_value),
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
             config_path: None,
             error: Some("缺少游戏目录，无法校验渠道防护配置".to_string()),
             backup_exists: false,
@@ -379,15 +354,11 @@ fn evaluate_channel_protection(
             enabled: false,
             channel_key: Some(channel_key),
             current_value: None,
-<<<<<<< HEAD
             init_value: config.init_value,
             expected_value: Some(expected_value),
             protected_value: Some(protected_value),
             mode: Some(mode),
             launch_enforcement,
-=======
-            protected_value: Some(protected_value),
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
             config_path: None,
             error: Some("渠道防护配置缺少 config_relative_path".to_string()),
             backup_exists: false,
@@ -401,15 +372,11 @@ fn evaluate_channel_protection(
             enabled: false,
             channel_key: Some(channel_key),
             current_value: None,
-<<<<<<< HEAD
             init_value: config.init_value,
             expected_value: Some(expected_value),
             protected_value: Some(protected_value),
             mode: Some(mode),
             launch_enforcement,
-=======
-            protected_value: Some(protected_value),
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
             config_path: Some(config_path.to_string_lossy().to_string()),
             error: Some("未找到渠道配置文件".to_string()),
             backup_exists: false,
@@ -422,7 +389,6 @@ fn evaluate_channel_protection(
     match read_channel_value(&config_path, &channel_key) {
         Ok(current_value) => ChannelProtectionState {
             required: true,
-<<<<<<< HEAD
             enabled: current_value == expected_value,
             channel_key: Some(channel_key),
             current_value: Some(current_value),
@@ -431,12 +397,6 @@ fn evaluate_channel_protection(
             protected_value: Some(protected_value),
             mode: Some(mode),
             launch_enforcement,
-=======
-            enabled: current_value == protected_value,
-            channel_key: Some(channel_key),
-            current_value: Some(current_value),
-            protected_value: Some(protected_value),
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
             config_path: Some(config_path.to_string_lossy().to_string()),
             error: None,
             backup_exists,
@@ -446,15 +406,11 @@ fn evaluate_channel_protection(
             enabled: false,
             channel_key: Some(channel_key),
             current_value: None,
-<<<<<<< HEAD
             init_value: config.init_value,
             expected_value: Some(expected_value),
             protected_value: Some(protected_value),
             mode: Some(mode),
             launch_enforcement,
-=======
-            protected_value: Some(protected_value),
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
             config_path: Some(config_path.to_string_lossy().to_string()),
             error: Some(err),
             backup_exists,
@@ -462,7 +418,6 @@ fn evaluate_channel_protection(
     }
 }
 
-<<<<<<< HEAD
 fn set_channel_mode_internal(
     game_preset: &str,
     game_root: &Path,
@@ -560,8 +515,6 @@ pub fn set_channel_protection_mode(
     }))
 }
 
-=======
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
 pub fn check_game_protection_status_internal(
     game_preset: &str,
     game_path: Option<&str>,
@@ -579,15 +532,11 @@ pub fn check_game_protection_status_internal(
     let channel_state = evaluate_channel_protection(&game_preset, game_root.as_deref());
 
     let supported = telemetry_required || files_required || channel_state.required;
-<<<<<<< HEAD
     let channel_is_blocking =
         channel_state.required && channel_state.launch_enforcement == CHANNEL_ENFORCEMENT_BLOCK;
     let enforce_at_launch = supported
         && require_protection_before_launch(&game_preset)
         && (telemetry_required || files_required || channel_is_blocking);
-=======
-    let enforce_at_launch = supported && require_protection_before_launch(&game_preset);
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
 
     let mut missing: Vec<String> = Vec::new();
     if telemetry_required && !telemetry_all_blocked {
@@ -613,7 +562,6 @@ pub fn check_game_protection_status_internal(
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "未知".to_string());
             let target = channel_state
-<<<<<<< HEAD
                 .expected_value
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "未知".to_string());
@@ -629,12 +577,6 @@ pub fn check_game_protection_status_internal(
             missing.push(format!(
                 "{key} 未设置为 {target}（当前 {current}，模式 {mode}，{level}）"
             ));
-=======
-                .protected_value
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "未知".to_string());
-            missing.push(format!("{key} 未设置为 {target}（当前 {current}）"));
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
         }
     }
 
@@ -664,20 +606,7 @@ pub fn check_game_protection_status_internal(
             "totalFiles": get_telemetry_dlls(&game_preset).len(),
             "error": files_error,
         },
-<<<<<<< HEAD
         "channel": channel_state_json(&channel_state)
-=======
-        "channel": {
-            "required": channel_state.required,
-            "enabled": channel_state.enabled,
-            "channelKey": channel_state.channel_key,
-            "currentValue": channel_state.current_value,
-            "protectedValue": channel_state.protected_value,
-            "configPath": channel_state.config_path,
-            "error": channel_state.error,
-            "backupExists": channel_state.backup_exists,
-        }
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
     }))
 }
 
@@ -714,20 +643,7 @@ pub fn check_telemetry_status(
         "blocked": blocked,
         "unblocked": unblocked,
         "totalServers": get_telemetry_servers(&game_preset).len(),
-<<<<<<< HEAD
         "channel": channel_state_json(&channel_state)
-=======
-        "channel": {
-            "required": channel_state.required,
-            "enabled": channel_state.enabled,
-            "channelKey": channel_state.channel_key,
-            "currentValue": channel_state.current_value,
-            "protectedValue": channel_state.protected_value,
-            "configPath": channel_state.config_path,
-            "error": channel_state.error,
-            "backupExists": channel_state.backup_exists,
-        }
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
     }))
 }
 
@@ -803,72 +719,12 @@ pub async fn disable_telemetry(
         }
     };
 
-<<<<<<< HEAD
     let channel_result = if get_channel_protection_config(&game_preset).is_some() {
         let state = evaluate_channel_protection(&game_preset, game_root.as_deref());
         serde_json::json!({
             "supported": true,
             "message": "渠道模式由 set_channel_protection_mode 控制，disable_telemetry 不再改写 KR_ChannelId",
             "state": channel_state_json(&state),
-=======
-    let channel_result = if let Some(channel) = get_channel_protection_config(&game_preset) {
-        let Some(root) = game_root.as_ref() else {
-            return Err("缺少游戏目录，无法应用渠道防护".to_string());
-        };
-        let rel = channel
-            .config_relative_path
-            .trim()
-            .trim_matches(['/', '\\'])
-            .to_string();
-        if rel.is_empty() {
-            return Err("渠道防护配置缺少 config_relative_path".to_string());
-        }
-        let config_path = root.join(rel);
-        if !config_path.exists() {
-            return Err(format!("未找到渠道配置文件: {}", config_path.display()));
-        }
-        let channel_key = channel.channel_key.trim();
-        if channel_key.is_empty() {
-            return Err("渠道防护配置缺少 channel_key".to_string());
-        }
-
-        let current = read_channel_value(&config_path, channel_key)?;
-        let target = channel.protected_value;
-        let changed = current != target;
-        let backup_key = channel_backup_setting_key(&game_preset, &config_path);
-        let mut backup_saved = false;
-
-        if changed {
-            db::set_setting(&backup_key, &current.to_string());
-            backup_saved = true;
-            write_channel_value(&config_path, channel_key, target)?;
-            info!(
-                "[防护] {} {}: {} -> {} ({})",
-                game_preset,
-                channel_key,
-                current,
-                target,
-                config_path.display()
-            );
-        } else {
-            info!(
-                "[防护] {} {} 已是目标值 {} ({})",
-                game_preset,
-                channel_key,
-                target,
-                config_path.display()
-            );
-        }
-
-        serde_json::json!({
-            "supported": true,
-            "channelKey": channel_key,
-            "configPath": config_path.to_string_lossy().to_string(),
-            "previousValue": current,
-            "targetValue": target,
-            "changed": changed,
-            "backupSaved": backup_saved,
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
         })
     } else {
         serde_json::json!({
@@ -983,7 +839,6 @@ pub async fn restore_telemetry(
         }
     };
 
-<<<<<<< HEAD
     let channel_result = if get_channel_protection_config(&game_preset).is_some() {
         let state = evaluate_channel_protection(&game_preset, game_root.as_deref());
         serde_json::json!({
@@ -991,70 +846,6 @@ pub async fn restore_telemetry(
             "message": "渠道模式由 set_channel_protection_mode 控制，restore_telemetry 不再改写 KR_ChannelId",
             "state": channel_state_json(&state),
         })
-=======
-    let channel_result = if let Some(channel) = get_channel_protection_config(&game_preset) {
-        let Some(root) = game_root.as_ref() else {
-            return Err("缺少游戏目录，无法恢复渠道防护".to_string());
-        };
-        let rel = channel
-            .config_relative_path
-            .trim()
-            .trim_matches(['/', '\\'])
-            .to_string();
-        if rel.is_empty() {
-            return Err("渠道防护配置缺少 config_relative_path".to_string());
-        }
-        let config_path = root.join(rel);
-        if !config_path.exists() {
-            return Err(format!("未找到渠道配置文件: {}", config_path.display()));
-        }
-        let channel_key = channel.channel_key.trim();
-        if channel_key.is_empty() {
-            return Err("渠道防护配置缺少 channel_key".to_string());
-        }
-
-        let backup_key = channel_backup_setting_key(&game_preset, &config_path);
-        let backup_value = db::get_setting(&backup_key).and_then(|v| v.trim().parse::<i64>().ok());
-        let current = read_channel_value(&config_path, channel_key)?;
-        if let Some(original) = backup_value {
-            if current != original {
-                write_channel_value(&config_path, channel_key, original)?;
-                info!(
-                    "[防护] {} {} 已恢复: {} -> {} ({})",
-                    game_preset,
-                    channel_key,
-                    current,
-                    original,
-                    config_path.display()
-                );
-            }
-
-            serde_json::json!({
-                "supported": true,
-                "restored": true,
-                "channelKey": channel_key,
-                "configPath": config_path.to_string_lossy().to_string(),
-                "currentValue": current,
-                "restoredValue": original,
-                "changed": current != original,
-            })
-        } else {
-            warn!(
-                "[防护] {} {} 无备份值，跳过恢复 ({})",
-                game_preset,
-                channel_key,
-                config_path.display()
-            );
-            serde_json::json!({
-                "supported": true,
-                "restored": false,
-                "channelKey": channel_key,
-                "configPath": config_path.to_string_lossy().to_string(),
-                "currentValue": current,
-                "reason": "未找到可恢复的原始值，请先应用防护后再恢复",
-            })
-        }
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
     } else {
         serde_json::json!({
             "supported": false,
@@ -1118,11 +909,8 @@ pub async fn apply_game_protection(
     game_path: String,
 ) -> Result<serde_json::Value, String> {
     let game_preset = canonical_preset(&game_preset);
-<<<<<<< HEAD
     let game_root = normalize_game_root(Some(&game_path))
         .ok_or_else(|| "缺少游戏目录，无法应用防护".to_string())?;
-=======
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
     let mut results = serde_json::Map::new();
 
     let telemetry_result = disable_telemetry(game_preset.clone(), Some(game_path.clone())).await?;
@@ -1131,7 +919,6 @@ pub async fn apply_game_protection(
     let dll_result = remove_telemetry_files(game_preset.clone(), game_path)?;
     results.insert("telemetryFiles".to_string(), dll_result);
 
-<<<<<<< HEAD
     if let Some(channel_cfg) = get_channel_protection_config(&game_preset) {
         let mode_key = channel_mode_setting_key(&game_preset);
         let preferred_mode = db::get_setting(&mode_key)
@@ -1147,8 +934,6 @@ pub async fn apply_game_protection(
         );
     }
 
-=======
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
     info!("[防护] 游戏 {} 安全防护已应用", game_preset);
 
     Ok(serde_json::json!({
@@ -1191,7 +976,6 @@ pub fn get_game_protection_info(game_preset: String) -> Result<serde_json::Value
             }));
         }
         if let Some(channel_cfg) = channel {
-<<<<<<< HEAD
             let default_mode = default_channel_mode(&channel_cfg);
             let init_value = channel_cfg.init_value;
             p.push(serde_json::json!({
@@ -1210,14 +994,6 @@ pub fn get_game_protection_info(game_preset: String) -> Result<serde_json::Value
                 "targetValue": channel_cfg.protected_value,
                 "defaultMode": default_mode,
                 "launchEnforcement": normalize_launch_enforcement(channel_cfg.launch_enforcement.as_deref()),
-=======
-            p.push(serde_json::json!({
-                "type": "channelRewrite",
-                "name": "渠道参数防护",
-                "description": format!("将 {} 设置为 {}", channel_cfg.channel_key, channel_cfg.protected_value),
-                "channelKey": channel_cfg.channel_key,
-                "targetValue": channel_cfg.protected_value,
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
                 "configRelativePath": channel_cfg.config_relative_path,
             }));
         }
@@ -1231,7 +1007,6 @@ pub fn get_game_protection_info(game_preset: String) -> Result<serde_json::Value
         "hasProtections": !protections.is_empty(),
     }))
 }
-<<<<<<< HEAD
 
 #[cfg(test)]
 mod tests {
@@ -1290,5 +1065,3 @@ mod tests {
         );
     }
 }
-=======
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1

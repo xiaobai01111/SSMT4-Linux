@@ -27,7 +27,6 @@ pub struct ChannelProtectionConfig {
     pub config_relative_path: String,
     /// 需要切换的 JSON 字段名（例如 KR_ChannelId）
     pub channel_key: String,
-<<<<<<< HEAD
     /// 初始化阶段值（例如 19）
     #[serde(default)]
     pub init_value: Option<i64>,
@@ -39,10 +38,6 @@ pub struct ChannelProtectionConfig {
     /// 启动约束：block/warn
     #[serde(default)]
     pub launch_enforcement: Option<String>,
-=======
-    /// 启用防护时写入的目标值
-    pub protected_value: i64,
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -302,7 +297,6 @@ mod tests {
             "HonkaiStarRail/StarRail".to_string()
         );
     }
-<<<<<<< HEAD
 
     #[test]
     fn wuthering_channel_protection_supports_staged_fields() {
@@ -319,6 +313,4 @@ mod tests {
         assert_eq!(channel.default_mode.as_deref(), Some("init"));
         assert_eq!(channel.launch_enforcement.as_deref(), Some("warn"));
     }
-=======
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1
 }
