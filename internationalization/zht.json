@@ -40,6 +40,61 @@
     "importSuccess": "已成功匯入遊戲配置: {name}",
     "importFailed": "匯入失敗: {error}"
   },
+  "websites": {
+    "title": "常用網址 (Websites)",
+    "desc": "專案相關連結與全部遊戲官網（國服/國際服），方便快速訪問。",
+    "search_placeholder": "搜尋名稱、描述或網址",
+    "project_links": "專案連結",
+    "game_links": "遊戲官網",
+    "tag_project": "專案",
+    "tag_game": "遊戲",
+    "server_cn": "國服",
+    "server_global": "國際服",
+    "server_unavailable": "暫無連結",
+    "empty": "沒有匹配的連結",
+    "items": {
+      "github": {
+        "name": "SSMT4 Linux GitHub",
+        "desc": "專案倉庫首頁"
+      },
+      "releases": {
+        "name": "Releases",
+        "desc": "下載安裝包與歷史版本"
+      },
+      "issues": {
+        "name": "Issues",
+        "desc": "問題回報與需求建議"
+      },
+      "docs": {
+        "name": "線上文件",
+        "desc": "專案使用文件"
+      },
+      "genshin": {
+        "name": "原神 (Genshin Impact)",
+        "desc": "官方網站"
+      },
+      "hsr": {
+        "name": "崩壞：星穹鐵道 (Honkai: Star Rail)",
+        "desc": "官方網站"
+      },
+      "zzz": {
+        "name": "絕區零 (Zenless Zone Zero)",
+        "desc": "官方網站"
+      },
+      "hi3": {
+        "name": "崩壞3 (Honkai Impact 3rd)",
+        "desc": "官方網站"
+      },
+      "ww": {
+        "name": "鳴潮 (Wuthering Waves)",
+        "desc": "官方網站"
+      },
+      "snowbreak": {
+        "name": "塵白禁區 (Snowbreak: Containment Zone)",
+        "desc": "官方網站"
+      }
+    }
+  },
   "settings": {
     "language": "介面語言",
     "basicsettings": "基礎設定",

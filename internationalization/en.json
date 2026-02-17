@@ -40,6 +40,61 @@
     "importSuccess": "Successfully imported: {name}",
     "importFailed": "Import failed: {error}"
   },
+  "websites": {
+    "title": "Websites",
+    "desc": "Project links and official websites for all supported games (CN / Global).",
+    "search_placeholder": "Search name, description, or URL",
+    "project_links": "Project Links",
+    "game_links": "Official Game Websites",
+    "tag_project": "Project",
+    "tag_game": "Game",
+    "server_cn": "CN",
+    "server_global": "Global",
+    "server_unavailable": "N/A",
+    "empty": "No matching links",
+    "items": {
+      "github": {
+        "name": "SSMT4 Linux GitHub",
+        "desc": "Project repository homepage"
+      },
+      "releases": {
+        "name": "Releases",
+        "desc": "Download installers and previous versions"
+      },
+      "issues": {
+        "name": "Issues",
+        "desc": "Bug reports and feature requests"
+      },
+      "docs": {
+        "name": "Online Docs",
+        "desc": "Project documentation"
+      },
+      "genshin": {
+        "name": "Genshin Impact",
+        "desc": "Official website"
+      },
+      "hsr": {
+        "name": "Honkai: Star Rail",
+        "desc": "Official website"
+      },
+      "zzz": {
+        "name": "Zenless Zone Zero",
+        "desc": "Official website"
+      },
+      "hi3": {
+        "name": "Honkai Impact 3rd",
+        "desc": "Official website"
+      },
+      "ww": {
+        "name": "Wuthering Waves",
+        "desc": "Official website"
+      },
+      "snowbreak": {
+        "name": "Snowbreak: Containment Zone",
+        "desc": "Official website"
+      }
+    }
+  },
   "settings": {
     "language": "Interface Language",
     "basicsettings": "Basic Settings",
