@@ -1,6 +1,7 @@
 use crate::downloader::cdn::{LauncherInfo, ResourceFile, ResourceIndex};
 use crate::downloader::progress::{DownloadProgress, SpeedTracker};
 use crate::utils::file_manager::safe_join_remote;
+use crate::utils::hash_verify;
 use futures_util::StreamExt;
 use reqwest::Client;
 use std::path::{Path, PathBuf};
@@ -37,12 +38,23 @@ pub async fn download_game(
     let mut to_download: Vec<&ResourceFile> = Vec::new();
 
     for file in &resource_index.resource {
-        let file_path = game_folder.join(&file.dest);
+        let file_path = safe_join_remote(game_folder, &file.dest)?;
         if file_path.exists() {
-            if let Ok(meta) = tokio::fs::metadata(&file_path).await {
-                if meta.len() == file.size {
+            match hash_verify::verify_file_integrity(
+                &file_path,
+                file.size,
+                file.sha256.as_deref(),
+                Some(file.md5.as_str()),
+            )
+            .await
+            {
+                Ok(hash_verify::VerifiedHashAlgo::Sha256)
+                | Ok(hash_verify::VerifiedHashAlgo::Md5) => {
                     cached_size += file.size;
                     continue;
+                }
+                Err(err) => {
+                    warn!("{} 完整性校验失败，需重下: {}", file.dest, err);
                 }
             }
         }
@@ -137,6 +149,8 @@ pub async fn download_game(
         );
         let dest = safe_join_remote(game_folder, &file.dest)?;
         let expected_size = file.size;
+        let expected_sha256 = file.sha256.clone();
+        let expected_md5 = file.md5.clone();
 
         let handle = tokio::spawn(async move {
             let _permit = sem
@@ -144,7 +158,17 @@ pub async fn download_game(
                 .await
                 .map_err(|e| format!("信号量错误: {}", e))?;
 
-            download_file_parallel(&client, &url, &dest, expected_size, bytes, cancel).await?;
+            download_file_parallel(
+                &client,
+                &url,
+                &dest,
+                expected_size,
+                expected_sha256.as_deref(),
+                Some(expected_md5.as_str()),
+                bytes,
+                cancel,
+            )
+            .await?;
             done.fetch_add(1, Ordering::Relaxed);
             Ok::<(), String>(())
         });
@@ -195,6 +219,8 @@ async fn download_file_parallel(
     url: &str,
     dest: &PathBuf,
     expected_size: u64,
+    expected_sha256: Option<&str>,
+    expected_md5: Option<&str>,
     shared_bytes: Arc<AtomicU64>,
     cancel_token: Arc<Mutex<bool>>,
 ) -> Result<(), String> {
@@ -240,6 +266,13 @@ async fn download_file_parallel(
         416 => {
             // 已下载完毕
             if temp_path.exists() {
+                hash_verify::verify_file_integrity(
+                    &temp_path,
+                    expected_size,
+                    expected_sha256,
+                    expected_md5,
+                )
+                .await?;
                 tokio::fs::rename(&temp_path, dest)
                     .await
                     .map_err(|e| format!("重命名失败: {}", e))?;
@@ -289,21 +322,8 @@ async fn download_file_parallel(
         .map_err(|e| format!("刷新缓冲失败: {}", e))?;
     drop(file);
 
-    // 大小校验
-    if expected_size > 0 {
-        let actual_size = tokio::fs::metadata(&temp_path)
-            .await
-            .map(|m| m.len())
-            .unwrap_or(0);
-        if actual_size != expected_size {
-            warn!(
-                "文件大小不匹配 {}: 期望 {} 实际 {}",
-                dest.display(),
-                expected_size,
-                actual_size
-            );
-        }
-    }
+    hash_verify::verify_file_integrity(&temp_path, expected_size, expected_sha256, expected_md5)
+        .await?;
 
     tokio::fs::rename(&temp_path, dest)
         .await

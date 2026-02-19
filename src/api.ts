@@ -605,6 +605,10 @@ export async function startGame(
   return invoke<string>('start_game', { gameName, gameExePath, wineVersionId });
 }
 
+export async function launchGame(gameName: string, region?: string): Promise<string> {
+  return invoke<string>('launch_game', { gameName, region: region ?? null });
+}
+
 // ============================================================
 // Wine / Proton Management Commands
 // ============================================================

@@ -1,5 +1,6 @@
 use crate::downloader::hoyoverse::{self, GamePackage, Segment};
 use crate::downloader::progress::{DownloadProgress, SpeedTracker};
+use crate::downloader::staging;
 use crate::utils::file_manager::{safe_join, safe_join_remote};
 use crate::utils::hash_verify;
 use futures_util::StreamExt;
@@ -41,6 +42,7 @@ pub async fn download_game(
         .map(|(i, s)| DownloadTask {
             url: s.url.clone(),
             md5: s.md5.clone(),
+            sha256: s.sha256.clone(),
             size: s.size.clone(),
             label: format!("游戏本体 {}/{}", i + 1, segments.len()),
             filename: filename_from_url(&s.url),
@@ -48,6 +50,7 @@ pub async fn download_game(
         .chain(audio_segments.iter().map(|(lang, seg)| DownloadTask {
             url: seg.url.clone(),
             md5: seg.md5.clone(),
+            sha256: seg.sha256.clone(),
             size: seg.size.clone(),
             label: format!("语言包 ({})", lang),
             filename: filename_from_url(&seg.url),
@@ -100,6 +103,7 @@ pub async fn update_game(
         .map(|(i, s)| DownloadTask {
             url: s.url.clone(),
             md5: s.md5.clone(),
+            sha256: s.sha256.clone(),
             size: s.size.clone(),
             label: format!("游戏补丁 {}/{}", i + 1, patch.game_pkgs.len()),
             filename: filename_from_url(&s.url),
@@ -107,6 +111,7 @@ pub async fn update_game(
         .chain(audio_segments.iter().map(|(lang, seg)| DownloadTask {
             url: seg.url.clone(),
             md5: seg.md5.clone(),
+            sha256: seg.sha256.clone(),
             size: seg.size.clone(),
             label: format!("语言包补丁 ({})", lang),
             filename: filename_from_url(&seg.url),
@@ -174,14 +179,21 @@ pub async fn verify_game(
                 continue;
             }
         };
-        let current_md5 = hash_verify::md5_file(&file_path).await.unwrap_or_default();
+        let verify = hash_verify::verify_file_integrity(
+            &file_path,
+            entry.file_size,
+            Some(entry.sha256.as_str()),
+            Some(entry.md5.as_str()),
+        )
+        .await;
 
-        if current_md5.to_lowercase() == entry.md5.to_lowercase() {
+        if verify.is_ok() {
             verified_ok += 1;
         } else {
             warn!(
-                "{} MD5 不匹配 (期望: {}, 实际: {})",
-                entry.remote_name, entry.md5, current_md5
+                "{} 校验不匹配: {}",
+                entry.remote_name,
+                verify.err().unwrap_or_else(|| "unknown".to_string())
             );
             // 对于 HoYoverse 游戏，目前不支持单文件重下载（需要从 zip 中提取）
             // 记录为失败
@@ -229,6 +241,8 @@ async fn download_file_to_disk(
     client: &Client,
     url: &str,
     dest: &Path,
+    expected_size: u64,
+    expected_sha256: &str,
     expected_md5: &str,
     shared_bytes: Arc<AtomicU64>,
     cancel_token: Arc<Mutex<bool>>,
@@ -290,6 +304,13 @@ async fn download_file_to_disk(
         }
         416 => {
             if temp_path.exists() {
+                hash_verify::verify_file_integrity(
+                    &temp_path,
+                    expected_size,
+                    Some(expected_sha256),
+                    Some(expected_md5),
+                )
+                .await?;
                 tokio::fs::rename(&temp_path, dest)
                     .await
                     .map_err(|e| format!("重命名临时文件失败: {}", e))?;
@@ -344,17 +365,16 @@ async fn download_file_to_disk(
         .map_err(|e| format!("刷新缓冲失败: {}", e))?;
     drop(file);
 
-    // MD5 校验：不匹配则删除临时文件并返回错误，由调用方重试
-    if !expected_md5.is_empty() {
-        let actual_md5 = hash_verify::md5_file(&temp_path).await.unwrap_or_default();
-        if actual_md5.to_lowercase() != expected_md5.to_lowercase() {
-            // 删除损坏的临时文件，确保下次不会断点续传坏数据
-            tokio::fs::remove_file(&temp_path).await.ok();
-            return Err(format!(
-                "MD5 不匹配 (期望: {}, 实际: {}): {}",
-                expected_md5, actual_md5, url
-            ));
-        }
+    if let Err(err) = hash_verify::verify_file_integrity(
+        &temp_path,
+        expected_size,
+        Some(expected_sha256),
+        Some(expected_md5),
+    )
+    .await
+    {
+        tokio::fs::remove_file(&temp_path).await.ok();
+        return Err(format!("下载文件完整性校验失败: {} ({})", err, url));
     }
 
     tokio::fs::rename(&temp_path, dest)
@@ -919,8 +939,8 @@ async fn execute_plan(
         let dest = safe_join(game_folder, &task.filename)?;
 
         // 检查 JSON 缓存（纯内存，无 I/O）
-        if let Some(cached_md5) = sw.state.checksums.get(&task.filename) {
-            if !task.md5.is_empty() && cached_md5.to_lowercase() == task.md5.to_lowercase() {
+        if let Some(cached_digest) = sw.state.checksums.get(&task.filename) {
+            if digest_token_matches(cached_digest, task) {
                 let file_size = if dest.exists() {
                     tokio::fs::metadata(&dest)
                         .await
@@ -947,7 +967,7 @@ async fn execute_plan(
         }
 
         // 迁移旧格式文件：检查旧文件是否存在（仅全量下载）
-        if migrate_old_files && !dest.exists() && !task.md5.is_empty() {
+        if migrate_old_files && !dest.exists() && task_has_checksum(task) {
             let old_file = game_folder.join(format!("_download_{}.zip", i));
             if old_file.exists() {
                 let file_size = tokio::fs::metadata(&old_file)
@@ -960,7 +980,7 @@ async fn execute_plan(
         }
 
         // 文件已存在但无缓存 → 需要哈希校验
-        if dest.exists() && !task.md5.is_empty() {
+        if dest.exists() && task_has_checksum(task) {
             let file_size = tokio::fs::metadata(&dest)
                 .await
                 .map(|m| m.len())
@@ -969,11 +989,19 @@ async fn execute_plan(
             continue;
         }
 
+        // 无可用哈希时，禁止“仅大小”跳过，必须重下（避免同大小篡改绕过）
+        if dest.exists() && !task_has_checksum(task) {
+            warn!(
+                "{} 缺少校验哈希，已禁用 size-only 跳过，将强制重下",
+                task.filename
+            );
+        }
+
         // 文件不存在且无缓存 → 需要下载
         to_download.push(i);
     }
 
-    // 第二遍（受控并发）：对 needs_hash 中的文件做 MD5 校验
+    // 第二遍（受控并发）：对 needs_hash 中的文件做哈希校验（优先 SHA256，回退 MD5）
     if !needs_hash.is_empty() {
         const HASH_CONCURRENCY: usize = 4;
 
@@ -983,8 +1011,8 @@ async fn execute_plan(
             let cache_key = make_hash_cache_key(&path, file_size);
             if let Some(cached) = sw.state.file_hashes.get(&cache_key) {
                 let task = &all_tasks[idx];
-                if !task.md5.is_empty() && cached.to_lowercase() == task.md5.to_lowercase() {
-                    // mtime 缓存命中且 MD5 匹配
+                if digest_token_matches(cached, task) {
+                    // mtime 缓存命中且哈希匹配
                     if is_old {
                         let dest = safe_join(game_folder, &task.filename)?;
                         info!(
@@ -994,9 +1022,11 @@ async fn execute_plan(
                         );
                         tokio::fs::rename(&path, &dest).await.ok();
                     }
-                    sw.state
-                        .checksums
-                        .insert(task.filename.clone(), task.md5.clone());
+                    if let Some(digest_token) = task_digest_token(task) {
+                        sw.state
+                            .checksums
+                            .insert(task.filename.clone(), digest_token);
+                    }
                     sw.mark_dirty();
                     cached_size += file_size;
                     info!("{} mtime缓存命中，跳过哈希", task.filename);
@@ -1019,7 +1049,7 @@ async fn execute_plan(
 
         if !still_needs_hash.is_empty() {
             info!(
-                "预检：{} 个文件需要 MD5 校验 ({}路并发)",
+                "预检：{} 个文件需要哈希校验 ({}路并发)",
                 still_needs_hash.len(),
                 HASH_CONCURRENCY
             );
@@ -1030,21 +1060,28 @@ async fn execute_plan(
             for (idx, path, file_size, is_old) in still_needs_hash {
                 let sem = hash_sem.clone();
                 let cancel = cancel_token.clone();
+                let expected_sha256 = all_tasks[idx].sha256.clone();
+                let expected_md5 = all_tasks[idx].md5.clone();
                 let handle = tokio::spawn(async move {
                     let _permit = sem.acquire().await.map_err(|e| format!("{}", e))?;
                     if *cancel.lock().await {
                         return Err("Download cancelled".to_string());
                     }
-                    let md5 = hash_verify::md5_file(&path).await.unwrap_or_default();
+                    let digest_token = compute_digest_token_for_expected(
+                        &path,
+                        expected_sha256.as_str(),
+                        expected_md5.as_str(),
+                    )
+                    .await?;
                     Ok::<(usize, PathBuf, u64, bool, String), String>((
-                        idx, path, file_size, is_old, md5,
+                        idx, path, file_size, is_old, digest_token,
                     ))
                 });
                 hash_handles.push(handle);
             }
 
             for handle in hash_handles {
-                let (idx, path, file_size, is_old, actual_md5) = match handle.await {
+                let (idx, path, file_size, is_old, actual_digest_token) = match handle.await {
                     Ok(Ok(v)) => v,
                     Ok(Err(e)) => {
                         sw.flush();
@@ -1058,22 +1095,26 @@ async fn execute_plan(
 
                 // 写入 mtime 缓存，无论匹配与否都记录（下次可快速判断）
                 let cache_key = make_hash_cache_key(&path, file_size);
-                sw.state.file_hashes.insert(cache_key, actual_md5.clone());
+                sw.state
+                    .file_hashes
+                    .insert(cache_key, actual_digest_token.clone());
 
                 let task = &all_tasks[idx];
-                if actual_md5.to_lowercase() == task.md5.to_lowercase() {
-                    // MD5 匹配
+                if digest_token_matches(&actual_digest_token, task) {
+                    // 哈希匹配
                     if is_old {
                         let dest = safe_join(game_folder, &task.filename)?;
                         info!("迁移旧文件 {} → {}", path.display(), dest.display());
                         tokio::fs::rename(&path, &dest).await.ok();
                     }
-                    sw.state
-                        .checksums
-                        .insert(task.filename.clone(), task.md5.clone());
+                    if let Some(digest_token) = task_digest_token(task) {
+                        sw.state
+                            .checksums
+                            .insert(task.filename.clone(), digest_token);
+                    }
                     sw.mark_dirty();
                     cached_size += file_size;
-                    info!("{} MD5 匹配，补录缓存", task.filename);
+                    info!("{} 哈希匹配，补录缓存", task.filename);
                     emit_progress(
                         &app,
                         "download",
@@ -1086,11 +1127,11 @@ async fn execute_plan(
                         0,
                     );
                 } else {
-                    // MD5 不匹配 → 需要下载
+                    // 哈希不匹配 → 需要下载
                     if is_old {
-                        warn!("旧文件 {} MD5 不匹配，将重新下载", path.display());
+                        warn!("旧文件 {} 哈希不匹配，将重新下载", path.display());
                     } else {
-                        warn!("{} MD5 不匹配，将重新下载", task.filename);
+                        warn!("{} 哈希不匹配，将重新下载", task.filename);
                     }
                     to_download.push(idx);
                 }
@@ -1167,6 +1208,8 @@ async fn execute_plan(
             let dest = safe_join(game_folder, &task.filename)?;
             let url = task.url.clone();
             let md5 = task.md5.clone();
+            let sha256 = task.sha256.clone();
+            let expected_size = task.size.parse::<u64>().unwrap_or(0);
             let filename = task.filename.clone();
 
             let handle = tokio::spawn(async move {
@@ -1205,6 +1248,8 @@ async fn execute_plan(
                         &client,
                         &url,
                         &dest,
+                        expected_size,
+                        &sha256,
                         &md5,
                         bytes.clone(),
                         cancel.clone(),
@@ -1231,13 +1276,13 @@ async fn execute_plan(
                 }
 
                 done.fetch_add(1, Ordering::Relaxed);
-                let final_md5 = if !md5.is_empty() {
-                    md5
+                let final_digest = if let Some(token) = digest_token_from_expected(&sha256, &md5) {
+                    token
                 } else {
-                    hash_verify::md5_file(&dest).await.unwrap_or_default()
+                    compute_digest_token_for_expected(&dest, &sha256, &md5).await?
                 };
                 info!("下载完成: {}", filename);
-                Ok::<(String, String), String>((filename, final_md5))
+                Ok::<(String, String), String>((filename, final_digest))
             });
             handles.push(handle);
         }
@@ -1246,8 +1291,8 @@ async fn execute_plan(
         let mut first_error: Option<String> = None;
         for handle in handles {
             match handle.await {
-                Ok(Ok((filename, md5))) => {
-                    sw.state.checksums.insert(filename, md5);
+                Ok(Ok((filename, digest_token))) => {
+                    sw.state.checksums.insert(filename, digest_token);
                     sw.mark_dirty();
                 }
                 Ok(Err(e)) => {
@@ -1282,9 +1327,13 @@ async fn execute_plan(
             let first_part = safe_join(game_folder, first_file)?;
             if first_part.exists() {
                 info!("安装{} (从 {})", primary_label, first_file);
+                let primary_staging = create_install_staging_dir(game_folder, "primary");
+                tokio::fs::create_dir_all(&primary_staging)
+                    .await
+                    .map_err(|e| format!("创建安装 staging 目录失败: {}", e))?;
                 match extract_archive(
                     &first_part,
-                    game_folder,
+                    &primary_staging,
                     &app,
                     &primary_label,
                     total_count,
@@ -1293,6 +1342,28 @@ async fn execute_plan(
                 .await
                 {
                     Ok(()) => {
+                        if let Err(e) = staging::merge_staging_tree_atomically(
+                            &primary_staging,
+                            game_folder,
+                            "hoyoverse_primary_install",
+                        )
+                        .await
+                        {
+                            tokio::fs::remove_dir_all(&primary_staging).await.ok();
+                            error!("{}安装提交失败: {}", primary_label, e);
+                            for task in &all_tasks[..primary_pkg_count] {
+                                sw.state.checksums.remove(&task.filename);
+                                if let Ok(p) = safe_join(game_folder, &task.filename) {
+                                    tokio::fs::remove_file(p).await.ok();
+                                }
+                            }
+                            sw.flush();
+                            return Err(format!(
+                                "{}安装提交失败: {}。已回滚并删除安装包，请重新下载。",
+                                primary_label, e
+                            ));
+                        }
+                        tokio::fs::remove_dir_all(&primary_staging).await.ok();
                         for task in &all_tasks[..primary_pkg_count] {
                             if let Ok(p) = safe_join(game_folder, &task.filename) {
                                 tokio::fs::remove_file(p).await.ok();
@@ -1302,6 +1373,7 @@ async fn execute_plan(
                         sw.flush();
                     }
                     Err(e) => {
+                        tokio::fs::remove_dir_all(&primary_staging).await.ok();
                         error!("{}安装失败: {}", primary_label, e);
                         for task in &all_tasks[..primary_pkg_count] {
                             sw.state.checksums.remove(&task.filename);
@@ -1343,9 +1415,13 @@ async fn execute_plan(
         }
 
         info!("安装 {}", task.label);
+        let lang_staging = create_install_staging_dir(game_folder, &task.label);
+        tokio::fs::create_dir_all(&lang_staging)
+            .await
+            .map_err(|e| format!("创建安装 staging 目录失败: {}", e))?;
         match extract_archive(
             &archive,
-            game_folder,
+            &lang_staging,
             &app,
             &task.label,
             total_count,
@@ -1354,11 +1430,30 @@ async fn execute_plan(
         .await
         {
             Ok(()) => {
+                if let Err(e) = staging::merge_staging_tree_atomically(
+                    &lang_staging,
+                    game_folder,
+                    "hoyoverse_lang_install",
+                )
+                .await
+                {
+                    tokio::fs::remove_dir_all(&lang_staging).await.ok();
+                    error!("{} 安装提交失败: {}", task.label, e);
+                    tokio::fs::remove_file(&archive).await.ok();
+                    sw.state.checksums.remove(&task.filename);
+                    sw.flush();
+                    return Err(format!(
+                        "安装 {} 提交失败: {}。已回滚并删除文件，请重新下载。",
+                        task.label, e
+                    ));
+                }
+                tokio::fs::remove_dir_all(&lang_staging).await.ok();
                 tokio::fs::remove_file(&archive).await.ok();
                 sw.state.installed_archives.push(task.filename.clone());
                 sw.flush();
             }
             Err(e) => {
+                tokio::fs::remove_dir_all(&lang_staging).await.ok();
                 error!("{} 安装失败: {}", task.label, e);
                 tokio::fs::remove_file(&archive).await.ok();
                 sw.state.checksums.remove(&task.filename);
@@ -1398,6 +1493,7 @@ async fn execute_plan(
 struct DownloadTask {
     url: String,
     md5: String,
+    sha256: String,
     size: String,
     label: String,
     /// 从 URL 提取的原始文件名（如 StarRail_4.0.0.7z.001, Chinese.7z）
@@ -1441,12 +1537,88 @@ fn collect_audio_segments(
                 Segment {
                     url: pkg.url.clone(),
                     md5: pkg.md5.clone(),
+                    sha256: pkg.sha256.clone(),
                     size: pkg.size.clone(),
                     decompressed_size: pkg.decompressed_size.clone(),
                 },
             )
         })
         .collect()
+}
+
+fn create_install_staging_dir(game_folder: &Path, tag: &str) -> PathBuf {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let tag: String = tag
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    game_folder
+        .join(".ssmt4_staging")
+        .join(format!("{}-{}", if tag.is_empty() { "install" } else { &tag }, ts))
+}
+
+fn normalize_digest(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_ascii_lowercase())
+    }
+}
+
+fn digest_token_from_expected(expected_sha256: &str, expected_md5: &str) -> Option<String> {
+    if let Some(sha) = normalize_digest(expected_sha256) {
+        return Some(format!("sha256:{}", sha));
+    }
+    normalize_digest(expected_md5).map(|md5| format!("md5:{}", md5))
+}
+
+fn task_digest_token(task: &DownloadTask) -> Option<String> {
+    digest_token_from_expected(&task.sha256, &task.md5)
+}
+
+fn task_has_checksum(task: &DownloadTask) -> bool {
+    task_digest_token(task).is_some()
+}
+
+fn digest_token_matches(cached: &str, task: &DownloadTask) -> bool {
+    let Some(expected_token) = task_digest_token(task) else {
+        return false;
+    };
+    let cached_normalized = cached.trim().to_ascii_lowercase();
+    if cached_normalized.contains(':') {
+        return cached_normalized == expected_token;
+    }
+    // 兼容旧格式（仅存裸 md5）
+    if let Some(expected_md5) = normalize_digest(&task.md5) {
+        return cached_normalized == expected_md5;
+    }
+    false
+}
+
+async fn compute_digest_token_for_expected(
+    path: &Path,
+    expected_sha256: &str,
+    expected_md5: &str,
+) -> Result<String, String> {
+    if normalize_digest(expected_sha256).is_some() {
+        let actual = hash_verify::sha256_file(path).await?;
+        return Ok(format!("sha256:{}", actual.to_ascii_lowercase()));
+    }
+    if normalize_digest(expected_md5).is_some() {
+        let actual = hash_verify::md5_file(path).await?;
+        return Ok(format!("md5:{}", actual.to_ascii_lowercase()));
+    }
+    Ok(String::new())
 }
 
 #[allow(clippy::too_many_arguments)]

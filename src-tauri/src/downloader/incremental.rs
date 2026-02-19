@@ -1,6 +1,7 @@
 use crate::downloader::cdn::{self, LauncherInfo, ResourceIndex};
 use crate::downloader::fetcher;
 use crate::downloader::progress::DownloadProgress;
+use crate::downloader::staging;
 use crate::utils::file_manager::safe_join_remote;
 use crate::utils::hash_verify;
 use reqwest::Client;
@@ -17,7 +18,7 @@ fn emit_update_progress(app: &AppHandle, progress: &DownloadProgress) {
 }
 
 /// Full comparison update — mirrors LutheringLaves.py `update_game`
-/// Compares MD5 of each file and re-downloads mismatches.
+/// Compares checksum of each file (prefer SHA256) and re-downloads mismatches.
 pub async fn update_game_full(
     app: AppHandle,
     launcher_info: &LauncherInfo,
@@ -51,10 +52,15 @@ pub async fn update_game_full(
             }
         };
 
-        // Check MD5
-        let current_md5 = hash_verify::md5_file(&file_path).await.unwrap_or_default();
-        if current_md5 == file.md5 {
-            info!("{} MD5 match, skipping", file.dest);
+        let verified = hash_verify::verify_file_integrity(
+            &file_path,
+            file.size,
+            file.sha256.as_deref(),
+            Some(file.md5.as_str()),
+        )
+        .await;
+        if verified.is_ok() {
+            info!("{} checksum match, skipping", file.dest);
             finished_size += file.size;
             finished_count += 1;
 
@@ -81,8 +87,9 @@ pub async fn update_game_full(
         }
 
         warn!(
-            "{} MD5 mismatch (expected: {}, got: {}), re-downloading",
-            file.dest, file.md5, current_md5
+            "{} checksum mismatch, re-downloading: {}",
+            file.dest,
+            verified.err().unwrap_or_else(|| "unknown".to_string())
         );
 
         let download_url = build_resource_url(
@@ -180,6 +187,15 @@ pub async fn update_game_patch(
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string(),
+                    sha256: r
+                        .get("sha256")
+                        .or_else(|| r.get("sha_256"))
+                        .or_else(|| r.get("sha256sum"))
+                        .or_else(|| r.get("sha256Sum"))
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty())
+                        .map(ToString::to_string),
                     size: r
                         .get("size")?
                         .as_u64()
@@ -220,10 +236,24 @@ pub async fn update_game_patch(
         if file.dest.ends_with(".krdiff") || file.dest.ends_with(".hdiff") {
             let dest_path = game_folder.parent().unwrap_or(game_folder).join(&file.dest);
             fetcher::download_with_resume(&client, &download_url, &dest_path, false, None).await?;
+            hash_verify::verify_file_integrity(
+                &dest_path,
+                file.size,
+                file.sha256.as_deref(),
+                Some(file.md5.as_str()),
+            )
+            .await?;
             krdiff_path = Some(dest_path);
         } else {
             let dest_path = temp_folder.join(&file.dest);
             fetcher::download_with_resume(&client, &download_url, &dest_path, false, None).await?;
+            hash_verify::verify_file_integrity(
+                &dest_path,
+                file.size,
+                file.sha256.as_deref(),
+                Some(file.md5.as_str()),
+            )
+            .await?;
         }
 
         let progress = DownloadProgress {
@@ -258,6 +288,8 @@ async fn run_hpatchz(
     output_path: &Path,
 ) -> Result<(), String> {
     let hpatchz = ensure_hpatchz().await?;
+    // 执行前再次做完整性检查，降低运行时被替换二进制的风险。
+    verify_hpatchz_integrity(&hpatchz).await?;
 
     info!(
         "Running hpatchz: {} {} {} -f",
@@ -288,15 +320,20 @@ pub async fn ensure_hpatchz_public() -> Result<PathBuf, String> {
 }
 
 /// hpatchz 允许的 SHA256 白名单（多版本兼容）
-/// 新版本发布时在此追加哈希即可
+/// 新版本发布时在此追加哈希即可。
+/// 默认 fail-closed：若此列表与环境变量都为空，将拒绝执行 hpatchz。
 const HPATCHZ_ALLOWED_SHA256: &[&str] = &[
     // 如需固定版本，请在此填入已知的 SHA256 哈希（小写十六进制）
     // 例如: "a1b2c3d4e5f6..."
-    // 留空数组时将降级为仅做基本大小校验并记录警告
+    // 留空时可通过环境变量 SSMT4_HPATCHZ_ALLOWED_SHA256 传入（逗号分隔）
 ];
 
 /// hpatchz 最小合理大小（字节），低于此值视为损坏/截断
 const HPATCHZ_MIN_SIZE: u64 = 100_000; // ~100KB
+
+/// 仅供受信环境应急使用：允许在未配置 SHA256 白名单时继续执行 hpatchz。
+/// 默认关闭（fail-closed）。
+const HPATCHZ_ALLOW_UNVERIFIED_ENV: &str = "SSMT4_HPATCHZ_ALLOW_UNVERIFIED";
 
 async fn ensure_hpatchz() -> Result<PathBuf, String> {
     let tools_dir = crate::utils::file_manager::get_tools_dir();
@@ -358,10 +395,11 @@ async fn verify_hpatchz_integrity(path: &Path) -> Result<(), String> {
         ));
     }
 
-    // 2. SHA256 哈希校验
-    if !HPATCHZ_ALLOWED_SHA256.is_empty() {
+    // 2. SHA256 哈希校验（默认 fail-closed）
+    let allowed_sha256 = collect_hpatchz_allowed_sha256();
+    if !allowed_sha256.is_empty() {
         let actual_hash = crate::utils::hash_verify::sha256_file(path).await?;
-        if !HPATCHZ_ALLOWED_SHA256.iter().any(|&h| h == actual_hash) {
+        if !allowed_sha256.iter().any(|h| h == &actual_hash) {
             std::fs::remove_file(path).ok();
             return Err(format!(
                 "hpatchz SHA256 校验失败（实际: {}），不在允许列表中，已删除",
@@ -370,11 +408,18 @@ async fn verify_hpatchz_integrity(path: &Path) -> Result<(), String> {
         }
         info!("hpatchz SHA256 校验通过: {}", actual_hash);
     } else {
-        // 白名单为空时降级为警告
-        warn!(
-            "hpatchz 未配置 SHA256 白名单，跳过哈希校验（大小: {} 字节）。建议在 HPATCHZ_ALLOWED_SHA256 中固定哈希。",
-            meta.len()
-        );
+        if allow_unverified_hpatchz() {
+            warn!(
+                "未配置 hpatchz SHA256 白名单，但 {}=1，已按不安全模式放行。请仅在受信环境临时使用。",
+                HPATCHZ_ALLOW_UNVERIFIED_ENV
+            );
+        } else {
+            std::fs::remove_file(path).ok();
+            return Err(format!(
+                "未配置 hpatchz SHA256 白名单，已拒绝执行并删除文件。请配置允许列表（SSMT4_HPATCHZ_ALLOWED_SHA256），或仅在受信环境设置 {}=1 临时放行。",
+                HPATCHZ_ALLOW_UNVERIFIED_ENV
+            ));
+        }
     }
 
     // 3. ELF 魔数校验（Linux 可执行文件基本验证）
@@ -390,35 +435,41 @@ async fn verify_hpatchz_integrity(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-async fn merge_temp_to_game(temp_folder: &Path, game_folder: &Path) -> Result<(), String> {
-    let walker = walkdir::WalkDir::new(temp_folder);
-    for entry in walker.into_iter().filter_map(|e| e.ok()) {
-        if entry.file_type().is_file() {
-            let relative = entry
-                .path()
-                .strip_prefix(temp_folder)
-                .map_err(|e| format!("Path strip error: {}", e))?;
-            let rel_str = relative.to_string_lossy();
-            let dest = safe_join_remote(game_folder, &rel_str)?;
-
-            if let Some(parent) = dest.parent() {
-                tokio::fs::create_dir_all(parent).await.ok();
-            }
-
-            // Remove existing file
-            if dest.exists() {
-                tokio::fs::remove_file(&dest).await.ok();
-            }
-
-            tokio::fs::rename(entry.path(), &dest).await.or_else(|_| {
-                // rename may fail across filesystems, fallback to copy+delete
-                std::fs::copy(entry.path(), &dest)
-                    .and_then(|_| std::fs::remove_file(entry.path()))
-                    .map_err(|e| format!("Failed to move file: {}", e))
-            })?;
-        }
+fn collect_hpatchz_allowed_sha256() -> Vec<String> {
+    let mut allowed: Vec<String> = HPATCHZ_ALLOWED_SHA256
+        .iter()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if let Ok(env_value) = std::env::var("SSMT4_HPATCHZ_ALLOWED_SHA256") {
+        allowed.extend(
+            env_value
+                .split(',')
+                .map(str::trim)
+                .map(|s| s.to_ascii_lowercase())
+                .filter(|s| !s.is_empty()),
+        );
     }
-    Ok(())
+    allowed.sort();
+    allowed.dedup();
+    allowed
+}
+
+fn allow_unverified_hpatchz() -> bool {
+    std::env::var(HPATCHZ_ALLOW_UNVERIFIED_ENV)
+        .map(|v| parse_env_bool(&v))
+        .unwrap_or(false)
+}
+
+fn parse_env_bool(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+async fn merge_temp_to_game(temp_folder: &Path, game_folder: &Path) -> Result<(), String> {
+    staging::merge_staging_tree_atomically(temp_folder, game_folder, "incremental_patch").await
 }
 
 async fn cleanup_temp(temp_folder: &Path) {
@@ -432,4 +483,26 @@ fn build_resource_url(cdn_url: &str, resources_base_path: &str, dest: &str) -> S
     let mid = resources_base_path.trim_matches('/');
     let file = dest.trim_start_matches('/');
     format!("{}/{}/{}", base, mid, file)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_env_bool;
+
+    #[test]
+    fn parse_env_bool_accepts_truthy_values() {
+        assert!(parse_env_bool("1"));
+        assert!(parse_env_bool("true"));
+        assert!(parse_env_bool("YES"));
+        assert!(parse_env_bool(" on "));
+    }
+
+    #[test]
+    fn parse_env_bool_rejects_non_truthy_values() {
+        assert!(!parse_env_bool(""));
+        assert!(!parse_env_bool("0"));
+        assert!(!parse_env_bool("false"));
+        assert!(!parse_env_bool("no"));
+        assert!(!parse_env_bool("random"));
+    }
 }

@@ -21,7 +21,26 @@ import {
   type DownloadProgress,
 } from './api';
 
-export type DlPhase = 'idle' | 'downloading' | 'verifying' | 'done' | 'error';
+export type DlPhase = 'idle' | 'downloading' | 'verifying' | 'paused' | 'done' | 'error';
+
+export type DownloadOperation =
+  | 'download_game'
+  | 'update_game'
+  | 'verify_game'
+  | 'download_launcher_installer'
+  | 'update_launcher_installer';
+
+// Unified task model to avoid duplicated option models across download flows.
+export interface DownloadTaskModel {
+  operation: DownloadOperation;
+  gameName: string;
+  displayName: string;
+  launcherApi: string;
+  gameFolder: string;
+  languages?: string[];
+  bizPrefix?: string;
+  gamePreset?: string;
+}
 
 export interface DlState {
   active: boolean;
@@ -31,6 +50,8 @@ export interface DlState {
   phase: DlPhase;
   progress: DownloadProgress | null;
   error: string;
+  task: DownloadTaskModel | null;
+  pausedTask: DownloadTaskModel | null;
 }
 
 export const dlState = reactive<DlState>({
@@ -41,11 +62,14 @@ export const dlState = reactive<DlState>({
   phase: 'idle',
   progress: null,
   error: '',
+  task: null,
+  pausedTask: null,
 });
 
 // ---- Global event listeners (registered once) ----
 
 let _listenersReady = false;
+let _pauseRequestedTaskKey: string | null = null;
 
 export async function initDlListeners() {
   if (_listenersReady) return;
@@ -65,8 +89,255 @@ export async function initDlListeners() {
 
 // ---- Helpers ----
 
+function cloneTask(task: DownloadTaskModel): DownloadTaskModel {
+  return {
+    ...task,
+    languages: task.languages ? [...task.languages] : undefined,
+  };
+}
+
+function normalizeErrorText(error: unknown): string {
+  if (typeof error === 'string') return error;
+  if (error instanceof Error) return error.message || String(error);
+  if (error && typeof error === 'object') {
+    const maybeMessage = (error as { message?: unknown }).message;
+    if (typeof maybeMessage === 'string') return maybeMessage;
+  }
+  return String(error ?? '');
+}
+
+function isCancellationLikeError(error: unknown): boolean {
+  const raw = normalizeErrorText(error);
+  if (!raw) return false;
+  const lower = raw.toLowerCase();
+
+  const englishMarkers = ['cancel', 'cancelled', 'canceled', 'abort', 'aborted'];
+  if (englishMarkers.some((marker) => lower.includes(marker))) return true;
+
+  const chineseMarkers = ['取消', '已取消', '中止', '终止'];
+  return chineseMarkers.some((marker) => raw.includes(marker));
+}
+
+function taskKey(task: DownloadTaskModel): string {
+  const langs = task.languages ? task.languages.join(',') : '';
+  return [
+    task.operation,
+    task.gameName,
+    task.gameFolder,
+    task.launcherApi,
+    task.bizPrefix || '',
+    task.gamePreset || '',
+    langs,
+  ].join('::');
+}
+
+function resetStateToIdle() {
+  dlState.active = false;
+  dlState.phase = 'idle';
+  dlState.error = '';
+  dlState.progress = null;
+  dlState.task = null;
+}
+
+function markTaskRunning(task: DownloadTaskModel) {
+  const phase: DlPhase = task.operation === 'verify_game' ? 'verifying' : 'downloading';
+  const normalized = cloneTask(task);
+  dlState.active = true;
+  dlState.gameName = normalized.gameName;
+  dlState.gameFolder = normalized.gameFolder;
+  dlState.displayName = normalized.displayName;
+  dlState.phase = phase;
+  dlState.progress = null;
+  dlState.error = '';
+  dlState.task = normalized;
+}
+
+async function runTask(task: DownloadTaskModel) {
+  const key = taskKey(task);
+  try {
+    switch (task.operation) {
+      case 'download_game':
+      case 'update_game': {
+        const langs = task.languages && task.languages.length > 0 ? task.languages : undefined;
+        const biz = task.bizPrefix || undefined;
+
+        if (task.operation === 'update_game') {
+          await apiUpdateGame(task.launcherApi, task.gameFolder, langs, biz);
+        } else {
+          await apiDownloadGame(task.launcherApi, task.gameFolder, langs, biz);
+        }
+
+        // Persist config on success
+        try {
+          const config = await loadGameConfig(task.gameName);
+          config.other = config.other || {};
+          config.other.launcherApi = task.launcherApi;
+          config.other.gameFolder = task.gameFolder;
+          // 自动设置游戏可执行文件路径（首次安装时）
+          if (!config.other.gamePath) {
+            const exeName = resolveGameExeName(task.gameName, task.launcherApi);
+            if (exeName) {
+              config.other.gamePath = task.gameFolder + '/' + exeName;
+            }
+          }
+          await saveGameConfig(task.gameName, config);
+        } catch {
+          /* best-effort */
+        }
+
+        // Auto-verify
+        dlState.phase = 'verifying';
+        dlState.progress = null;
+
+        const verifyResult = await apiVerifyGameFiles(task.launcherApi, task.gameFolder, biz)
+          .catch(async (e) => {
+            const msg = normalizeErrorText(e);
+            console.warn('[dlStore] verify error:', e);
+            dlState.phase = 'error';
+            dlState.error = `自动校验失败: ${msg}`;
+            dlState.active = false;
+            dlState.task = null;
+            dlState.pausedTask = null;
+            await showMessage(
+              `下载已完成，但自动校验失败：${msg}\n请稍后手动执行“校验文件”。`,
+              { title: '校验失败', kind: 'warning' },
+            ).catch(() => {});
+            return null;
+          });
+
+        if (!verifyResult) {
+          break;
+        }
+
+        if (verifyResult.failed.length > 0) {
+          await showMessage(
+            `校验完成，但有 ${verifyResult.failed.length} 个文件异常。`,
+            { title: '校验结果', kind: 'warning' },
+          );
+        } else {
+          await showMessage(
+            `下载并校验完成！共 ${verifyResult.total_files} 个文件全部正常。`,
+            { title: '成功', kind: 'info' },
+          );
+        }
+
+        dlState.phase = 'done';
+        dlState.active = false;
+        dlState.task = null;
+        dlState.pausedTask = null;
+        break;
+      }
+
+      case 'verify_game': {
+        const biz = task.bizPrefix || undefined;
+        const result = await apiVerifyGameFiles(task.launcherApi, task.gameFolder, biz);
+
+        dlState.phase = 'done';
+        dlState.active = false;
+        dlState.task = null;
+        dlState.pausedTask = null;
+
+        if (result.failed.length > 0) {
+          dlState.error = `校验完成，但有 ${result.failed.length} 个文件仍然异常`;
+        } else {
+          await showMessage(
+            `校验完成！共 ${result.total_files} 个文件，${result.verified_ok} 个正常，${result.redownloaded} 个已重新下载。`,
+            { title: '校验结果', kind: 'info' },
+          );
+        }
+        break;
+      }
+
+      case 'download_launcher_installer':
+      case 'update_launcher_installer': {
+        const preset = task.gamePreset || task.gameName;
+        const result = task.operation === 'update_launcher_installer'
+          ? await apiUpdateLauncherInstaller(task.launcherApi, task.gameFolder, preset)
+          : await apiDownloadLauncherInstaller(task.launcherApi, task.gameFolder, preset);
+
+        try {
+          const config = await loadGameConfig(task.gameName);
+          config.other = config.other || {};
+          config.other.launcherApi = task.launcherApi;
+          config.other.gameFolder = task.gameFolder;
+          config.other.gamePath = result.installerPath;
+          config.other.launcherInstallerVersion = result.version;
+          config.other.launcherInstallerPath = result.installerPath;
+          await saveGameConfig(task.gameName, config);
+        } catch {
+          /* best-effort */
+        }
+
+        await showMessage(
+          `官方启动器安装器下载完成：${result.version}\n已自动将 gamePath 指向安装器，可在游戏设置中改为实际游戏主程序。`,
+          { title: '下载完成', kind: 'info' },
+        );
+
+        dlState.phase = 'done';
+        dlState.active = false;
+        dlState.task = null;
+        dlState.pausedTask = null;
+        break;
+      }
+    }
+  } catch (e: any) {
+    const cancelled = isCancellationLikeError(e);
+    const pauseRequested = _pauseRequestedTaskKey === key;
+    _pauseRequestedTaskKey = null;
+
+    if (cancelled && pauseRequested) {
+      dlState.phase = 'paused';
+      dlState.active = false;
+      dlState.error = '';
+      dlState.task = null;
+      dlState.pausedTask = cloneTask(task);
+      return;
+    }
+
+    if (cancelled) {
+      resetStateToIdle();
+      dlState.pausedTask = null;
+      return;
+    }
+
+    dlState.phase = 'error';
+    dlState.error = String(e);
+    dlState.active = false;
+    dlState.task = null;
+
+    if (task.operation === 'download_launcher_installer' || task.operation === 'update_launcher_installer') {
+      await showMessage(
+        `下载启动器失败: ${String(e)}`,
+        { title: '下载错误', kind: 'error' },
+      ).catch(() => {});
+    } else if (task.operation === 'download_game' || task.operation === 'update_game') {
+      await showMessage(
+        `下载失败: ${String(e)}`,
+        { title: '下载错误', kind: 'error' },
+      ).catch(() => {});
+    }
+  } finally {
+    if (_pauseRequestedTaskKey === key) {
+      _pauseRequestedTaskKey = null;
+    }
+  }
+}
+
+function startTask(task: DownloadTaskModel): boolean {
+  if (dlState.active) return false;
+  _pauseRequestedTaskKey = null;
+  dlState.pausedTask = null;
+  markTaskRunning(task);
+  runTask(task).catch((e) => console.error('[dlStore] uncaught task:', e));
+  return true;
+}
+
 export function isActiveFor(gameName: string): boolean {
   return dlState.active && dlState.gameName === gameName;
+}
+
+export function isPausedFor(gameName: string): boolean {
+  return !dlState.active && dlState.phase === 'paused' && dlState.pausedTask?.gameName === gameName;
 }
 
 // ---- Download ----
@@ -81,93 +352,6 @@ export interface StartDlOpts {
   isUpdate: boolean;
 }
 
-/**
- * Fire-and-forget: starts the download in the background.
- * Returns immediately; progress is tracked via `dlState`.
- */
-export function fireDownload(opts: StartDlOpts) {
-  if (dlState.active) return;
-
-  dlState.active = true;
-  dlState.gameName = opts.gameName;
-  dlState.gameFolder = opts.gameFolder;
-  dlState.displayName = opts.displayName;
-  dlState.phase = 'downloading';
-  dlState.progress = null;
-  dlState.error = '';
-
-  _execDownload(opts).catch((e) => console.error('[dlStore] uncaught:', e));
-}
-
-async function _execDownload(opts: StartDlOpts) {
-  try {
-    const langs = opts.languages && opts.languages.length > 0 ? opts.languages : undefined;
-    const biz = opts.bizPrefix || undefined;
-
-    if (opts.isUpdate) {
-      await apiUpdateGame(opts.launcherApi, opts.gameFolder, langs, biz);
-    } else {
-      await apiDownloadGame(opts.launcherApi, opts.gameFolder, langs, biz);
-    }
-
-    // Persist config on success
-    try {
-      const config = await loadGameConfig(opts.gameName);
-      config.other = config.other || {};
-      config.other.launcherApi = opts.launcherApi;
-      config.other.gameFolder = opts.gameFolder;
-      // 自动设置游戏可执行文件路径（首次安装时）
-      if (!config.other.gamePath) {
-        const exeName = resolveGameExeName(opts.gameName, opts.launcherApi);
-        if (exeName) {
-          config.other.gamePath = opts.gameFolder + '/' + exeName;
-        }
-      }
-      await saveGameConfig(opts.gameName, config);
-    } catch { /* best-effort */ }
-
-    // Auto-verify
-    dlState.phase = 'verifying';
-    dlState.progress = null;
-
-    try {
-      const biz = opts.bizPrefix || undefined;
-      const result = await apiVerifyGameFiles(opts.launcherApi, opts.gameFolder, biz);
-      if (result.failed.length > 0) {
-        await showMessage(
-          `校验完成，但有 ${result.failed.length} 个文件异常。`,
-          { title: '校验结果', kind: 'warning' },
-        );
-      } else {
-        await showMessage(
-          `下载并校验完成！共 ${result.total_files} 个文件全部正常。`,
-          { title: '成功', kind: 'info' },
-        );
-      }
-    } catch (e) {
-      console.warn('[dlStore] verify error:', e);
-    }
-
-    dlState.phase = 'done';
-    dlState.active = false;
-  } catch (e: any) {
-    if (String(e).includes('cancelled')) {
-      dlState.phase = 'idle';
-    } else {
-      dlState.phase = 'error';
-      dlState.error = String(e);
-      // 弹窗通知用户下载失败
-      await showMessage(
-        `下载失败: ${String(e)}`,
-        { title: '下载错误', kind: 'error' },
-      ).catch(() => {});
-    }
-    dlState.active = false;
-  }
-}
-
-// ---- Standalone verify ----
-
 export interface VerifyOpts {
   gameName: string;
   displayName: string;
@@ -175,48 +359,6 @@ export interface VerifyOpts {
   gameFolder: string;
   bizPrefix?: string;
 }
-
-export function fireVerify(opts: VerifyOpts) {
-  if (dlState.active) return;
-
-  dlState.active = true;
-  dlState.gameName = opts.gameName;
-  dlState.displayName = opts.displayName;
-  dlState.phase = 'verifying';
-  dlState.progress = null;
-  dlState.error = '';
-
-  _execVerify(opts).catch((e) => console.error('[dlStore] uncaught:', e));
-}
-
-async function _execVerify(opts: VerifyOpts) {
-  try {
-    const biz = opts.bizPrefix || undefined;
-    const result = await apiVerifyGameFiles(opts.launcherApi, opts.gameFolder, biz);
-
-    dlState.phase = 'done';
-    dlState.active = false;
-
-    if (result.failed.length > 0) {
-      dlState.error = `校验完成，但有 ${result.failed.length} 个文件仍然异常`;
-    } else {
-      await showMessage(
-        `校验完成！共 ${result.total_files} 个文件，${result.verified_ok} 个正常，${result.redownloaded} 个已重新下载。`,
-        { title: '校验结果', kind: 'info' },
-      );
-    }
-  } catch (e: any) {
-    if (String(e).includes('cancelled')) {
-      dlState.phase = 'idle';
-    } else {
-      dlState.phase = 'error';
-      dlState.error = String(e);
-    }
-    dlState.active = false;
-  }
-}
-
-// ---- Launcher installer (Endfield) ----
 
 export interface StartLauncherInstallerDlOpts {
   gameName: string;
@@ -227,62 +369,88 @@ export interface StartLauncherInstallerDlOpts {
   isUpdate: boolean;
 }
 
-export function fireLauncherInstallerDownload(opts: StartLauncherInstallerDlOpts) {
-  if (dlState.active) return;
-
-  dlState.active = true;
-  dlState.gameName = opts.gameName;
-  dlState.gameFolder = opts.gameFolder;
-  dlState.displayName = opts.displayName;
-  dlState.phase = 'downloading';
-  dlState.progress = null;
-  dlState.error = '';
-
-  _execLauncherInstallerDownload(opts).catch((e) => console.error('[dlStore] uncaught launcher installer:', e));
+function taskFromStartDl(opts: StartDlOpts): DownloadTaskModel {
+  return {
+    operation: opts.isUpdate ? 'update_game' : 'download_game',
+    gameName: opts.gameName,
+    displayName: opts.displayName,
+    launcherApi: opts.launcherApi,
+    gameFolder: opts.gameFolder,
+    languages: opts.languages ? [...opts.languages] : undefined,
+    bizPrefix: opts.bizPrefix || undefined,
+  };
 }
 
-async function _execLauncherInstallerDownload(opts: StartLauncherInstallerDlOpts) {
+function taskFromVerify(opts: VerifyOpts): DownloadTaskModel {
+  return {
+    operation: 'verify_game',
+    gameName: opts.gameName,
+    displayName: opts.displayName,
+    launcherApi: opts.launcherApi,
+    gameFolder: opts.gameFolder,
+    bizPrefix: opts.bizPrefix || undefined,
+  };
+}
+
+function taskFromInstaller(opts: StartLauncherInstallerDlOpts): DownloadTaskModel {
+  return {
+    operation: opts.isUpdate ? 'update_launcher_installer' : 'download_launcher_installer',
+    gameName: opts.gameName,
+    displayName: opts.displayName,
+    launcherApi: opts.launcherApi,
+    gameFolder: opts.gameFolder,
+    gamePreset: opts.gamePreset,
+  };
+}
+
+/**
+ * Fire-and-forget: starts the download in the background.
+ * Returns immediately; progress is tracked via `dlState`.
+ */
+export function fireDownload(opts: StartDlOpts) {
+  startTask(taskFromStartDl(opts));
+}
+
+export function fireVerify(opts: VerifyOpts) {
+  startTask(taskFromVerify(opts));
+}
+
+export function fireLauncherInstallerDownload(opts: StartLauncherInstallerDlOpts) {
+  startTask(taskFromInstaller(opts));
+}
+
+export async function pauseActive() {
+  if (!dlState.active || !dlState.task) return;
+  _pauseRequestedTaskKey = taskKey(dlState.task);
   try {
-    const result = opts.isUpdate
-      ? await apiUpdateLauncherInstaller(opts.launcherApi, opts.gameFolder, opts.gamePreset)
-      : await apiDownloadLauncherInstaller(opts.launcherApi, opts.gameFolder, opts.gamePreset);
-
-    try {
-      const config = await loadGameConfig(opts.gameName);
-      config.other = config.other || {};
-      config.other.launcherApi = opts.launcherApi;
-      config.other.gameFolder = opts.gameFolder;
-      config.other.gamePath = result.installerPath;
-      config.other.launcherInstallerVersion = result.version;
-      config.other.launcherInstallerPath = result.installerPath;
-      await saveGameConfig(opts.gameName, config);
-    } catch { /* best-effort */ }
-
-    await showMessage(
-      `官方启动器安装器下载完成：${result.version}\n已自动将 gamePath 指向安装器，可在游戏设置中改为实际游戏主程序。`,
-      { title: '下载完成', kind: 'info' },
-    );
-
-    dlState.phase = 'done';
-    dlState.active = false;
-  } catch (e: any) {
-    if (String(e).includes('cancelled')) {
-      dlState.phase = 'idle';
-    } else {
-      dlState.phase = 'error';
-      dlState.error = String(e);
-      await showMessage(
-        `下载启动器失败: ${String(e)}`,
-        { title: '下载错误', kind: 'error' },
-      ).catch(() => {});
-    }
-    dlState.active = false;
+    await apiCancelDownload(dlState.gameFolder || undefined);
+  } catch (e) {
+    _pauseRequestedTaskKey = null;
+    console.error('[dlStore] pause failed:', e);
   }
+}
+
+export async function resumePaused(gameName?: string): Promise<boolean> {
+  if (dlState.active) return false;
+  const task = dlState.pausedTask;
+  if (!task) return false;
+  if (gameName && task.gameName !== gameName) return false;
+  return startTask(task);
 }
 
 // ---- Cancel ----
 
 export async function cancelActive() {
+  _pauseRequestedTaskKey = null;
+  dlState.pausedTask = null;
+
+  if (!dlState.active) {
+    if (dlState.phase === 'paused') {
+      resetStateToIdle();
+    }
+    return;
+  }
+
   try {
     await apiCancelDownload(dlState.gameFolder || undefined);
   } catch (e) {
@@ -303,6 +471,7 @@ function resolveGameExeName(gameName: string, launcherApi: string): string | nul
       return 'ZenlessZoneZero.exe';
     case 'HonkaiImpact3rd':
       return 'BH3.exe';
-    default: return null;
+    default:
+      return null;
   }
 }

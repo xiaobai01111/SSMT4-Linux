@@ -25,9 +25,12 @@ import { appSettings } from '../store';
 import {
   dlState,
   isActiveFor,
+  isPausedFor,
   fireDownload,
   fireLauncherInstallerDownload,
   fireVerify,
+  pauseActive,
+  resumePaused,
   cancelActive,
 } from '../downloadStore';
 
@@ -409,6 +412,10 @@ const checkState = async () => {
 };
 
 const startDownload = async () => {
+  if (isPaused.value) {
+    await resumeDownload();
+    return;
+  }
   if (!launcherApi.value || !gameFolder.value) return;
   if (dlState.active) return;
   if (!isLauncherInstallerMode.value && !ensureBizPrefixReady()) return;
@@ -439,6 +446,10 @@ const startDownload = async () => {
 };
 
 const startVerify = async () => {
+  if (isPaused.value) {
+    await resumeDownload();
+    return;
+  }
   if (isLauncherInstallerMode.value) return;
   if (!launcherApi.value || !gameFolder.value) return;
   if (dlState.active) return;
@@ -524,6 +535,17 @@ const cancelDownload = async () => {
   await cancelActive();
 };
 
+const pauseDownload = async () => {
+  await pauseActive();
+};
+
+const resumeDownload = async () => {
+  const resumed = await resumePaused(props.gameName);
+  if (!resumed) {
+    await showMessage('当前没有可恢复的下载任务。', { title: '提示', kind: 'warning' });
+  }
+};
+
 const selectGameExe = async () => {
   try {
     const selected = await openFileDialog({
@@ -598,6 +620,8 @@ const progress = computed(() => {
   if (isActiveFor(props.gameName)) return dlState.progress;
   return null;
 });
+
+const isPaused = computed(() => isPausedFor(props.gameName));
 
 const progressPercent = computed(() => {
   if (!progress.value || progress.value.total_size === 0) return 0;
@@ -800,7 +824,15 @@ watch(() => props.modelValue, (val) => {
                 {{ protectionStatusLabel }}
               </div>
               <button
-                v-if="canDownload"
+                v-if="isPaused"
+                class="action-btn primary large"
+                @click="resumeDownload"
+                :disabled="!gameFolder"
+              >
+                继续下载
+              </button>
+              <button
+                v-else-if="canDownload"
                 class="action-btn primary large"
                 @click="startDownload"
                 :disabled="!gameFolder"
@@ -817,12 +849,12 @@ watch(() => props.modelValue, (val) => {
                     : (isLauncherInstallerMode ? '下载官方启动器' : '开始下载')
                 }}
               </button>
-              <button class="action-btn" @click="startVerify" v-if="!isLauncherInstallerMode && gameState?.state === 'startgame'">
+              <button class="action-btn" @click="startVerify" v-if="!isPaused && !isLauncherInstallerMode && gameState?.state === 'startgame'">
                 校验游戏文件
               </button>
               <button
                 class="action-btn"
-                v-if="!isLauncherInstallerMode && protectionInfo?.hasProtections && !protectionApplied"
+                v-if="!isPaused && !isLauncherInstallerMode && protectionInfo?.hasProtections && !protectionApplied"
                 @click="applyProtectionAfterDownload"
                 :disabled="isProtectionBusy"
               >
@@ -830,7 +862,7 @@ watch(() => props.modelValue, (val) => {
               </button>
               <button
                 class="action-btn danger-soft"
-                v-if="!isLauncherInstallerMode && protectionInfo?.hasProtections && protectionApplied && !hideDisableProtectionButton"
+                v-if="!isPaused && !isLauncherInstallerMode && protectionInfo?.hasProtections && protectionApplied && !hideDisableProtectionButton"
                 @click="disableProtection"
                 :disabled="isProtectionBusy"
               >
@@ -838,6 +870,9 @@ watch(() => props.modelValue, (val) => {
               </button>
               <button class="action-btn" @click="checkState" :disabled="isChecking">
                 {{ isChecking ? '检查中...' : '刷新状态' }}
+              </button>
+              <button v-if="isPaused" class="action-btn danger" @click="cancelDownload">
+                取消任务
               </button>
             </div>
 
@@ -870,7 +905,10 @@ watch(() => props.modelValue, (val) => {
               <div class="progress-counts">
                 {{ isVerifyPhase ? '文件' : '包' }}: {{ progress.finished_count }} / {{ progress.total_count }}
               </div>
-              <button class="action-btn danger" @click="cancelDownload">取消</button>
+              <div class="progress-actions">
+                <button class="action-btn" @click="pauseDownload">暂停</button>
+                <button class="action-btn danger" @click="cancelDownload">取消</button>
+              </div>
             </div>
 
             <!-- 高级配置（折叠） -->
@@ -1177,6 +1215,14 @@ watch(() => props.modelValue, (val) => {
 }
 .progress-counts {
   font-size:11px; color:rgba(255,255,255,0.35); margin-top:4px;
+}
+.progress-actions {
+  display:flex;
+  gap:8px;
+  margin-top:8px;
+}
+.progress-actions .action-btn.danger {
+  margin-top:0;
 }
 
 /* 折叠配置 */
