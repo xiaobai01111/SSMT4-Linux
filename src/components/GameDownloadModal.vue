@@ -2,6 +2,7 @@
 import { ref, watch, computed } from 'vue';
 import {
   getGameState,
+  getLauncherInstallerState,
   getDefaultGameFolder,
   getGameLauncherApi,
   listGamePresetsForInfo,
@@ -21,7 +22,14 @@ import {
   type ChannelProtectionStatus,
 } from '../api';
 import { appSettings } from '../store';
-import { dlState, isActiveFor, fireDownload, fireVerify, cancelActive } from '../downloadStore';
+import {
+  dlState,
+  isActiveFor,
+  fireDownload,
+  fireLauncherInstallerDownload,
+  fireVerify,
+  cancelActive,
+} from '../downloadStore';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -41,7 +49,9 @@ const gameFolder = ref('');
 const error = ref('');
 const gamePreset = ref('');
 const isSupported = ref(false);
+const downloadMode = ref<'full_game' | 'launcher_installer'>('full_game');
 const statusMsg = ref('');
+const installerOfficialUrl = ref('');
 const protectionInfo = ref<any>(null);
 const protectionApplied = ref(false);
 const protectionEnforceAtLaunch = ref(false);
@@ -66,6 +76,7 @@ interface ServerOption {
 }
 const availableServers = ref<ServerOption[]>([]);
 const selectedServer = ref<ServerOption | null>(null);
+const isLauncherInstallerMode = computed(() => downloadMode.value === 'launcher_installer');
 
 const protectionStatusLabel = computed(() => {
   if (!protectionInfo.value?.hasProtections) return '该游戏暂无可用防护';
@@ -124,6 +135,7 @@ const findPresetCatalog = (catalog: PresetCatalogItem[], key: string): PresetCat
 
 interface LauncherApiConfig {
   defaultFolder: string;
+  downloadMode: 'full_game' | 'launcher_installer';
   servers: ServerOption[];
   audioLanguages?: AudioLangOption[];
 }
@@ -249,6 +261,7 @@ const loadState = async () => {
   const knownApi: LauncherApiConfig | null = launcherInfo.supported
     ? {
         defaultFolder: launcherInfo.defaultFolder || '',
+        downloadMode: launcherInfo.downloadMode || 'full_game',
         servers: (launcherInfo.servers || []).map((s) => ({
           id: s.id,
           label: s.label,
@@ -259,11 +272,21 @@ const loadState = async () => {
       }
     : null;
   isSupported.value = !!knownApi && knownApi.servers.length > 0;
+  downloadMode.value = knownApi?.downloadMode || 'full_game';
+  installerOfficialUrl.value = '';
 
   // 设置可用服务器列表
   availableServers.value = knownApi?.servers || [];
-  if (availableServers.value.length > 0 && !selectedServer.value) {
-    selectedServer.value = availableServers.value[0]; // 默认选择第一个（国服）
+  if (availableServers.value.length > 0) {
+    const savedApi = launcherApi.value.trim();
+    const matched = savedApi
+      ? availableServers.value.find((s) => s.launcherApi.trim() === savedApi) || null
+      : null;
+    if (matched) {
+      selectedServer.value = matched;
+    } else if (!selectedServer.value) {
+      selectedServer.value = availableServers.value[0]; // 默认选择第一个（国服）
+    }
   }
 
   // 设置可用语言包
@@ -352,13 +375,29 @@ const checkState = async () => {
     error.value = '请先配置启动器 API 和游戏安装目录';
     return;
   }
-  if (!ensureBizPrefixReady()) return;
+  if (!isLauncherInstallerMode.value && !ensureBizPrefixReady()) return;
   isChecking.value = true;
   error.value = '';
   statusMsg.value = '正在检查游戏状态...';
   try {
-    const biz = currentBizPrefix() || undefined;
-    gameState.value = await getGameState(launcherApi.value, gameFolder.value, biz);
+    if (isLauncherInstallerMode.value) {
+      const state = await getLauncherInstallerState(
+        launcherApi.value,
+        gameFolder.value,
+        gamePreset.value || props.gameName,
+      );
+      installerOfficialUrl.value = state.installer_url || '';
+      gameState.value = {
+        state: state.state,
+        local_version: state.local_version,
+        remote_version: state.remote_version,
+        supports_incremental: false,
+      };
+    } else {
+      installerOfficialUrl.value = '';
+      const biz = currentBizPrefix() || undefined;
+      gameState.value = await getGameState(launcherApi.value, gameFolder.value, biz);
+    }
     await refreshProtectionStatus();
     statusMsg.value = '';
   } catch (e: any) {
@@ -372,9 +411,21 @@ const checkState = async () => {
 const startDownload = async () => {
   if (!launcherApi.value || !gameFolder.value) return;
   if (dlState.active) return;
-  if (!ensureBizPrefixReady()) return;
+  if (!isLauncherInstallerMode.value && !ensureBizPrefixReady()) return;
   if (!(await ensureRiskAcknowledged())) return;
   error.value = '';
+
+  if (isLauncherInstallerMode.value) {
+    fireLauncherInstallerDownload({
+      gameName: props.gameName,
+      gamePreset: gamePreset.value || props.gameName,
+      displayName: props.displayName,
+      launcherApi: launcherApi.value,
+      gameFolder: gameFolder.value,
+      isUpdate: gameState.value?.state === 'needupdate',
+    });
+    return;
+  }
 
   fireDownload({
     gameName: props.gameName,
@@ -388,6 +439,7 @@ const startDownload = async () => {
 };
 
 const startVerify = async () => {
+  if (isLauncherInstallerMode.value) return;
   if (!launcherApi.value || !gameFolder.value) return;
   if (dlState.active) return;
   if (!ensureBizPrefixReady()) return;
@@ -516,6 +568,16 @@ const saveDownloadConfig = async () => {
   } catch (e) { console.error(e); }
 };
 
+const copyOfficialLink = async () => {
+  if (!installerOfficialUrl.value) return;
+  try {
+    await navigator.clipboard.writeText(installerOfficialUrl.value);
+    await showMessage('官方启动器链接已复制', { title: '成功', kind: 'info' });
+  } catch (e) {
+    await showMessage(`复制失败: ${e}`, { title: '错误', kind: 'error' });
+  }
+};
+
 // === 格式化辅助 ===
 const formatSize = (bytes: number) => {
   if (bytes < 1024) return `${bytes} B`;
@@ -545,10 +607,12 @@ const progressPercent = computed(() => {
 const stateLabel = computed(() => {
   if (!gameState.value) return '';
   switch (gameState.value.state) {
-    case 'startgame': return '✓ 已是最新版本';
-    case 'needinstall': return '需要下载安装';
+    case 'startgame': return isLauncherInstallerMode.value ? '✓ 已是最新启动器版本' : '✓ 已是最新版本';
+    case 'needinstall': return isLauncherInstallerMode.value ? '需要下载官方启动器安装器' : '需要下载安装';
     case 'needupdate':
-      return `需要更新 (${gameState.value.local_version} → ${gameState.value.remote_version})`;
+      return isLauncherInstallerMode.value
+        ? `启动器需要更新 (${gameState.value.local_version} → ${gameState.value.remote_version})`
+        : `需要更新 (${gameState.value.local_version} → ${gameState.value.remote_version})`;
     case 'networkerror': return '⚠ 网络错误，请检查网络连接';
     default: return String(gameState.value.state);
   }
@@ -647,7 +711,7 @@ watch(() => props.modelValue, (val) => {
             </div>
 
             <div
-              v-if="channelProtection?.supported && channelProtection.channel?.required && !isWorking"
+              v-if="!isLauncherInstallerMode && channelProtection?.supported && channelProtection.channel?.required && !isWorking"
               class="channel-mode-card"
             >
               <div class="channel-mode-head">
@@ -698,11 +762,14 @@ watch(() => props.modelValue, (val) => {
                   </svg>
                 </button>
               </div>
-              <p class="install-dir-hint">游戏文件将下载到此目录，请确保有足够磁盘空间（约 130GB+）</p>
+              <p v-if="isLauncherInstallerMode" class="install-dir-hint">
+                官方启动器安装器将下载到此目录，并自动写入游戏路径（可后续修改）。
+              </p>
+              <p v-else class="install-dir-hint">游戏文件将下载到此目录，请确保有足够磁盘空间（约 130GB+）</p>
             </div>
 
             <!-- 语言包选择 -->
-            <div v-if="availableLanguages.length > 0 && !isWorking" class="lang-section">
+            <div v-if="!isLauncherInstallerMode && availableLanguages.length > 0 && !isWorking" class="lang-section">
               <label class="lang-label">语音包（可多选）</label>
               <div class="lang-options">
                 <label
@@ -726,7 +793,7 @@ watch(() => props.modelValue, (val) => {
             <!-- 下载/更新按钮 -->
             <div v-if="!isWorking" class="main-actions">
               <div
-                v-if="protectionInfo?.hasProtections"
+                v-if="!isLauncherInstallerMode && protectionInfo?.hasProtections"
                 class="protection-status"
                 :class="protectionStatusClass"
               >
@@ -744,14 +811,18 @@ watch(() => props.modelValue, (val) => {
                   <polyline points="7 10 12 15 17 10"/>
                   <line x1="12" y1="15" x2="12" y2="3"/>
                 </svg>
-                {{ gameState?.state === 'needupdate' ? '开始更新' : '开始下载' }}
+                {{
+                  gameState?.state === 'needupdate'
+                    ? (isLauncherInstallerMode ? '更新官方启动器' : '开始更新')
+                    : (isLauncherInstallerMode ? '下载官方启动器' : '开始下载')
+                }}
               </button>
-              <button class="action-btn" @click="startVerify" v-if="gameState?.state === 'startgame'">
+              <button class="action-btn" @click="startVerify" v-if="!isLauncherInstallerMode && gameState?.state === 'startgame'">
                 校验游戏文件
               </button>
               <button
                 class="action-btn"
-                v-if="protectionInfo?.hasProtections && !protectionApplied"
+                v-if="!isLauncherInstallerMode && protectionInfo?.hasProtections && !protectionApplied"
                 @click="applyProtectionAfterDownload"
                 :disabled="isProtectionBusy"
               >
@@ -759,7 +830,7 @@ watch(() => props.modelValue, (val) => {
               </button>
               <button
                 class="action-btn danger-soft"
-                v-if="protectionInfo?.hasProtections && protectionApplied && !hideDisableProtectionButton"
+                v-if="!isLauncherInstallerMode && protectionInfo?.hasProtections && protectionApplied && !hideDisableProtectionButton"
                 @click="disableProtection"
                 :disabled="isProtectionBusy"
               >
@@ -809,6 +880,13 @@ watch(() => props.modelValue, (val) => {
                 <div class="field">
                   <label>启动器 API</label>
                   <input v-model="launcherApi" type="text" class="dl-input" />
+                </div>
+                <div v-if="isLauncherInstallerMode && installerOfficialUrl" class="field">
+                  <label>官方启动器下载链接</label>
+                  <div class="install-dir-row">
+                    <input :value="installerOfficialUrl" type="text" class="dl-input" readonly />
+                    <button class="action-btn sm" @click="copyOfficialLink">复制</button>
+                  </div>
                 </div>
                 <button class="action-btn sm" @click="saveDownloadConfig">保存配置</button>
               </div>

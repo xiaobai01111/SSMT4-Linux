@@ -95,6 +95,7 @@ pub struct ProtonSettings {
     pub proton_no_d3d12: bool,
     pub mangohud: bool,
     pub steam_deck_compat: bool,
+    pub steamos_compat: bool,
     pub sandbox_enabled: bool,
     pub sandbox_isolate_home: bool,
     /// DXVK HUD 显示模式："" = 关闭, "version" / "fps" / "full" / 自定义
@@ -119,6 +120,7 @@ impl Default for ProtonSettings {
             proton_no_d3d12: false,
             mangohud: false,
             steam_deck_compat: false,
+            steamos_compat: false,
             sandbox_enabled: false,
             sandbox_isolate_home: false,
             dxvk_hud: String::new(),

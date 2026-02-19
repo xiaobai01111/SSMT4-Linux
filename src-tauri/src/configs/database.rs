@@ -579,7 +579,10 @@ fn sync_managed_preset_fields(
     let mut changed = false;
     for key in [
         "legacyIds",
+        "downloadMode",
+        "downloadServers",
         "requireProtectionBeforeLaunch",
+        "defaultUmuRun",
         "forceDirectProton",
         "forceDisablePressureVessel",
         "enableNetworkLogByDefault",

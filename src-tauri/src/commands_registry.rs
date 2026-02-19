@@ -87,8 +87,11 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         // Game downloader
         commands::game_downloader::get_launcher_info,
         commands::game_downloader::get_game_state,
+        commands::game_downloader::get_launcher_installer_state,
         commands::game_downloader::download_game,
+        commands::game_downloader::download_launcher_installer,
         commands::game_downloader::update_game,
+        commands::game_downloader::update_launcher_installer,
         commands::game_downloader::update_game_patch,
         commands::game_downloader::verify_game_files,
         commands::game_downloader::cancel_download,

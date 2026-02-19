@@ -180,6 +180,7 @@ export interface ProtonSettings {
   proton_no_d3d12: boolean;
   mangohud: boolean;
   steam_deck_compat: boolean;
+  steamos_compat: boolean;
   sandbox_enabled: boolean;
   sandbox_isolate_home: boolean;
   /** DXVK HUD 显示模式："" = 关闭, "version" / "fps" / "full" / 自定义 */
@@ -388,6 +389,17 @@ export interface GameState {
   local_version: string | null;
   remote_version: string | null;
   supports_incremental: boolean;
+}
+
+export interface LauncherInstallerState extends GameState {
+  installer_path: string | null;
+  installer_url: string | null;
+}
+
+export interface LauncherInstallerDownloadResult {
+  installerPath: string;
+  installerUrl: string;
+  version: string;
 }
 
 export interface DownloadProgress {
@@ -800,12 +812,44 @@ export async function getGameState(launcherApi: string, gameFolder: string, bizP
   return invoke<GameState>('get_game_state', { launcherApi, gameFolder, bizPrefix: bizPrefix || null });
 }
 
+export async function getLauncherInstallerState(
+  launcherApi: string,
+  gameFolder: string,
+  gamePreset: string,
+): Promise<LauncherInstallerState> {
+  return invoke<LauncherInstallerState>('get_launcher_installer_state', { launcherApi, gameFolder, gamePreset });
+}
+
 export async function downloadGame(launcherApi: string, gameFolder: string, languages?: string[], bizPrefix?: string): Promise<void> {
   return invoke('download_game', { launcherApi, gameFolder, languages: languages || null, bizPrefix: bizPrefix || null });
 }
 
+export async function downloadLauncherInstaller(
+  launcherApi: string,
+  gameFolder: string,
+  gamePreset: string,
+): Promise<LauncherInstallerDownloadResult> {
+  return invoke<LauncherInstallerDownloadResult>('download_launcher_installer', {
+    launcherApi,
+    gameFolder,
+    gamePreset,
+  });
+}
+
 export async function updateGame(launcherApi: string, gameFolder: string, languages?: string[], bizPrefix?: string): Promise<void> {
   return invoke('update_game', { launcherApi, gameFolder, languages: languages || null, bizPrefix: bizPrefix || null });
+}
+
+export async function updateLauncherInstaller(
+  launcherApi: string,
+  gameFolder: string,
+  gamePreset: string,
+): Promise<LauncherInstallerDownloadResult> {
+  return invoke<LauncherInstallerDownloadResult>('update_launcher_installer', {
+    launcherApi,
+    gameFolder,
+    gamePreset,
+  });
 }
 
 export async function updateGamePatch(launcherApi: string, gameFolder: string): Promise<void> {
@@ -828,6 +872,7 @@ export interface GameLauncherApiInfo {
   launcherApi?: string;
   launcherDownloadApi?: string;
   defaultFolder?: string;
+  downloadMode?: 'full_game' | 'launcher_installer';
   servers?: Array<{ id: string; label: string; launcherApi: string; bizPrefix?: string }>;
   audioLanguages?: Array<{ code: string; label: string }>;
   supported: boolean;

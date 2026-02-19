@@ -2,15 +2,51 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{info, warn};
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DownloadMode {
+    FullGame,
+    LauncherInstaller,
+}
+
+impl Default for DownloadMode {
+    fn default() -> Self {
+        Self::FullGame
+    }
+}
+
 /// 单个游戏预设：聚合 launcher API、默认目录、遥测等全部元数据。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PresetDownloadServer {
     pub id: String,
     pub label: String,
+    #[serde(default)]
     pub launcher_api: String,
     #[serde(default)]
     pub biz_prefix: String,
+    /// 兼容旧版终末地配置（apiConfig），运行时会转换为 launcher_api
+    #[serde(default, skip_serializing)]
+    pub api_config: Option<LegacyLauncherApiConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LegacyLauncherApiConfig {
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default)]
+    pub channel: i64,
+    #[serde(default)]
+    pub sub_channel: i64,
+    #[serde(default)]
+    pub launcher_app_code: String,
+    #[serde(default)]
+    pub launcher_sub_channel: i64,
+    #[serde(default)]
+    pub ta: Option<String>,
+    #[serde(default)]
+    pub target_app: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +105,9 @@ pub struct GamePreset {
     /// 下载服务器配置（可多服）；为空时回退 launcher_api 单通道
     #[serde(default)]
     pub download_servers: Vec<PresetDownloadServer>,
+    /// 下载模式：完整游戏资源 或 官方启动器安装器
+    #[serde(default)]
+    pub download_mode: DownloadMode,
     /// 可选语音包（主要用于 HoYoverse）
     #[serde(default)]
     pub audio_languages: Vec<PresetAudioLanguage>,
@@ -149,6 +188,8 @@ fn normalize_preset(mut preset: GamePreset) -> GamePreset {
         preset.legacy_ids = crate::configs::game_identity::legacy_aliases_for_canonical(&canonical);
     }
 
+    normalize_download_servers(&mut preset.download_servers);
+
     if preset.download_servers.is_empty() {
         if let Some(api) = preset.launcher_api.clone() {
             preset.download_servers.push(PresetDownloadServer {
@@ -156,6 +197,7 @@ fn normalize_preset(mut preset: GamePreset) -> GamePreset {
                 label: "默认".to_string(),
                 launcher_api: api,
                 biz_prefix: String::new(),
+                api_config: None,
             });
         }
     }
@@ -179,6 +221,46 @@ fn normalize_preset(mut preset: GamePreset) -> GamePreset {
     }
     preset.id = canonical;
     preset
+}
+
+fn normalize_download_servers(servers: &mut Vec<PresetDownloadServer>) {
+    servers.retain_mut(|server| {
+        if server.launcher_api.trim().is_empty() {
+            if let Some(cfg) = server.api_config.as_ref() {
+                if let Some(api) = legacy_launcher_api_from_config(cfg) {
+                    server.launcher_api = api;
+                }
+            }
+        }
+        !server.launcher_api.trim().is_empty()
+    });
+}
+
+fn legacy_launcher_api_from_config(cfg: &LegacyLauncherApiConfig) -> Option<String> {
+    let base = cfg.base_url.trim().trim_end_matches('/');
+    let appcode = cfg.launcher_app_code.trim();
+    if base.is_empty() || appcode.is_empty() {
+        return None;
+    }
+
+    // 旧格式下终末地使用 launcherSubChannel；为空时回退 subChannel。
+    let sub_channel = if cfg.launcher_sub_channel > 0 {
+        cfg.launcher_sub_channel
+    } else {
+        cfg.sub_channel
+    };
+    let ta = cfg
+        .ta
+        .as_deref()
+        .or(cfg.target_app.as_deref())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("endfield");
+
+    Some(format!(
+        "{}/launcher/get_latest_launcher?appcode={}&channel={}&sub_channel={}&ta={}",
+        base, appcode, cfg.channel, sub_channel, ta
+    ))
 }
 
 fn normalize_default_folder(canonical: &str, raw: &str) -> String {
@@ -254,6 +336,8 @@ mod tests {
             "GenshinImpact",
             "HonkaiImpact3rd",
             "SnowbreakContainmentZone",
+            "ArknightsEndfield",
+            "Arknights",
         ] {
             assert!(map.contains_key(*id), "missing preset: {}", id);
         }
@@ -312,5 +396,31 @@ mod tests {
         assert_eq!(channel.protected_value, 205);
         assert_eq!(channel.default_mode.as_deref(), Some("init"));
         assert_eq!(channel.launch_enforcement.as_deref(), Some("warn"));
+    }
+
+    #[test]
+    fn legacy_endfield_api_config_can_be_normalized() {
+        let mut servers = vec![PresetDownloadServer {
+            id: "cn".to_string(),
+            label: "国服".to_string(),
+            launcher_api: String::new(),
+            biz_prefix: String::new(),
+            api_config: Some(LegacyLauncherApiConfig {
+                base_url: "https://launcher.hypergryph.com/api".to_string(),
+                channel: 1,
+                sub_channel: 1,
+                launcher_app_code: "abYeZZ16BPluCFyT".to_string(),
+                launcher_sub_channel: 1,
+                ta: Some("endfield".to_string()),
+                target_app: None,
+            }),
+        }];
+        normalize_download_servers(&mut servers);
+        assert_eq!(servers.len(), 1);
+        assert!(
+            servers[0]
+                .launcher_api
+                .contains("/launcher/get_latest_launcher?appcode=abYeZZ16BPluCFyT")
+        );
     }
 }
