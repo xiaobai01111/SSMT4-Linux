@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Build Linux installation packages (.deb/.rpm/.pkg.tar.zst) and copy them
-# to the project root "Installation package" directory.
+# Build Linux packages (.deb/.rpm/.pkg.tar.zst) and portable artifacts
+# (.AppImage when available, otherwise .AppDir.tar.gz fallback), then copy
+# them to the project root "Installation package" directory.
 
 set -euo pipefail
 
@@ -22,6 +23,173 @@ fi
 KEEP_TARGET_BUNDLES="${KEEP_TARGET_BUNDLES:-0}"
 BUNDLE_SEARCH_ROOT="$ROOT_DIR/src-tauri/target"
 
+resolve_appimagetool_bin() {
+  local candidate
+
+  if command -v appimagetool >/dev/null 2>&1; then
+    command -v appimagetool
+    return 0
+  fi
+
+  for candidate in \
+    "$HOME/.cache/tauri/linuxdeploy-plugin-appimage-squashfs/usr/bin/appimagetool" \
+    "$HOME/.cache/tauri/linuxdeploy-plugin-appimage/usr/bin/appimagetool"; do
+    if [[ -x "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+ensure_appimage_runtime() {
+  local runtime_dir runtime_file tmp_runtime candidate offset
+  runtime_dir="$HOME/.cache/tauri"
+  runtime_file="$runtime_dir/runtime-x86_64"
+
+  if [[ -f "$runtime_file" ]] && [[ -r "$runtime_file" ]]; then
+    echo "$runtime_file"
+    return 0
+  fi
+
+  mkdir -p "$runtime_dir" 2>/dev/null || true
+  for candidate in \
+    "$HOME/.cache/tauri/linuxdeploy-x86_64.AppImage.bak" \
+    "$HOME/.cache/tauri/linuxdeploy-plugin-appimage.AppImage.bak" \
+    "$HOME/.cache/tauri/linuxdeploy-plugin-appimage.AppImage"; do
+    if [[ ! -x "$candidate" ]]; then
+      continue
+    fi
+
+    offset="$("$candidate" --appimage-offset 2>/dev/null || true)"
+    if [[ ! "$offset" =~ ^[0-9]+$ ]] || [[ "$offset" -le 0 ]]; then
+      continue
+    fi
+
+    if dd if="$candidate" of="$runtime_file" bs=1 count="$offset" status=none 2>/dev/null; then
+      chmod +x "$runtime_file" 2>/dev/null || true
+      echo "$runtime_file"
+      return 0
+    fi
+
+    tmp_runtime="$(mktemp /tmp/ssmt4-runtime-x86_64.XXXXXX)"
+    if dd if="$candidate" of="$tmp_runtime" bs=1 count="$offset" status=none 2>/dev/null; then
+      chmod +x "$tmp_runtime" 2>/dev/null || true
+      echo "$tmp_runtime"
+      return 0
+    fi
+    rm -f "$tmp_runtime"
+  done
+
+  return 1
+}
+
+build_appimage_from_appdir() {
+  local appdir="$1"
+  local output_file="$2"
+  local appimagetool_bin runtime_file rc
+
+  ensure_appdir_root_icon "$appdir"
+  appimagetool_bin="$(resolve_appimagetool_bin)" || return 1
+  runtime_file="$(ensure_appimage_runtime)" || return 1
+
+  set +e
+  ARCH=x86_64 "$appimagetool_bin" --no-appstream --runtime-file "$runtime_file" "$appdir" "$output_file"
+  rc=$?
+  set -e
+
+  if [[ $rc -eq 0 ]]; then
+    return 0
+  fi
+
+  if [[ -f "$output_file" ]] && [[ -s "$output_file" ]]; then
+    echo "Warning: appimagetool returned non-zero but output exists: $output_file" >&2
+    return 0
+  fi
+
+  return $rc
+}
+
+ensure_appdir_root_icon() {
+  local appdir="$1"
+  local desktop_file icon_name icon_file candidate
+
+  desktop_file="$(find "$appdir/usr/share/applications" -maxdepth 1 -type f -name '*.desktop' | head -n 1)"
+  if [[ -z "$desktop_file" ]]; then
+    return 0
+  fi
+
+  icon_name="$(awk -F= '/^Icon=/{print $2; exit}' "$desktop_file" | tr -d '\r')"
+  if [[ -z "$icon_name" ]]; then
+    return 0
+  fi
+
+  for ext in png svg xpm; do
+    if [[ -f "$appdir/$icon_name.$ext" ]]; then
+      return 0
+    fi
+  done
+
+  icon_file="$appdir/$icon_name.png"
+  for candidate in \
+    "$appdir/usr/share/icons/hicolor/256x256/apps/$icon_name.png" \
+    "$appdir/usr/share/icons/hicolor/256x256@2/apps/$icon_name.png" \
+    "$appdir/usr/share/icons/hicolor/128x128/apps/$icon_name.png" \
+    "$appdir/usr/share/icons/hicolor/64x64/apps/$icon_name.png" \
+    "$appdir/usr/share/icons/hicolor/48x48/apps/$icon_name.png" \
+    "$appdir/usr/share/icons/hicolor/32x32/apps/$icon_name.png"; do
+    if [[ -f "$candidate" ]]; then
+      cp -f "$candidate" "$icon_file"
+      return 0
+    fi
+  done
+
+  return 0
+}
+
+ensure_linuxdeploy_strip_compat() {
+  local cached_strip system_strip
+
+  cached_strip="$HOME/.cache/tauri/linuxdeploy-squashfs/usr/bin/strip"
+  if [[ ! -e "$cached_strip" ]]; then
+    return 1
+  fi
+
+  system_strip="$(command -v strip || true)"
+  if [[ -z "$system_strip" ]]; then
+    return 1
+  fi
+
+  if [[ -L "$cached_strip" ]] && [[ "$(readlink -f "$cached_strip")" == "$system_strip" ]]; then
+    return 0
+  fi
+
+  ln -sf "$system_strip" "$cached_strip"
+}
+
+run_tauri_appimage_build() {
+  local tool_bin_dir rc
+  tool_bin_dir="$(mktemp -d)"
+
+  if [[ -x "$HOME/.cache/tauri/linuxdeploy-wrapper.sh" ]]; then
+    ln -sf "$HOME/.cache/tauri/linuxdeploy-wrapper.sh" "$tool_bin_dir/linuxdeploy"
+  fi
+  if [[ -x "$ROOT_DIR/scripts/linuxdeploy-plugin-gtk.compat.sh" ]]; then
+    ln -sf "$ROOT_DIR/scripts/linuxdeploy-plugin-gtk.compat.sh" "$tool_bin_dir/linuxdeploy-plugin-gtk"
+  fi
+
+  if command -v bun >/dev/null 2>&1; then
+    PATH="$tool_bin_dir:$PATH" npm run tauri build -- --bundles appimage
+  else
+    PATH="$tool_bin_dir:$PATH" npm run tauri build -- --bundles appimage --config '{"build":{"beforeBuildCommand":"npx vue-tsc --noEmit && npx vite build"}}'
+  fi
+  rc=$?
+
+  rm -rf "$tool_bin_dir"
+  return $rc
+}
+
 if ! command -v npm >/dev/null 2>&1; then
   echo "Error: npm is required" >&2
   exit 1
@@ -32,7 +200,12 @@ if ! command -v makepkg >/dev/null 2>&1; then
 fi
 
 mkdir -p "$OUT_DIR"
-rm -f "$OUT_DIR"/*.deb "$OUT_DIR"/*.rpm "$OUT_DIR"/*.pkg.tar.*
+rm -f \
+  "$OUT_DIR"/*.deb \
+  "$OUT_DIR"/*.rpm \
+  "$OUT_DIR"/*.AppImage \
+  "$OUT_DIR"/*.AppDir*.tar.gz \
+  "$OUT_DIR"/*.pkg.tar.*
 
 echo "==> Syncing version metadata"
 bash "$ROOT_DIR/scripts/sync-version.sh"
@@ -75,6 +248,86 @@ if [[ "$KEEP_TARGET_BUNDLES" != "1" ]]; then
   for f in "${RPM_FILES[@]}"; do
     rm -f "$f"
   done
+fi
+
+APPIMAGE_FILES=()
+PORTABLE_FALLBACK_FILES=()
+APPDIR_BUNDLE_ROOT="$BUNDLE_SEARCH_ROOT/release/bundle/appimage"
+
+echo "==> Attempting portable build (.AppImage)"
+set +e
+(
+  cd "$ROOT_DIR"
+  ensure_linuxdeploy_strip_compat >/dev/null 2>&1 || true
+  run_tauri_appimage_build
+)
+APPIMAGE_BUILD_RC=$?
+set -e
+
+if [[ $APPIMAGE_BUILD_RC -ne 0 ]]; then
+  if ensure_linuxdeploy_strip_compat >/dev/null 2>&1; then
+    echo "==> Retrying AppImage build with system strip compatibility"
+    set +e
+    (
+      cd "$ROOT_DIR"
+      run_tauri_appimage_build
+    )
+    APPIMAGE_BUILD_RC=$?
+    set -e
+  fi
+fi
+
+if [[ $APPIMAGE_BUILD_RC -eq 0 ]]; then
+  mapfile -t APPIMAGE_FILES < <(find "$BUNDLE_SEARCH_ROOT" -type f -name "*${VERSION}*.AppImage" 2>/dev/null | sort)
+fi
+
+if [[ ${#APPIMAGE_FILES[@]} -eq 0 ]]; then
+  mapfile -t APPDIRS < <(find "$APPDIR_BUNDLE_ROOT" -maxdepth 1 -type d -name "*.AppDir" 2>/dev/null | sort)
+  if [[ ${#APPDIRS[@]} -gt 0 ]]; then
+    echo "==> Converting AppDir to AppImage (offline fallback)"
+    for appdir in "${APPDIRS[@]}"; do
+      base_name="$(basename "$appdir")"
+      app_name="${base_name%.AppDir}"
+      manual_appimage="$APPDIR_BUNDLE_ROOT/${app_name}_${VERSION}_amd64.AppImage"
+      if build_appimage_from_appdir "$appdir" "$manual_appimage"; then
+        APPIMAGE_FILES+=("$manual_appimage")
+      else
+        echo "Warning: AppDir conversion failed for $appdir" >&2
+      fi
+    done
+  fi
+fi
+
+if [[ ${#APPIMAGE_FILES[@]} -gt 0 ]]; then
+  echo "==> Portable artifact ready: AppImage"
+  for f in "${APPIMAGE_FILES[@]}"; do
+    cp -f "$f" "$OUT_DIR/"
+  done
+  if [[ "$KEEP_TARGET_BUNDLES" != "1" ]]; then
+    for f in "${APPIMAGE_FILES[@]}"; do
+      rm -f "$f"
+    done
+  fi
+else
+  if [[ $APPIMAGE_BUILD_RC -ne 0 ]]; then
+    echo "Warning: AppImage build failed and AppDir conversion was unavailable, falling back to AppDir tarball." >&2
+  else
+    echo "Warning: AppImage build produced no .AppImage and AppDir conversion failed, falling back to AppDir tarball." >&2
+  fi
+
+  mapfile -t APPDIRS < <(find "$APPDIR_BUNDLE_ROOT" -maxdepth 1 -type d -name "*.AppDir" 2>/dev/null | sort)
+  if [[ ${#APPDIRS[@]} -gt 0 ]]; then
+    for appdir in "${APPDIRS[@]}"; do
+      base_name="$(basename "$appdir")"
+      app_name="${base_name%.AppDir}"
+      fallback_name="${app_name}_${VERSION}_portable.AppDir.tar.gz"
+      tar -C "$(dirname "$appdir")" -czf "$OUT_DIR/$fallback_name" "$base_name"
+      PORTABLE_FALLBACK_FILES+=("$OUT_DIR/$fallback_name")
+    done
+    echo "==> Portable artifact ready: AppDir tarball fallback"
+  else
+    echo "Warning: no AppDir found under $APPDIR_BUNDLE_ROOT, portable artifact skipped." >&2
+  fi
 fi
 
 echo "==> Building pacman package via makepkg"
@@ -145,4 +398,4 @@ EOF
 find "$TMP_PKG_DIR" -maxdepth 1 -type f -name "ssmt4-bin-${ARCH_PKGVER}-*.pkg.tar.*" -exec cp -f {} "$OUT_DIR/" \;
 
 echo "==> Packages ready:"
-find "$OUT_DIR" -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.pkg.tar.*' \) -print | sort
+find "$OUT_DIR" -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.AppDir*.tar.gz' -o -name '*.pkg.tar.*' \) -print | sort
