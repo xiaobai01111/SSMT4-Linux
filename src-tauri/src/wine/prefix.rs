@@ -189,10 +189,60 @@ pub fn create_prefix_from_template(
 pub fn delete_prefix(game_id: &str) -> Result<(), String> {
     let prefix_dir = get_prefix_dir(game_id);
     if prefix_dir.exists() {
+        ensure_safe_prefix_delete_target(game_id, &prefix_dir)?;
         std::fs::remove_dir_all(&prefix_dir)
             .map_err(|e| format!("Failed to delete prefix {}: {}", prefix_dir.display(), e))?;
         info!("Deleted prefix for game {}", game_id);
     }
+    Ok(())
+}
+
+fn ensure_safe_prefix_delete_target(game_id: &str, prefix_dir: &Path) -> Result<(), String> {
+    let canonical_prefix = std::fs::canonicalize(prefix_dir).map_err(|e| {
+        format!(
+            "无法解析待删除 prefix 路径 {}: {}",
+            prefix_dir.display(),
+            e
+        )
+    })?;
+
+    let prefix_name = canonical_prefix
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let is_prefix_name = prefix_name.starts_with("prefix");
+
+    let mut allowed = false;
+
+    if let Some(game_root) = resolve_game_root_from_db(game_id) {
+        let canonical_root = std::fs::canonicalize(&game_root).unwrap_or(game_root);
+        if canonical_prefix.starts_with(&canonical_root) && is_prefix_name {
+            allowed = true;
+        }
+    }
+
+    let legacy_root_raw = file_manager::get_prefixes_dir();
+    let legacy_root = std::fs::canonicalize(&legacy_root_raw).unwrap_or(legacy_root_raw);
+    let canonical_game = crate::configs::game_identity::to_canonical_or_keep(game_id)
+        .to_ascii_lowercase();
+    if canonical_prefix.starts_with(&legacy_root)
+        && (prefix_name == canonical_game || is_prefix_name)
+    {
+        allowed = true;
+    }
+
+    if !allowed {
+        return Err(format!(
+            "拒绝删除非白名单 prefix 路径: {}",
+            canonical_prefix.display()
+        ));
+    }
+
+    if canonical_prefix == legacy_root {
+        return Err("拒绝删除 prefixes 根目录".to_string());
+    }
+
     Ok(())
 }
 

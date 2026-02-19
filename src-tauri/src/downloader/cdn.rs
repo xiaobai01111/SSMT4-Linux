@@ -25,6 +25,8 @@ pub struct PatchConfig {
 pub struct ResourceFile {
     pub dest: String,
     pub md5: String,
+    #[serde(default)]
+    pub sha256: Option<String>,
     pub size: u64,
 }
 
@@ -37,9 +39,20 @@ pub async fn fetch_launcher_info(launcher_api: &str) -> Result<LauncherInfo, Str
     let client = Client::new();
     let data = fetch_json(&client, launcher_api).await?;
 
-    let default = data
-        .get("default")
-        .ok_or("Missing 'default' field in launcher info")?;
+    let default = find_launcher_default_payload(&data).ok_or_else(|| {
+        if looks_like_launcher_installer_payload(&data) {
+            "Launcher API is launcher-installer payload (version/exe_url), not full-game payload; use launcher_installer mode".to_string()
+        } else {
+            let keys = data
+                .as_object()
+                .map(|m| m.keys().cloned().collect::<Vec<_>>().join(","))
+                .unwrap_or_else(|| "<non-object>".to_string());
+            format!(
+                "Missing 'default' field in launcher info (top-level keys: {})",
+                keys
+            )
+        }
+    })?;
 
     let version = default
         .get("version")
@@ -97,6 +110,62 @@ pub async fn fetch_launcher_info(launcher_api: &str) -> Result<LauncherInfo, Str
     })
 }
 
+fn looks_like_launcher_default_payload(node: &Value) -> bool {
+    node.get("version").and_then(|v| v.as_str()).is_some()
+        && node.get("config").and_then(|v| v.as_object()).is_some()
+        && node.get("cdnList").and_then(|v| v.as_array()).is_some()
+}
+
+fn looks_like_launcher_installer_payload(root: &Value) -> bool {
+    let candidate = root.get("rsp").unwrap_or(root);
+    candidate.get("version").and_then(|v| v.as_str()).is_some()
+        && candidate
+            .get("exe_url")
+            .or_else(|| candidate.get("exeUrl"))
+            .and_then(|v| v.as_str())
+            .is_some()
+}
+
+fn get_nested<'a>(root: &'a Value, path: &[&str]) -> Option<&'a Value> {
+    let mut current = root;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    Some(current)
+}
+
+fn find_launcher_default_payload<'a>(root: &'a Value) -> Option<&'a Value> {
+    if looks_like_launcher_default_payload(root) {
+        return Some(root);
+    }
+
+    // Common wrapper layouts used by launcher APIs.
+    let candidate_paths: &[&[&str]] = &[
+        &["default"],
+        &["rsp", "default"],
+        &["data", "default"],
+        &["result", "default"],
+        &["rsp", "data", "default"],
+        &["data", "rsp", "default"],
+        &["result", "data", "default"],
+        &["payload", "default"],
+        &["rsp"],
+        &["data"],
+        &["result"],
+        &["payload"],
+    ];
+
+    for path in candidate_paths {
+        if let Some(node) = get_nested(root, path) {
+            if looks_like_launcher_default_payload(node) {
+                return Some(node);
+            }
+        }
+    }
+
+    None
+}
+
 pub async fn fetch_resource_index(
     cdn_url: &str,
     index_file_path: &str,
@@ -112,17 +181,52 @@ pub async fn fetch_resource_index(
 
     let resource_list: Vec<ResourceFile> = resources
         .iter()
-        .filter_map(|r| {
-            Some(ResourceFile {
-                dest: r.get("dest")?.as_str()?.to_string(),
-                md5: r.get("md5")?.as_str()?.to_string(),
-                size: r
-                    .get("size")?
-                    .as_u64()
-                    .or_else(|| r.get("size")?.as_str()?.parse::<u64>().ok())?,
+        .enumerate()
+        .map(|(idx, r)| {
+            let sha256 = r
+                .get("sha256")
+                .or_else(|| r.get("sha_256"))
+                .or_else(|| r.get("sha256sum"))
+                .or_else(|| r.get("sha256Sum"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(ToString::to_string);
+
+            let md5 = r
+                .get("md5")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_default();
+
+            let dest = r
+                .get("dest")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| format!("resource[{}] missing dest", idx))?
+                .to_string();
+
+            if sha256.is_none() && md5.is_empty() {
+                return Err(format!(
+                    "resource[{}] ({}) missing checksum metadata (need sha256 or md5)",
+                    idx, dest
+                ));
+            }
+
+            let size = r
+                .get("size")
+                .and_then(|v| v.as_u64().or_else(|| v.as_str()?.parse::<u64>().ok()))
+                .ok_or_else(|| format!("resource[{}] ({}) missing/invalid size", idx, dest))?;
+
+            Ok(ResourceFile {
+                dest,
+                md5,
+                sha256,
+                size,
             })
         })
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
 
     info!("Resource index: {} files", resource_list.len());
     Ok(ResourceIndex {
@@ -234,4 +338,39 @@ pub fn join_url(base: &str, path: &str) -> String {
     let base = base.trim_end_matches('/');
     let path = path.trim_start_matches('/');
     format!("{}/{}", base, path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::find_launcher_default_payload;
+    use serde_json::json;
+
+    fn make_default_node() -> serde_json::Value {
+        json!({
+            "version": "1.0.0",
+            "cdnList": [{"url": "https://cdn.example.com", "K1": 1, "K2": 1, "P": 1}],
+            "config": {"indexFile": "index.json", "patchConfig": []}
+        })
+    }
+
+    #[test]
+    fn launcher_default_payload_supports_top_level_default() {
+        let data = json!({ "default": make_default_node() });
+        let node = find_launcher_default_payload(&data).expect("default payload");
+        assert_eq!(node.get("version").and_then(|v| v.as_str()), Some("1.0.0"));
+    }
+
+    #[test]
+    fn launcher_default_payload_supports_rsp_default_wrapper() {
+        let data = json!({ "rsp": { "default": make_default_node() } });
+        let node = find_launcher_default_payload(&data).expect("wrapped default payload");
+        assert_eq!(node.get("version").and_then(|v| v.as_str()), Some("1.0.0"));
+    }
+
+    #[test]
+    fn launcher_default_payload_supports_rsp_data_default_wrapper() {
+        let data = json!({ "rsp": { "data": { "default": make_default_node() } } });
+        let node = find_launcher_default_payload(&data).expect("deep wrapped default payload");
+        assert_eq!(node.get("version").and_then(|v| v.as_str()), Some("1.0.0"));
+    }
 }

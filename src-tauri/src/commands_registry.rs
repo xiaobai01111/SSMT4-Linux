@@ -43,6 +43,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         commands::game_config::update_game_background,
         // Game launcher (pressure-vessel + Wine/Proton)
         commands::game_launcher::start_game,
+        commands::game_launcher::launch_game,
         // Wine manager
         commands::wine_manager::scan_wine_versions,
         commands::wine_manager::get_game_wine_config,

@@ -681,15 +681,34 @@ pub fn get_setting(key: &str) -> Option<String> {
 }
 
 pub fn set_setting(key: &str, value: &str) {
-    let conn = DB.lock().unwrap();
-    conn.execute(
-        "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
-        params![key, value],
-    )
-    .unwrap_or_else(|e| {
+    if let Err(e) = set_settings_batch(&[(key.to_string(), value.to_string())]) {
         tracing::error!("写入 settings 失败: key={}, err={}", key, e);
-        0
-    });
+    }
+}
+
+pub fn set_settings_batch(entries: &[(String, String)]) -> Result<(), String> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+
+    let mut conn = DB.lock().unwrap();
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("开始 settings 事务失败: {}", e))?;
+
+    {
+        let mut stmt = tx
+            .prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)")
+            .map_err(|e| format!("准备 settings 写入语句失败: {}", e))?;
+
+        for (key, value) in entries {
+            stmt.execute(params![key, value])
+                .map_err(|e| format!("写入 settings 失败: key={}, err={}", key, e))?;
+        }
+    }
+
+    tx.commit()
+        .map_err(|e| format!("提交 settings 事务失败: {}", e))
 }
 
 pub fn get_all_settings() -> Vec<(String, String)> {

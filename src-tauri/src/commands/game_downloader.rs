@@ -6,6 +6,7 @@ use crate::downloader::snowbreak;
 use crate::downloader::{
     full_download, hoyoverse_download, incremental, snowbreak_download, verifier,
 };
+use crate::process_monitor;
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -230,6 +231,12 @@ pub async fn download_launcher_installer(
 ) -> Result<LauncherInstallerDownloadResult, String> {
     let cancel_token = get_cancel_token(&game_folder);
     let game_path = PathBuf::from(&game_folder);
+    let region_scope = process_monitor::derive_region_scope(Some(&launcher_api), None, None);
+    let _write_guard = process_monitor::acquire_game_write_guard(
+        &game_path,
+        &region_scope,
+        "download_launcher_installer",
+    )?;
     let canonical_preset = crate::configs::game_identity::to_canonical_or_keep(&game_preset);
     let result = download_launcher_installer_internal(
         app,
@@ -267,6 +274,10 @@ pub async fn download_game(
     let snowbreak_policy = get_snowbreak_policy(&settings);
 
     let game_path = PathBuf::from(&game_folder);
+    let region_scope =
+        process_monitor::derive_region_scope(Some(&launcher_api), biz_prefix.as_deref(), None);
+    let _write_guard =
+        process_monitor::acquire_game_write_guard(&game_path, &region_scope, "download_game")?;
     std::fs::create_dir_all(&game_path)
         .map_err(|e| format!("Failed to create game folder: {}", e))?;
 
@@ -343,6 +354,10 @@ pub async fn update_game(
     let snowbreak_policy = get_snowbreak_policy(&settings);
 
     let game_path = PathBuf::from(&game_folder);
+    let region_scope =
+        process_monitor::derive_region_scope(Some(&launcher_api), biz_prefix.as_deref(), None);
+    let _write_guard =
+        process_monitor::acquire_game_write_guard(&game_path, &region_scope, "update_game")?;
     let langs = languages.unwrap_or_default();
 
     let result = async {
@@ -415,6 +430,12 @@ pub async fn update_game_patch(
     let cancel_token = get_cancel_token(&game_folder);
 
     let game_path = PathBuf::from(&game_folder);
+    let region_scope = process_monitor::derive_region_scope(Some(&launcher_api), None, None);
+    let _write_guard = process_monitor::acquire_game_write_guard(
+        &game_path,
+        &region_scope,
+        "update_game_patch",
+    )?;
     let local_version = get_local_version_internal(&game_path)
         .ok_or("No local version found, cannot do incremental update")?;
 
@@ -450,6 +471,10 @@ pub async fn verify_game_files(
     let snowbreak_policy = get_snowbreak_policy(&settings);
 
     let game_path = PathBuf::from(&game_folder);
+    let region_scope =
+        process_monitor::derive_region_scope(Some(&launcher_api), biz_prefix.as_deref(), None);
+    let _write_guard =
+        process_monitor::acquire_game_write_guard(&game_path, &region_scope, "verify_game_files")?;
 
     let result = async {
         // Snowbreak 分支

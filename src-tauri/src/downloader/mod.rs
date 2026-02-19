@@ -7,4 +7,5 @@ pub mod incremental;
 pub mod progress;
 pub mod snowbreak;
 pub mod snowbreak_download;
+pub mod staging;
 pub mod verifier;

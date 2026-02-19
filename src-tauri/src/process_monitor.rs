@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -14,6 +15,7 @@ pub struct GameProcess {
 lazy_static::lazy_static! {
     static ref RUNNING_GAMES: Arc<Mutex<HashMap<String, GameProcess>>> = Arc::new(Mutex::new(HashMap::new()));
     static ref LAUNCHING_GAMES: std::sync::Mutex<HashSet<String>> = std::sync::Mutex::new(HashSet::new());
+    static ref GAME_WRITE_SCOPES: std::sync::Mutex<HashSet<String>> = std::sync::Mutex::new(HashSet::new());
 }
 
 #[derive(Debug)]
@@ -30,6 +32,20 @@ impl Drop for LaunchGuard {
     }
 }
 
+#[derive(Debug)]
+pub struct GameWriteGuard {
+    scope_key: String,
+}
+
+impl Drop for GameWriteGuard {
+    fn drop(&mut self) {
+        if let Ok(mut scopes) = GAME_WRITE_SCOPES.lock() {
+            scopes.remove(&self.scope_key);
+            info!("已释放游戏写操作锁: {}", self.scope_key);
+        }
+    }
+}
+
 pub fn acquire_launch_guard(game_name: &str) -> Result<LaunchGuard, String> {
     let mut launching = LAUNCHING_GAMES
         .lock()
@@ -42,6 +58,139 @@ pub fn acquire_launch_guard(game_name: &str) -> Result<LaunchGuard, String> {
     Ok(LaunchGuard {
         game_name: game_name.to_string(),
     })
+}
+
+pub fn acquire_game_write_guard(
+    game_root: &Path,
+    region: &str,
+    operation: &str,
+) -> Result<GameWriteGuard, String> {
+    let scope_key = make_game_write_scope_key(game_root, region);
+    let mut scopes = GAME_WRITE_SCOPES
+        .lock()
+        .map_err(|_| "获取游戏写操作锁失败".to_string())?;
+
+    if scopes.contains(&scope_key) {
+        return Err(format!(
+            "当前目录与区服已有写操作进行中，请稍后重试（scope: {}）",
+            scope_key
+        ));
+    }
+
+    scopes.insert(scope_key.clone());
+    info!("已加锁游戏写操作: op={}, scope={}", operation, scope_key);
+    Ok(GameWriteGuard { scope_key })
+}
+
+pub fn make_game_write_scope_key(game_root: &Path, region: &str) -> String {
+    let normalized_root = std::fs::canonicalize(game_root)
+        .unwrap_or_else(|_| game_root.to_path_buf())
+        .to_string_lossy()
+        .to_string();
+    let normalized_region = region.trim().to_ascii_lowercase();
+    let region_key = if normalized_region.is_empty() {
+        "default"
+    } else {
+        normalized_region.as_str()
+    };
+    format!("{}::{}", normalized_root, region_key)
+}
+
+/// 统一生成“游戏写锁 region scope”：
+/// - 优先使用 biz_prefix（HoYoverse 等同 API 多区服场景）
+/// - 其次使用 launcher_api（内置 CN/Global 推导，未知 API 走稳定 hash）
+/// - 最后回退到 region_hint / default
+pub fn derive_region_scope(
+    launcher_api: Option<&str>,
+    biz_prefix: Option<&str>,
+    region_hint: Option<&str>,
+) -> String {
+    if let Some(biz) = biz_prefix
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_ascii_lowercase())
+    {
+        return biz;
+    }
+
+    if let Some(api_raw) = launcher_api.map(str::trim).filter(|v| !v.is_empty()) {
+        let api = api_raw.to_ascii_lowercase();
+        if api.contains("mihoyo.com")
+            || api.contains("hypergryph.com")
+            || api.contains("prod-cn-")
+            || api.contains("channel=1")
+            || api.contains("sub_channel=1")
+        {
+            return "cn".to_string();
+        }
+        if api.contains("hoyoverse.com")
+            || api.contains("gryphline.com")
+            || api.contains("prod-alicdn-")
+            || api.contains("channel=6")
+            || api.contains("sub_channel=6")
+        {
+            return "global".to_string();
+        }
+        if api.starts_with("snowbreak://") {
+            return "global".to_string();
+        }
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        api.hash(&mut hasher);
+        return format!("source_{:x}", hasher.finish());
+    }
+
+    if let Some(region) = region_hint
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_ascii_lowercase())
+    {
+        return region;
+    }
+
+    "default".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::derive_region_scope;
+
+    #[test]
+    fn derive_region_scope_prefers_biz_prefix() {
+        let scope = derive_region_scope(
+            Some("https://launcher.hoyoverse.com/game"),
+            Some("hkrpg_global"),
+            Some("cn"),
+        );
+        assert_eq!(scope, "hkrpg_global");
+    }
+
+    #[test]
+    fn derive_region_scope_maps_cn_and_global_launcher_api() {
+        let cn = derive_region_scope(
+            Some(
+                "https://launcher.hypergryph.com/api/launcher/get_latest_launcher?channel=1&sub_channel=1",
+            ),
+            None,
+            None,
+        );
+        assert_eq!(cn, "cn");
+
+        let global = derive_region_scope(
+            Some(
+                "https://launcher.gryphline.com/api/launcher/get_latest_launcher?channel=6&sub_channel=6",
+            ),
+            None,
+            None,
+        );
+        assert_eq!(global, "global");
+    }
+
+    #[test]
+    fn derive_region_scope_falls_back_to_region_hint_when_api_missing() {
+        let scope = derive_region_scope(None, None, Some("Global"));
+        assert_eq!(scope, "global");
+    }
 }
 
 pub async fn is_game_running(game_name: &str) -> bool {

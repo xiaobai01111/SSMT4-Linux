@@ -30,14 +30,6 @@ src-tauri/target/release/bundle/
 
 # Exclude build and untracked wiki/installation package
 Installation package/
-<<<<<<< HEAD
 
 wiki/
 
-=======
-scripts/build-install-packages.sh
-wiki/
-
-
-ProtonPlus/
->>>>>>> d458e2327e8b8895ae6f9c250c450772d6a0d6b1

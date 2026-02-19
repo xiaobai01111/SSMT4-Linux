@@ -49,6 +49,8 @@ pub struct GameLatest {
 pub struct Segment {
     pub url: String,
     pub md5: String,
+    #[serde(default)]
+    pub sha256: String,
     pub size: String,
     pub decompressed_size: String,
 }
@@ -58,6 +60,8 @@ pub struct AudioPkg {
     pub language: String,
     pub url: String,
     pub md5: String,
+    #[serde(default)]
+    pub sha256: String,
     pub size: String,
     pub decompressed_size: String,
 }
@@ -84,6 +88,8 @@ pub struct PredownloadInfo {
 pub struct ResourceEntry {
     pub remote_name: String,
     pub md5: String,
+    #[serde(default)]
+    pub sha256: String,
     pub file_size: u64,
 }
 

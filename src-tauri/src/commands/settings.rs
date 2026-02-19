@@ -39,7 +39,7 @@ pub fn save_settings(
     normalize_settings(&mut settings);
 
     // 写入 SQLite
-    settings_to_kv(&settings);
+    settings_to_kv(&settings)?;
 
     // 同步全局 dataDir
     apply_data_dir(&settings);
@@ -150,64 +150,89 @@ fn migrate_json_to_db() -> Result<AppConfig, String> {
     };
 
     normalize_settings(&mut cfg);
-    settings_to_kv(&cfg);
+    settings_to_kv(&cfg)?;
     Ok(cfg)
 }
 
 /// AppConfig → SQLite KV 写入
-fn settings_to_kv(cfg: &AppConfig) {
-    db::set_setting("bg_type", &cfg.bg_type);
-    // 向后兼容旧键名
-    db::set_setting("background_type", &cfg.bg_type);
+fn settings_to_kv(cfg: &AppConfig) -> Result<(), String> {
+    let mut entries: Vec<(String, String)> = Vec::new();
 
-    db::set_setting("bg_image", &cfg.bg_image);
-    db::set_setting("bg_video", &cfg.bg_video);
-    db::set_setting("content_opacity", &cfg.content_opacity.to_string());
-    db::set_setting("content_blur", &cfg.content_blur.to_string());
-    db::set_setting("cache_dir", &cfg.cache_dir);
-    db::set_setting("current_config_name", &cfg.current_config_name);
-    db::set_setting("github_token", &cfg.github_token);
-    db::set_setting(
-        "show_websites",
-        if cfg.show_websites { "true" } else { "false" },
-    );
-    db::set_setting(
-        "show_documents",
-        if cfg.show_documents { "true" } else { "false" },
-    );
-    db::set_setting("locale", &cfg.locale);
+    entries.push(("bg_type".to_string(), cfg.bg_type.clone()));
     // 向后兼容旧键名
-    db::set_setting("language", &cfg.locale);
+    entries.push(("background_type".to_string(), cfg.bg_type.clone()));
 
-    db::set_setting("window_width", &cfg.window_width.to_string());
-    db::set_setting("window_height", &cfg.window_height.to_string());
-    db::set_setting(
-        "window_x",
-        &cfg.window_x.map(|v| v.to_string()).unwrap_or_default(),
-    );
-    db::set_setting(
-        "window_y",
-        &cfg.window_y.map(|v| v.to_string()).unwrap_or_default(),
-    );
-    db::set_setting("theme", &cfg.theme);
-    db::set_setting(
-        "custom_search_paths",
-        &serde_json::to_string(&cfg.custom_search_paths).unwrap_or_default(),
-    );
-    db::set_setting("data_dir", &cfg.data_dir);
-    db::set_setting(
-        "initialized",
-        if cfg.initialized { "true" } else { "false" },
-    );
-    db::set_setting(
-        "tos_risk_acknowledged",
-        if cfg.tos_risk_acknowledged {
-            "true"
+    entries.push(("bg_image".to_string(), cfg.bg_image.clone()));
+    entries.push(("bg_video".to_string(), cfg.bg_video.clone()));
+    entries.push((
+        "content_opacity".to_string(),
+        cfg.content_opacity.to_string(),
+    ));
+    entries.push(("content_blur".to_string(), cfg.content_blur.to_string()));
+    entries.push(("cache_dir".to_string(), cfg.cache_dir.clone()));
+    entries.push((
+        "current_config_name".to_string(),
+        cfg.current_config_name.clone(),
+    ));
+    entries.push(("github_token".to_string(), cfg.github_token.clone()));
+    entries.push((
+        "show_websites".to_string(),
+        if cfg.show_websites {
+            "true".to_string()
         } else {
-            "false"
+            "false".to_string()
         },
-    );
-    db::set_setting("snowbreak_source_policy", &cfg.snowbreak_source_policy);
+    ));
+    entries.push((
+        "show_documents".to_string(),
+        if cfg.show_documents {
+            "true".to_string()
+        } else {
+            "false".to_string()
+        },
+    ));
+    entries.push(("locale".to_string(), cfg.locale.clone()));
+    // 向后兼容旧键名
+    entries.push(("language".to_string(), cfg.locale.clone()));
+
+    entries.push(("window_width".to_string(), cfg.window_width.to_string()));
+    entries.push(("window_height".to_string(), cfg.window_height.to_string()));
+    entries.push((
+        "window_x".to_string(),
+        cfg.window_x.map(|v| v.to_string()).unwrap_or_default(),
+    ));
+    entries.push((
+        "window_y".to_string(),
+        cfg.window_y.map(|v| v.to_string()).unwrap_or_default(),
+    ));
+    entries.push(("theme".to_string(), cfg.theme.clone()));
+    entries.push((
+        "custom_search_paths".to_string(),
+        serde_json::to_string(&cfg.custom_search_paths).unwrap_or_default(),
+    ));
+    entries.push(("data_dir".to_string(), cfg.data_dir.clone()));
+    entries.push((
+        "initialized".to_string(),
+        if cfg.initialized {
+            "true".to_string()
+        } else {
+            "false".to_string()
+        },
+    ));
+    entries.push((
+        "tos_risk_acknowledged".to_string(),
+        if cfg.tos_risk_acknowledged {
+            "true".to_string()
+        } else {
+            "false".to_string()
+        },
+    ));
+    entries.push((
+        "snowbreak_source_policy".to_string(),
+        cfg.snowbreak_source_policy.clone(),
+    ));
+
+    db::set_settings_batch(&entries)
 }
 
 /// SQLite KV → AppConfig 读取

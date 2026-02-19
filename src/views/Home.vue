@@ -7,10 +7,9 @@ import {
   askConfirm,
   setGameVisibility,
   loadGameConfig,
-  startGame as apiStartGame,
+  launchGame as apiLaunchGame,
   checkGameProtectionStatus,
   listenEvent,
-  getGameWineConfig,
 } from '../api'
 import GameSettingsModal from '../components/GameSettingsModal.vue'
 import GameDownloadModal from '../components/GameDownloadModal.vue'
@@ -236,14 +235,6 @@ const launchGame = async () => {
       }
 
       const gameExePath = data.other?.gamePath || '';
-      // wineVersionId 优先从 wine config 读取，回退到 config.other
-      let wineVersionId = data.other?.wineVersionId || '';
-      if (!wineVersionId) {
-        try {
-          const wineConfig = await getGameWineConfig(gameName);
-          wineVersionId = wineConfig.wine_version_id || '';
-        } catch { /* ignore */ }
-      }
       
       if (!gameExePath) {
         await showMessage('请先在游戏设置中配置游戏可执行文件路径', { title: '提示', kind: 'info' });
@@ -251,13 +242,7 @@ const launchGame = async () => {
         return;
       }
 
-      if (!wineVersionId) {
-        await showMessage('请先在游戏设置中选择 Wine/Proton 版本', { title: '提示', kind: 'info' });
-        isLaunching.value = false;
-        return;
-      }
-
-      await apiStartGame(gameName, gameExePath, wineVersionId);
+      await apiLaunchGame(gameName);
       // 启动成功后，等待 game-lifecycle 事件来更新状态
       // 不在这里重置 isLaunching，由事件处理器负责
       

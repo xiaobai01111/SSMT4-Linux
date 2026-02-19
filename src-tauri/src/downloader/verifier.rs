@@ -159,7 +159,7 @@ pub async fn verify_game_files(
     let semaphore = Arc::new(Semaphore::new(4));
     let client = Arc::new(Client::new());
 
-    // ---- 第二阶段：并发 MD5 校验 ----
+    // ---- 第二阶段：并发哈希校验（优先 SHA256，回退 MD5） ----
     let mut hash_tasks = Vec::new();
 
     for (_idx, file) in need_hash {
@@ -170,6 +170,7 @@ pub async fn verify_game_files(
         let sem = semaphore.clone();
         let file_dest = file.dest.clone();
         let file_md5 = file.md5.clone();
+        let file_sha256 = file.sha256.clone().unwrap_or_default();
         let file_size = file.size;
         let file_path = match safe_join(game_folder, &file.dest) {
             Ok(p) => p,
@@ -202,19 +203,48 @@ pub async fn verify_game_files(
                 return;
             }
 
-            let current_md5 = md5_with_cache(&file_path, file_size).await;
+            let hash_match = if !file_sha256.trim().is_empty() {
+                match hash_verify::verify_file_integrity(
+                    &file_path,
+                    file_size,
+                    Some(&file_sha256),
+                    None,
+                )
+                .await
+                {
+                    Ok(_) => true,
+                    Err(err) => {
+                        warn!("{} SHA256 校验失败: {}", file_dest, err);
+                        false
+                    }
+                }
+            } else {
+                let current_md5 = md5_with_cache(&file_path, file_size).await;
+                if current_md5 == file_md5 {
+                    true
+                } else {
+                    warn!(
+                        "{} MD5 mismatch (expected: {}, got: {})",
+                        file_dest, file_md5, current_md5
+                    );
+                    false
+                }
+            };
 
-            if current_md5 == file_md5 {
+            if hash_match {
                 verified_ok_c.fetch_add(1, Ordering::Relaxed);
             } else {
-                warn!(
-                    "{} MD5 mismatch (expected: {}, got: {})",
-                    file_dest, file_md5, current_md5
-                );
                 // 重下
                 let url = build_resource_url(&launcher_info_cdn, &launcher_info_base, &file_dest);
-                match redownload_and_verify(&client_c, &url, &file_path, &file_md5, file_size).await
-                {
+                match redownload_and_verify(
+                    &client_c,
+                    &url,
+                    &file_path,
+                    file_sha256.as_str(),
+                    file_md5.as_str(),
+                    file_size,
+                )
+                .await {
                     true => {
                         redownloaded_c.fetch_add(1, Ordering::Relaxed);
                     }
@@ -259,6 +289,7 @@ pub async fn verify_game_files(
         let sem = semaphore.clone();
         let file_dest = file.dest.clone();
         let file_md5 = file.md5.clone();
+        let file_sha256 = file.sha256.clone().unwrap_or_default();
         let file_size = file.size;
         let file_path = match safe_join(game_folder, &file.dest) {
             Ok(p) => p,
@@ -291,7 +322,15 @@ pub async fn verify_game_files(
             }
 
             let url = build_resource_url(&launcher_info_cdn, &launcher_info_base, &file_dest);
-            match redownload_and_verify(&client_c, &url, &file_path, &file_md5, file_size).await {
+            match redownload_and_verify(
+                &client_c,
+                &url,
+                &file_path,
+                file_sha256.as_str(),
+                file_md5.as_str(),
+                file_size,
+            )
+            .await {
                 true => {
                     redownloaded_c.fetch_add(1, Ordering::Relaxed);
                 }
@@ -357,11 +396,12 @@ pub async fn verify_game_files(
     })
 }
 
-/// 重下文件并校验 MD5
+/// 重下文件并校验完整性（size + SHA256/MD5）
 async fn redownload_and_verify(
     client: &Client,
     url: &str,
     file_path: &Path,
+    expected_sha256: &str,
     expected_md5: &str,
     file_size: u64,
 ) -> bool {
@@ -370,20 +410,35 @@ async fn redownload_and_verify(
         return false;
     }
 
-    let new_md5 = hash_verify::md5_file(file_path).await.unwrap_or_default();
-    if new_md5 == expected_md5 {
-        // 更新缓存
-        let path_str = file_path.to_string_lossy().to_string();
-        let mtime = get_mtime_sec(file_path);
-        db::set_cached_md5(&path_str, file_size as i64, mtime, &new_md5);
-        info!("{} MD5 OK after re-download", file_path.display());
-        true
-    } else {
-        error!(
-            "{} still MD5 mismatch after re-download",
-            file_path.display()
-        );
-        false
+    let verify = hash_verify::verify_file_integrity(
+        file_path,
+        file_size,
+        Some(expected_sha256),
+        Some(expected_md5),
+    )
+    .await;
+    match verify {
+        Ok(crate::utils::hash_verify::VerifiedHashAlgo::Md5) => {
+            let path_str = file_path.to_string_lossy().to_string();
+            let mtime = get_mtime_sec(file_path);
+            if !expected_md5.trim().is_empty() {
+                db::set_cached_md5(&path_str, file_size as i64, mtime, expected_md5);
+            }
+            info!("{} MD5 OK after re-download", file_path.display());
+            true
+        }
+        Ok(crate::utils::hash_verify::VerifiedHashAlgo::Sha256) => {
+            info!("{} SHA256 OK after re-download", file_path.display());
+            true
+        }
+        Err(err) => {
+            error!(
+                "{} still checksum mismatch after re-download: {}",
+                file_path.display(),
+                err
+            );
+            false
+        }
     }
 }
 
