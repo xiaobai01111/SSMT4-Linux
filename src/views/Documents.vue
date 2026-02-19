@@ -1,14 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 
-import homeMd from '../../wiki/Home.md?raw';
-import riskMd from '../../wiki/01-项目风险与要求.md?raw';
-import downloadMd from '../../wiki/02-游戏下载与主程序配置.md?raw';
-import protonMd from '../../wiki/03-Proton-下载管理与使用.md?raw';
-import dxvkMd from '../../wiki/04-DXVK-下载管理与使用.md?raw';
-import protectionMd from '../../wiki/05-防护与防封禁管理.md?raw';
-import knownIssuesMd from '../../wiki/06-已知问题与不足.md?raw';
-
 type DocItem = {
   id: string;
   title: string;
@@ -18,14 +10,32 @@ type DocItem = {
 
 const wikiUrl = 'https://github.com/xiaobai01111/SSMT4-Linux/wiki';
 
+const wikiModules: Record<string, string> = {};
+
+const fallbackDocContent = (title: string, file: string): string => [
+  `# ${title}`,
+  '',
+  '本地 Wiki 文档未包含在当前打包目录中。',
+  '',
+  `- 文档文件：\`${file}\``,
+  `- 在线 Wiki：${wikiUrl}`,
+  '',
+  '可在联网环境中点击“打开 GitHub Wiki”查看最新内容。',
+].join('\n');
+
+const loadDocContent = (file: string, title: string): string => {
+  const moduleEntry = Object.entries(wikiModules).find(([path]) => path.endsWith(`/${file}?raw`));
+  return moduleEntry?.[1] ?? fallbackDocContent(title, file);
+};
+
 const docs: DocItem[] = [
-  { id: 'home', title: 'Home', file: 'Home.md', content: homeMd },
-  { id: 'risk', title: '项目风险与要求', file: '01-项目风险与要求.md', content: riskMd },
-  { id: 'download', title: '游戏下载与主程序配置', file: '02-游戏下载与主程序配置.md', content: downloadMd },
-  { id: 'proton', title: 'Proton 下载、管理与使用', file: '03-Proton-下载管理与使用.md', content: protonMd },
-  { id: 'dxvk', title: 'DXVK 下载、管理与使用', file: '04-DXVK-下载管理与使用.md', content: dxvkMd },
-  { id: 'protection', title: '防护与防封禁管理', file: '05-防护与防封禁管理.md', content: protectionMd },
-  { id: 'known', title: '已知问题与不足', file: '06-已知问题与不足.md', content: knownIssuesMd },
+  { id: 'home', title: 'Home', file: 'Home.md', content: loadDocContent('Home.md', 'Home') },
+  { id: 'risk', title: '项目风险与要求', file: '01-项目风险与要求.md', content: loadDocContent('01-项目风险与要求.md', '项目风险与要求') },
+  { id: 'download', title: '游戏下载与主程序配置', file: '02-游戏下载与主程序配置.md', content: loadDocContent('02-游戏下载与主程序配置.md', '游戏下载与主程序配置') },
+  { id: 'proton', title: 'Proton 下载、管理与使用', file: '03-Proton-下载管理与使用.md', content: loadDocContent('03-Proton-下载管理与使用.md', 'Proton 下载、管理与使用') },
+  { id: 'dxvk', title: 'DXVK 下载、管理与使用', file: '04-DXVK-下载管理与使用.md', content: loadDocContent('04-DXVK-下载管理与使用.md', 'DXVK 下载、管理与使用') },
+  { id: 'protection', title: '防护与防封禁管理', file: '05-防护与防封禁管理.md', content: loadDocContent('05-防护与防封禁管理.md', '防护与防封禁管理') },
+  { id: 'known', title: '已知问题与不足', file: '06-已知问题与不足.md', content: loadDocContent('06-已知问题与不足.md', '已知问题与不足') },
 ];
 
 const activeDocId = ref('home');
