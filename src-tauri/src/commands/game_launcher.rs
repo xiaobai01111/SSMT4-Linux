@@ -152,8 +152,9 @@ pub async fn start_game(
     let prefix_config = match prefix::load_prefix_config(&game_name) {
         Ok(cfg) => {
             info!(
-                "已加载 prefix 配置: steam_deck_compat={}, use_umu_run={}, custom_env={:?}, use_pressure_vessel={}",
+                "已加载 prefix 配置: steam_deck_compat={}, steamos_compat={}, use_umu_run={}, custom_env={:?}, use_pressure_vessel={}",
                 cfg.proton_settings.steam_deck_compat,
+                cfg.proton_settings.steamos_compat,
                 cfg.proton_settings.use_umu_run,
                 cfg.proton_settings.custom_env,
                 cfg.proton_settings.use_pressure_vessel,
@@ -266,6 +267,11 @@ pub async fn start_game(
         env.insert("steamdeck".to_string(), "1".to_string());
         env.insert("STEAM_DECK".to_string(), "1".to_string());
         env.insert("STEAMDECK".to_string(), "1".to_string());
+    }
+    if settings.steamos_compat {
+        env.insert("SteamOS".to_string(), "1".to_string());
+        env.insert("STEAMOS".to_string(), "1".to_string());
+        env.insert("steamos".to_string(), "1".to_string());
     }
 
     apply_preset_env_defaults(preset_meta, &mut env);

@@ -9,7 +9,9 @@
 import { reactive } from 'vue';
 import {
   downloadGame as apiDownloadGame,
+  downloadLauncherInstaller as apiDownloadLauncherInstaller,
   updateGame as apiUpdateGame,
+  updateLauncherInstaller as apiUpdateLauncherInstaller,
   verifyGameFiles as apiVerifyGameFiles,
   cancelDownload as apiCancelDownload,
   listenEvent,
@@ -209,6 +211,70 @@ async function _execVerify(opts: VerifyOpts) {
     } else {
       dlState.phase = 'error';
       dlState.error = String(e);
+    }
+    dlState.active = false;
+  }
+}
+
+// ---- Launcher installer (Endfield) ----
+
+export interface StartLauncherInstallerDlOpts {
+  gameName: string;
+  gamePreset: string;
+  displayName: string;
+  launcherApi: string;
+  gameFolder: string;
+  isUpdate: boolean;
+}
+
+export function fireLauncherInstallerDownload(opts: StartLauncherInstallerDlOpts) {
+  if (dlState.active) return;
+
+  dlState.active = true;
+  dlState.gameName = opts.gameName;
+  dlState.gameFolder = opts.gameFolder;
+  dlState.displayName = opts.displayName;
+  dlState.phase = 'downloading';
+  dlState.progress = null;
+  dlState.error = '';
+
+  _execLauncherInstallerDownload(opts).catch((e) => console.error('[dlStore] uncaught launcher installer:', e));
+}
+
+async function _execLauncherInstallerDownload(opts: StartLauncherInstallerDlOpts) {
+  try {
+    const result = opts.isUpdate
+      ? await apiUpdateLauncherInstaller(opts.launcherApi, opts.gameFolder, opts.gamePreset)
+      : await apiDownloadLauncherInstaller(opts.launcherApi, opts.gameFolder, opts.gamePreset);
+
+    try {
+      const config = await loadGameConfig(opts.gameName);
+      config.other = config.other || {};
+      config.other.launcherApi = opts.launcherApi;
+      config.other.gameFolder = opts.gameFolder;
+      config.other.gamePath = result.installerPath;
+      config.other.launcherInstallerVersion = result.version;
+      config.other.launcherInstallerPath = result.installerPath;
+      await saveGameConfig(opts.gameName, config);
+    } catch { /* best-effort */ }
+
+    await showMessage(
+      `官方启动器安装器下载完成：${result.version}\n已自动将 gamePath 指向安装器，可在游戏设置中改为实际游戏主程序。`,
+      { title: '下载完成', kind: 'info' },
+    );
+
+    dlState.phase = 'done';
+    dlState.active = false;
+  } catch (e: any) {
+    if (String(e).includes('cancelled')) {
+      dlState.phase = 'idle';
+    } else {
+      dlState.phase = 'error';
+      dlState.error = String(e);
+      await showMessage(
+        `下载启动器失败: ${String(e)}`,
+        { title: '下载错误', kind: 'error' },
+      ).catch(() => {});
     }
     dlState.active = false;
   }

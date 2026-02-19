@@ -95,38 +95,76 @@ fn expected_channel_value(config: &game_presets::ChannelProtectionConfig, mode: 
     }
 }
 
-fn normalize_game_root(game_path: Option<&str>) -> Option<PathBuf> {
+fn normalize_game_root(game_preset: &str, game_path: Option<&str>) -> Option<PathBuf> {
     let raw = game_path?.trim();
     if raw.is_empty() {
         return None;
     }
 
     let path = PathBuf::from(raw);
-    if path.is_file() {
-        return path.parent().map(|p| p.to_path_buf());
-    }
+    let mut candidate = if path.is_file() {
+        path.parent().map(|p| p.to_path_buf())
+    } else if path.extension().is_some() {
+        path.parent().map(|p| p.to_path_buf())
+    } else {
+        Some(path)
+    }?;
 
-    if path.extension().is_some() {
-        if let Some(parent) = path.parent() {
-            return Some(parent.to_path_buf());
+    if let Some(default_folder) = game_presets::get_preset(game_preset)
+        .map(|p| p.default_folder.trim())
+        .filter(|v| !v.is_empty())
+    {
+        if let Some(inferred) = infer_game_root_with_default_folder(&candidate, default_folder) {
+            candidate = inferred;
         }
     }
 
-    Some(path)
+    Some(candidate)
+}
+
+fn infer_game_root_with_default_folder(candidate: &Path, default_folder: &str) -> Option<PathBuf> {
+    let target = default_folder
+        .split(['/', '\\'])
+        .filter(|seg| !seg.trim().is_empty())
+        .last()?
+        .trim();
+    if target.is_empty() {
+        return None;
+    }
+
+    for ancestor in candidate.ancestors() {
+        let Some(name) = ancestor.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if name.eq_ignore_ascii_case(target) {
+            return Some(ancestor.to_path_buf());
+        }
+    }
+
+    None
 }
 
 fn resolve_game_root_from_saved_config(game_preset: &str) -> Option<PathBuf> {
     let content = db::get_game_config(game_preset)?;
     let data = serde_json::from_str::<serde_json::Value>(&content).ok()?;
-    let candidate = data
+    let folder_candidate = data
         .pointer("/other/gameFolder")
         .and_then(|v| v.as_str())
-        .or_else(|| data.pointer("/other/GameFolder").and_then(|v| v.as_str()))?;
-    normalize_game_root(Some(candidate))
+        .or_else(|| data.pointer("/other/GameFolder").and_then(|v| v.as_str()));
+    if let Some(root) = normalize_game_root(game_preset, folder_candidate) {
+        return Some(root);
+    }
+
+    let path_candidate = data
+        .pointer("/other/gamePath")
+        .and_then(|v| v.as_str())
+        .or_else(|| data.pointer("/other/GamePath").and_then(|v| v.as_str()));
+    normalize_game_root(game_preset, path_candidate)
 }
 
 fn resolve_game_root(game_preset: &str, game_path: Option<&str>) -> Option<PathBuf> {
-    normalize_game_root(game_path).or_else(|| resolve_game_root_from_saved_config(game_preset))
+    normalize_game_root(game_preset, game_path)
+        .or_else(|| resolve_game_root_from_saved_config(game_preset))
 }
 
 fn evaluate_telemetry_protection(game_preset: &str) -> (bool, Vec<String>, Vec<String>) {
@@ -504,7 +542,7 @@ pub fn set_channel_protection_mode(
     game_path: String,
 ) -> Result<serde_json::Value, String> {
     let game_preset = canonical_preset(&game_preset);
-    let game_root = normalize_game_root(Some(&game_path))
+    let game_root = normalize_game_root(&game_preset, Some(&game_path))
         .ok_or_else(|| "缺少游戏目录，无法切换渠道模式".to_string())?;
     let state = set_channel_mode_internal(&game_preset, &game_root, &mode)?;
     Ok(serde_json::json!({
@@ -909,7 +947,7 @@ pub async fn apply_game_protection(
     game_path: String,
 ) -> Result<serde_json::Value, String> {
     let game_preset = canonical_preset(&game_preset);
-    let game_root = normalize_game_root(Some(&game_path))
+    let game_root = normalize_game_root(&game_preset, Some(&game_path))
         .ok_or_else(|| "缺少游戏目录，无法应用防护".to_string())?;
     let mut results = serde_json::Map::new();
 
@@ -1063,5 +1101,26 @@ mod tests {
             normalize_launch_enforcement(None),
             CHANNEL_ENFORCEMENT_BLOCK
         );
+    }
+
+    #[test]
+    fn infer_root_with_default_folder_from_nested_exe_dir() {
+        let candidate = PathBuf::from(
+            "/home/user/Games/WutheringWaves/Wuthering Waves Game/Client/Binaries/Win64",
+        );
+        let inferred = infer_game_root_with_default_folder(&candidate, "Wuthering Waves Game");
+        assert_eq!(
+            inferred,
+            Some(PathBuf::from(
+                "/home/user/Games/WutheringWaves/Wuthering Waves Game"
+            ))
+        );
+    }
+
+    #[test]
+    fn infer_root_with_default_folder_keeps_none_when_unmatched() {
+        let candidate = PathBuf::from("/home/user/Games/StarRail");
+        let inferred = infer_game_root_with_default_folder(&candidate, "Wuthering Waves Game");
+        assert_eq!(inferred, None);
     }
 }

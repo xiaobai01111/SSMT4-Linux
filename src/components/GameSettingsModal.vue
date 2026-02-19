@@ -185,6 +185,7 @@ const protonSettings = reactive<ProtonSettings>({
   proton_no_d3d12: false,
   mangohud: false,
   steam_deck_compat: false,
+  steamos_compat: false,
   sandbox_enabled: false,
   sandbox_isolate_home: false,
   dxvk_hud: '',
@@ -1107,6 +1108,9 @@ defineExpose({
                 </div>
                 <div class="setting-checkbox-row">
                   <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.steam_deck_compat" /> Steam Deck 兼容模式</label>
+                </div>
+                <div class="setting-checkbox-row">
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.steamos_compat" /> SteamOS 兼容模式</label>
                 </div>
               </div>
 

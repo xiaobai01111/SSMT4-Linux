@@ -23,6 +23,16 @@
     {
       "canonicalKey": "SnowbreakContainmentZone",
       "displayNameEn": "Snowbreak: Containment Zone"
+    },
+    {
+      "canonicalKey": "ArknightsEndfield",
+      "displayNameEn": "Arknights: Endfield",
+      "legacyAliases": ["EndField", "Endfield"]
+    },
+    {
+      "canonicalKey": "Arknights",
+      "displayNameEn": "Arknights",
+      "legacyAliases": ["AK"]
     }
   ],
   "presets": [
@@ -229,6 +239,58 @@
           "id": "global",
           "label": "国际服",
           "launcherApi": "snowbreak://manifest",
+          "bizPrefix": ""
+        }
+      ],
+      "audioLanguages": [],
+      "telemetryServers": [],
+      "telemetryDlls": []
+    },
+    {
+      "id": "ArknightsEndfield",
+      "displayNameEn": "Arknights: Endfield",
+      "supported": true,
+      "defaultFolder": "ArknightsEndfield",
+      "downloadMode": "launcher_installer",
+      "defaultUmuRun": false,
+      "forceDirectProton": false,
+      "downloadServers": [
+        {
+          "id": "cn",
+          "label": "国服",
+          "launcherApi": "https://launcher.hypergryph.com/api/launcher/get_latest_launcher?appcode=abYeZZ16BPluCFyT&channel=1&sub_channel=1&ta=endfield",
+          "bizPrefix": ""
+        },
+        {
+          "id": "global",
+          "label": "国际服",
+          "launcherApi": "https://launcher.gryphline.com/api/launcher/get_latest_launcher?appcode=TiaytKBUIEdoEwRT&channel=6&sub_channel=6&ta=endfield",
+          "bizPrefix": ""
+        }
+      ],
+      "audioLanguages": [],
+      "telemetryServers": [],
+      "telemetryDlls": []
+    },
+    {
+      "id": "Arknights",
+      "displayNameEn": "Arknights",
+      "supported": true,
+      "defaultFolder": "Arknights",
+      "downloadMode": "launcher_installer",
+      "defaultUmuRun": false,
+      "forceDirectProton": false,
+      "downloadServers": [
+        {
+          "id": "cn",
+          "label": "国服",
+          "launcherApi": "https://launcher.hypergryph.com/api/launcher/get_latest_launcher?appcode=abYeZZ16BPluCFyT&channel=1&sub_channel=1&ta=arknights",
+          "bizPrefix": ""
+        },
+        {
+          "id": "global",
+          "label": "国际服",
+          "launcherApi": "https://launcher.gryphline.com/api/launcher/get_latest_launcher?appcode=TiaytKBUIEdoEwRT&channel=6&sub_channel=6&ta=official",
           "bizPrefix": ""
         }
       ],

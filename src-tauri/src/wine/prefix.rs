@@ -30,11 +30,38 @@ fn resolve_game_root_from_db(game_id: &str) -> Option<PathBuf> {
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
     {
+        if let Some(root) = infer_game_root_from_game_path(&game_id, &PathBuf::from(game_path)) {
+            return Some(root);
+        }
         if let Some(root) = PathBuf::from(game_path).parent().and_then(|p| p.parent()) {
             return Some(root.to_path_buf());
         }
     }
 
+    None
+}
+
+/// 根据 gamePath + 预设 defaultFolder 推导“配置根目录”
+///
+/// 例如：
+/// gamePath=/.../WutheringWaves/Wuthering Waves Game/Client/Binaries/Win64/xxx.exe
+/// defaultFolder=Wuthering Waves Game
+/// 则返回 /.../WutheringWaves
+fn infer_game_root_from_game_path(game_id: &str, game_path: &Path) -> Option<PathBuf> {
+    let preset = crate::configs::game_presets::get_preset(game_id)?;
+    let target_folder = preset.default_folder.trim();
+    if target_folder.is_empty() {
+        return None;
+    }
+
+    for ancestor in game_path.ancestors() {
+        let Some(name) = ancestor.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if name.eq_ignore_ascii_case(target_folder) {
+            return ancestor.parent().map(|p| p.to_path_buf());
+        }
+    }
     None
 }
 
