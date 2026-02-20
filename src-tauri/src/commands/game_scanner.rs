@@ -278,9 +278,11 @@ fn get_resource_games_dir(app: &tauri::AppHandle) -> Result<Option<PathBuf>, Str
         .path()
         .resource_dir()
         .map_err(|e| format!("Failed to get resource dir: {}", e))?;
-    let prod_path = resource_dir.join("resources").join("Games");
-    if prod_path.exists() {
-        return Ok(Some(prod_path));
+    let prod_paths = [resource_dir.join("Games"), resource_dir.join("resources").join("Games")];
+    for prod_path in prod_paths {
+        if prod_path.exists() {
+            return Ok(Some(prod_path));
+        }
     }
 
     // 开发模式回退

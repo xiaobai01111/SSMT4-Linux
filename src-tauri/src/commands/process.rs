@@ -30,11 +30,19 @@ pub fn run_resource_executable(
         ));
     }
 
-    let resource_path = app
+    let resource_dir = app
         .path()
         .resource_dir()
-        .map_err(|e| format!("Failed to get resource dir: {}", e))?
-        .join(&resource_name);
+        .map_err(|e| format!("Failed to get resource dir: {}", e))?;
+
+    let mut resource_path = resource_dir.join(&resource_name);
+    if !resource_path.exists() {
+        // 兼容 tauri bundle 资源位于 root/resources 的布局。
+        let legacy = resource_dir.join("resources").join(&resource_name);
+        if legacy.exists() {
+            resource_path = legacy;
+        }
+    }
 
     if !resource_path.exists() {
         return Err(format!(

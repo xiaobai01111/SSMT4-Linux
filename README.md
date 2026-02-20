@@ -81,7 +81,7 @@ sudo dpkg -i "Installation package/SSMT4-Linux_*.deb"
 sudo rpm -ivh "Installation package/SSMT4-Linux-*.rpm"
 
 # Arch / Manjaro
-sudo pacman -U "Installation package/ssmt4-bin-*.pkg.tar.zst"
+sudo pacman -U "Installation package/ssmt-linux-bin-*.pkg.tar.zst"
 ```
 
 ### 方式 2：开发环境运行

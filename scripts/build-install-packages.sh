@@ -113,12 +113,20 @@ build_appimage_from_appdir() {
 
 ensure_appdir_root_icon() {
   local appdir="$1"
-  local desktop_file icon_name icon_file candidate
+  local desktop_file desktop_name icon_name icon_file candidate
 
-  desktop_file="$(find "$appdir/usr/share/applications" -maxdepth 1 -type f -name '*.desktop' | head -n 1)"
+  sanitize_appdir_symlinks "$appdir"
+
+  desktop_file="$(find "$appdir/usr/share/applications" -maxdepth 1 -type f -name 'SSMT4-Linux.desktop' | head -n 1)"
+  if [[ -z "$desktop_file" ]]; then
+    desktop_file="$(find "$appdir/usr/share/applications" -maxdepth 1 -type f -name '*.desktop' | head -n 1)"
+  fi
   if [[ -z "$desktop_file" ]]; then
     return 0
   fi
+
+  desktop_name="$(basename "$desktop_file")"
+  ln -sfn "usr/share/applications/$desktop_name" "$appdir/$desktop_name"
 
   icon_name="$(awk -F= '/^Icon=/{print $2; exit}' "$desktop_file" | tr -d '\r')"
   if [[ -z "$icon_name" ]]; then
@@ -127,6 +135,9 @@ ensure_appdir_root_icon() {
 
   for ext in png svg xpm; do
     if [[ -f "$appdir/$icon_name.$ext" ]]; then
+      if [[ "$ext" == "png" ]]; then
+        ln -sfn "$icon_name.png" "$appdir/.DirIcon"
+      fi
       return 0
     fi
   done
@@ -141,11 +152,33 @@ ensure_appdir_root_icon() {
     "$appdir/usr/share/icons/hicolor/32x32/apps/$icon_name.png"; do
     if [[ -f "$candidate" ]]; then
       cp -f "$candidate" "$icon_file"
+      ln -sfn "$icon_name.png" "$appdir/.DirIcon"
       return 0
     fi
   done
 
   return 0
+}
+
+sanitize_appdir_symlinks() {
+  local appdir="$1"
+  local link target rel
+
+  while IFS= read -r -d '' link; do
+    target="$(readlink "$link" || true)"
+    if [[ -z "$target" ]]; then
+      continue
+    fi
+    if [[ "$target" == "$appdir/"* ]]; then
+      rel="$(realpath --relative-to="$(dirname "$link")" "$target" 2>/dev/null || true)"
+      if [[ -z "$rel" ]]; then
+        rel="${target#$appdir/}"
+      fi
+      if [[ -n "$rel" ]]; then
+        ln -sfn "$rel" "$link"
+      fi
+    fi
+  done < <(find "$appdir" -type l -print0 2>/dev/null)
 }
 
 ensure_linuxdeploy_strip_compat() {
@@ -251,10 +284,13 @@ if [[ "$KEEP_TARGET_BUNDLES" != "1" ]]; then
 fi
 
 APPIMAGE_FILES=()
+TAURI_APPIMAGE_FILES=()
 PORTABLE_FALLBACK_FILES=()
 APPDIR_BUNDLE_ROOT="$BUNDLE_SEARCH_ROOT/release/bundle/appimage"
 
 echo "==> Attempting portable build (.AppImage)"
+# Avoid stale appimage bundle artifacts polluting desktop metadata.
+rm -rf "$APPDIR_BUNDLE_ROOT"
 set +e
 (
   cd "$ROOT_DIR"
@@ -278,7 +314,7 @@ if [[ $APPIMAGE_BUILD_RC -ne 0 ]]; then
 fi
 
 if [[ $APPIMAGE_BUILD_RC -eq 0 ]]; then
-  mapfile -t APPIMAGE_FILES < <(find "$BUNDLE_SEARCH_ROOT" -type f -name "*${VERSION}*.AppImage" 2>/dev/null | sort)
+  mapfile -t TAURI_APPIMAGE_FILES < <(find "$BUNDLE_SEARCH_ROOT" -type f -name "*${VERSION}*.AppImage" 2>/dev/null | sort)
 fi
 
 if [[ ${#APPIMAGE_FILES[@]} -eq 0 ]]; then
@@ -296,6 +332,11 @@ if [[ ${#APPIMAGE_FILES[@]} -eq 0 ]]; then
       fi
     done
   fi
+fi
+
+if [[ ${#APPIMAGE_FILES[@]} -eq 0 ]] && [[ ${#TAURI_APPIMAGE_FILES[@]} -gt 0 ]]; then
+  echo "Warning: AppDir repack failed, falling back to Tauri-generated AppImage artifacts." >&2
+  APPIMAGE_FILES=("${TAURI_APPIMAGE_FILES[@]}")
 fi
 
 if [[ ${#APPIMAGE_FILES[@]} -gt 0 ]]; then
@@ -331,7 +372,7 @@ else
 fi
 
 echo "==> Building pacman package via makepkg"
-APP_BINARY="$ROOT_DIR/src-tauri/target/release/SSMT4-linux"
+APP_BINARY="$ROOT_DIR/src-tauri/target/release/SSMT4-Linux"
 if [[ ! -x "$APP_BINARY" ]]; then
   echo "Error: built binary not found: $APP_BINARY" >&2
   exit 1
@@ -346,13 +387,16 @@ trap cleanup EXIT
 ARCH_PKGVER="${VERSION//-/_}"
 
 cat > "$TMP_PKG_DIR/PKGBUILD" <<EOF
-pkgname=ssmt4-bin
+pkgname=ssmt-linux-bin
 pkgver=$ARCH_PKGVER
 pkgrel=1
-pkgdesc="SSMT4 Linux launcher"
+pkgdesc="SSMT4-Linux launcher"
 arch=('x86_64')
 url='https://github.com/xiaobai/ssmt4'
 license=('MIT')
+provides=('ssmt4-bin' 'ssmt-linux' 'ssmt4-linux')
+conflicts=('ssmt4-bin' 'ssmt-linux')
+replaces=('ssmt4-bin')
 options=('!debug')
 depends=('gtk3' 'webkit2gtk-4.1' 'libsoup3' 'xdg-utils')
 optdepends=(
@@ -364,29 +408,39 @@ optdepends=(
 _project_root='$ROOT_DIR'
 
 package() {
-  install -Dm755 "\$_project_root/src-tauri/target/release/SSMT4-linux" "\$pkgdir/usr/bin/SSMT4-linux"
+  install -Dm755 "\$_project_root/src-tauri/target/release/SSMT4-Linux" "\$pkgdir/usr/bin/SSMT4-Linux"
+  ln -sf SSMT4-Linux "\$pkgdir/usr/bin/SSMT4-linux"
+  ln -sf SSMT4-Linux "\$pkgdir/usr/bin/SSMT-Linux"
+  ln -sf SSMT4-Linux "\$pkgdir/usr/bin/SSMT-linux"
+  ln -sf SSMT4-Linux "\$pkgdir/usr/bin/ssmt-linux"
+  ln -sf SSMT4-Linux "\$pkgdir/usr/bin/ssmt4-linux"
 
-  install -dm755 "\$pkgdir/usr/lib/ssmt4/resources"
-  cp -r "\$_project_root/src-tauri/resources/"* "\$pkgdir/usr/lib/ssmt4/resources/"
-  install -Dm644 "\$_project_root/version" "\$pkgdir/usr/lib/ssmt4/resources/version"
-  install -Dm644 "\$_project_root/version-log" "\$pkgdir/usr/lib/ssmt4/resources/version-log"
+  install -dm755 "\$pkgdir/usr/lib/SSMT4-Linux"
+  cp -r "\$_project_root/src-tauri/resources/"* "\$pkgdir/usr/lib/SSMT4-Linux/"
+  install -Dm644 "\$_project_root/version" "\$pkgdir/usr/lib/SSMT4-Linux/version"
+  install -Dm644 "\$_project_root/version-log" "\$pkgdir/usr/lib/SSMT4-Linux/version-log"
+  ln -sfn . "\$pkgdir/usr/lib/SSMT4-Linux/resources"
 
-  install -Dm644 /dev/stdin "\$pkgdir/usr/share/applications/ssmt4.desktop" <<'DESKTOP'
+  # Backward compatibility for older hardcoded lookup paths.
+  install -dm755 "\$pkgdir/usr/lib/ssmt4"
+  ln -sfn ../SSMT4-Linux "\$pkgdir/usr/lib/ssmt4/resources"
+
+  install -Dm644 /dev/stdin "\$pkgdir/usr/share/applications/ssmt4-linux.desktop" <<'DESKTOP'
 [Desktop Entry]
 Categories=Game;
-Comment=SSMT4 Linux Launcher
-Exec=SSMT4-linux
-StartupWMClass=SSMT4-linux
-Icon=SSMT4-linux
-Name=SSMT4
+Comment=SSMT4-Linux Launcher
+Exec=SSMT4-Linux
+StartupWMClass=SSMT4-Linux
+Icon=SSMT4-Linux
+Name=SSMT4-Linux
 Terminal=false
 Type=Application
 DESKTOP
 
   for size in 32x32 128x128; do
-    install -Dm644 "\$_project_root/src-tauri/icons/\${size}.png" "\$pkgdir/usr/share/icons/hicolor/\${size}/apps/SSMT4-linux.png"
+    install -Dm644 "\$_project_root/src-tauri/icons/\${size}.png" "\$pkgdir/usr/share/icons/hicolor/\${size}/apps/SSMT4-Linux.png"
   done
-  install -Dm644 "\$_project_root/src-tauri/icons/128x128@2x.png" "\$pkgdir/usr/share/icons/hicolor/256x256@2/apps/SSMT4-linux.png"
+  install -Dm644 "\$_project_root/src-tauri/icons/128x128@2x.png" "\$pkgdir/usr/share/icons/hicolor/256x256@2/apps/SSMT4-Linux.png"
 }
 EOF
 
@@ -395,7 +449,7 @@ EOF
   makepkg -f --noconfirm --nodeps
 )
 
-find "$TMP_PKG_DIR" -maxdepth 1 -type f -name "ssmt4-bin-${ARCH_PKGVER}-*.pkg.tar.*" -exec cp -f {} "$OUT_DIR/" \;
+find "$TMP_PKG_DIR" -maxdepth 1 -type f -name "ssmt-linux-bin-${ARCH_PKGVER}-*.pkg.tar.*" -exec cp -f {} "$OUT_DIR/" \;
 
 echo "==> Packages ready:"
 find "$OUT_DIR" -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.AppDir*.tar.gz' -o -name '*.pkg.tar.*' \) -print | sort

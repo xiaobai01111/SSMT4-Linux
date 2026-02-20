@@ -1,19 +1,19 @@
-2026-02-19 0.0.2-beta
+2026-02-20 0.0.3-beta
 
 新增
-- 接入 `ArknightsEndfield`（明日方舟：终末地）预设，下载模式为官方启动器安装器（`launcher_installer`）。
-- 接入 `Arknights`（明日方舟）预设，支持官方启动器安装器下载。
-- 明日方舟新增双服务器：国服 / 国际服（可在下载弹窗切换）。
-- 新增 `SteamOS` 独立兼容开关（与 `Steam Deck` 开关分离）。
-- 新增安装器/游戏下载来源元数据（`.launcher_installer_meta.json` / `.download_source_meta.json`）用于服务器隔离判定。
-- 新增便携包产物链路：优先输出 `.AppImage`，失败时自动回退输出 `.AppDir.tar.gz`。
+- 新增终端启动参数：`--verbose`、`--trace`、`--log-level=<level>`、`--diagnose`，便于定位启动失败与依赖缺失问题。
+- 新增启动上下文/依赖诊断日志：自动记录可执行路径、会话环境变量、`wine`/`winetricks`/`umu-run`/`vulkaninfo`/`ldd` 检测结果。
+- 新增命令兼容别名：主命令为 `SSMT4-Linux`，同时兼容 `SSMT4-linux`、`SSMT-Linux`、`SSMT-linux`、`ssmt4-linux`、`ssmt-linux`。
 
 优化
-- 下载弹窗服务器选择逻辑优化：会按已保存 `launcherApi` 自动匹配当前服务器按钮。
-- 预设同步机制优化：数据库启动同步增加受管字段（含 `downloadServers`、`defaultUmuRun`），老库自动对齐新预设。
-- 防护根目录推导优化：无 `gameFolder` 时可结合预设 `defaultFolder` 反推正确游戏根目录。
+- 资源路径解析兼容优化：统一支持 `resource_dir/` 与 `resource_dir/resources/` 双布局，减少不同发行包（deb/rpm/pacman/AppImage）路径差异导致的资源丢失。
+- 游戏模板扫描兼容优化：`Games` 目录读取支持双布局，避免“Scanned 0 games”误判。
+- 版本信息读取兼容优化：`version`/`version-log` 增加 `resources/` 与 `_up_/` 路径候选，提升包内版本展示稳定性。
+- 日志系统健壮性优化：文件日志不可写时自动降级到 `stderr`，避免启动早期 panic。
 
 修改
-- 修复“仅保存 `launcherApi` 覆盖服务器列表”为单服务器的问题，避免国服/国际服选项丢失。
-- 修复安装器状态判定跨服串状态问题：国服与国际服按来源 API 独立判断“已安装/需更新”。
-- 修复 `full_game` 场景跨服共享本地版本问题（如鸣潮）：状态检查改为按来源隔离，不再“一个服已下载，另一个服显示已最新”。
+- 正式统一产品名为 `SSMT4-Linux`（窗口标题、CLI 帮助、打包二进制名、desktop 元数据同步调整）。
+- 修复 pacman 包改名升级冲突：增加 `provides/conflicts/replaces`，支持从旧 `ssmt4-bin` 平滑迁移。
+- 修复 pacman 资源安装路径不匹配问题：资源改为安装到 `/usr/lib/SSMT4-Linux`，并保留旧路径兼容链接。
+- 修复 AppImage 跨机器启动 `segmentation fault` 问题：打包时将 AppDir 内绝对软链接转换为相对链接，强制修正顶层 `.desktop` 与 `.DirIcon`，并清理旧 AppDir 产物防止污染。
+- 更新文档中的 Arch 安装示例包名为 `ssmt-linux-bin-*.pkg.tar.zst`。

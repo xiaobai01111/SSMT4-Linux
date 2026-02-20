@@ -83,7 +83,10 @@ fn resolve_version_file_paths(app: &tauri::AppHandle) -> Vec<PathBuf> {
     }
 
     if let Ok(resource_dir) = app.path().resource_dir() {
-        bases.push(resource_dir);
+        bases.push(resource_dir.clone());
+        // 兼容 tauri bundle 资源布局（resources/ 与 _up_/）
+        bases.push(resource_dir.join("resources"));
+        bases.push(resource_dir.join("_up_"));
     }
 
     if let Ok(exe) = std::env::current_exe() {

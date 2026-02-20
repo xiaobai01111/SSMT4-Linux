@@ -69,4 +69,27 @@ if [[ ! -f "$RUNTIME_FILE" ]]; then
   chmod +x "$RUNTIME_FILE"
 fi
 
+sanitize_appdir_symlinks() {
+  local appdir="$1"
+  local link target rel
+
+  while IFS= read -r -d '' link; do
+    target="$(readlink "$link" || true)"
+    if [[ -z "$target" ]]; then
+      continue
+    fi
+    if [[ "$target" == "$appdir/"* ]]; then
+      rel="$(realpath --relative-to="$(dirname "$link")" "$target" 2>/dev/null || true)"
+      if [[ -z "$rel" ]]; then
+        rel="${target#$appdir/}"
+      fi
+      if [[ -n "$rel" ]]; then
+        ln -sfn "$rel" "$link"
+      fi
+    fi
+  done < <(find "$appdir" -type l -print0 2>/dev/null)
+}
+
+sanitize_appdir_symlinks "$APPDIR"
+
 exec "$APPIMAGETOOL_BIN" --runtime-file "$RUNTIME_FILE" "$APPDIR"

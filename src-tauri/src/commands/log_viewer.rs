@@ -20,7 +20,12 @@ pub async fn read_log_file(max_lines: Option<usize>) -> Result<String, String> {
         .filter(|e| {
             e.path()
                 .file_name()
-                .map(|n| n.to_string_lossy().starts_with("ssmt4.log"))
+                .map(|n| {
+                    let name = n.to_string_lossy();
+                    name.starts_with("ssmt4-linux.log")
+                        || name.starts_with("ssmt-linux.log")
+                        || name.starts_with("ssmt4.log")
+                })
                 .unwrap_or(false)
         })
         .collect();
@@ -64,7 +69,7 @@ pub async fn open_log_window(app: tauri::AppHandle) -> Result<(), String> {
         "log-viewer",
         tauri::WebviewUrl::App("/log-viewer".into()),
     )
-    .title("SSMT4 日志查看器")
+    .title("SSMT4-Linux 日志查看器")
     .inner_size(900.0, 600.0)
     .min_inner_size(600.0, 400.0)
     .center()

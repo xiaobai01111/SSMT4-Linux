@@ -4,20 +4,24 @@ use tauri::Manager;
 
 #[tauri::command]
 pub fn greet(name: &str) -> String {
-    format!("Hello, {}! Welcome to SSMT4 Linux.", name)
+    format!("Hello, {}! Welcome to SSMT4-Linux.", name)
 }
 
 #[tauri::command]
 pub fn get_resource_path(app: tauri::AppHandle, relative: &str) -> Result<String, String> {
-    let resource_path = app
+    let resource_dir = app
         .path()
         .resource_dir()
-        .map_err(|e| format!("Failed to get resource dir: {}", e))?
-        .join(relative);
+        .map_err(|e| format!("Failed to get resource dir: {}", e))?;
+    let resource_path = resource_dir.join(relative);
 
-    // 生产模式下直接返回
+    // 生产模式：优先 root，再兼容 root/resources（tauri bundle 常见布局）
     if resource_path.exists() {
         return Ok(resource_path.to_string_lossy().to_string());
+    }
+    let legacy_resource_path = resource_dir.join("resources").join(relative);
+    if legacy_resource_path.exists() {
+        return Ok(legacy_resource_path.to_string_lossy().to_string());
     }
 
     // 开发模式回退：resource_dir 指向 target/debug，资源实际在 src-tauri/resources/

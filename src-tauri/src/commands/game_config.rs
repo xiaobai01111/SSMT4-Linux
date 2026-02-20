@@ -1080,9 +1080,14 @@ fn get_resource_games_dirs(app: &tauri::AppHandle) -> Result<Vec<PathBuf>, Strin
         .map_err(|e| format!("Failed to get resource dir: {}", e))?;
 
     let mut candidates = Vec::new();
-    let prod = resource_dir.join("resources").join("Games");
-    if prod.exists() {
-        candidates.push(prod);
+    let prod_candidates = [
+        resource_dir.join("Games"),
+        resource_dir.join("resources").join("Games"),
+    ];
+    for prod in prod_candidates {
+        if prod.exists() {
+            candidates.push(prod);
+        }
     }
 
     let dev = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))

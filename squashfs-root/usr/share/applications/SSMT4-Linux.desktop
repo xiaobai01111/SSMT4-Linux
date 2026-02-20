@@ -1,0 +1,9 @@
+[Desktop Entry]
+Categories=
+Comment=SSMT4 - Linux Game Launcher
+Exec=SSMT4-Linux
+StartupWMClass=SSMT4-Linux
+Icon=SSMT4-Linux
+Name=SSMT4-Linux
+Terminal=false
+Type=Application
