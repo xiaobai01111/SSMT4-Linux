@@ -345,18 +345,16 @@ input, textarea {
 /* Page Transition Effects */
 .page-blur-enter-active,
 .page-blur-leave-active {
-  transition: opacity 0.2s ease, filter 0.2s ease, transform 0.2s ease;
+  transition: opacity 0.25s ease, transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .page-blur-enter-from {
   opacity: 0;
-  filter: blur(10px);
-  transform: scale(0.98);
+  transform: translateY(15px);
 }
 
 .page-blur-leave-to {
   opacity: 0;
-  filter: blur(10px);
-  transform: scale(1.02);
+  transform: translateY(-15px);
 }
 </style>

@@ -1,7 +1,7 @@
 {
   "name": "ssmt4",
   "private": true,
-  "version": "0.0.3-beta",
+  "version": "0.0.4-beta",
   "type": "module",
   "scripts": {
     "sync-version": "bash scripts/sync-version.sh",
@@ -20,6 +20,7 @@
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-shell": "^2.3.5",
     "element-plus": "^2.13.2",
+    "puppeteer": "^24.37.5",
     "vue": "^3.5.13",
     "vue-i18n": "^11.2.8",
     "vue-router": "^4.5.1"

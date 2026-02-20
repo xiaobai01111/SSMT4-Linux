@@ -856,7 +856,7 @@ watch(launcherApi, (api) => {
               <label class="install-dir-label">安装目录</label>
               <div class="install-dir-row">
                 <input v-model="gameFolder" type="text" class="dl-input" placeholder="选择游戏安装目录..." />
-                <button class="icon-btn" @click="selectGameFolder" title="选择目录">
+                <button class="dir-btn" @click="selectGameFolder" title="选择目录">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
                     fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
@@ -1012,10 +1012,10 @@ watch(launcherApi, (api) => {
 
           <!-- ========== 手动指定路径 ========== -->
           <div class="section">
-            <div class="section-title" v-if="!isSupported">此游戏暂不支持自动下载</div>
+            <p v-if="!isSupported" class="hint">此游戏暂不支持自动下载。</p>
             <p class="hint">如果游戏已安装（通过 Steam、Lutris 或手动安装），选择可执行文件即可。</p>
-            <button class="action-btn primary" @click="selectGameExe">
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+            <button class="action-btn primary large" @click="selectGameExe">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
               </svg>
@@ -1034,34 +1034,36 @@ watch(launcherApi, (api) => {
 <style scoped>
 .dl-overlay {
   position: fixed; inset: 0;
-  background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
+  background: rgba(0,0,0,0.5); backdrop-filter: blur(4px);
   z-index: 2000; display: flex; align-items: center; justify-content: center;
 }
 .dl-window {
-  width: 580px; max-height: 82vh;
-  background: rgba(30,30,30,0.97); border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.6);
-  display: flex; flex-direction: column; animation: slideUp 0.25s ease-out;
+  width: 100%; max-width: 900px;
+  height: 80vh; max-height: 700px;
+  background: rgba(10, 15, 20, 0.85); backdrop-filter: blur(16px);
+  border: 1px solid rgba(0, 240, 255, 0.3);
+  box-shadow: 0 0 30px rgba(0, 240, 255, 0.1), inset 0 0 20px rgba(0, 240, 255, 0.05);
+  border-radius: 8px; display: flex; flex-direction: column; animation: slideUp 0.3s ease-out;
 }
 @keyframes slideUp {
-  from { opacity:0; transform:translateY(16px); }
+  from { opacity:0; transform:translateY(20px); }
   to { opacity:1; transform:translateY(0); }
 }
 .dl-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 18px 24px; border-bottom: 1px solid rgba(255,255,255,0.06);
+  padding: 0 30px; height: 60px; border-bottom: 1px solid rgba(255,255,255,0.05);
 }
-.dl-title { font-size:16px; font-weight:600; color:#fff; }
+.dl-title { font-size:18px; font-weight:600; color:#00f0ff; text-transform: uppercase; letter-spacing: 1px; text-shadow: 0 0 8px rgba(0, 240, 255, 0.4); }
 .dl-close {
-  width:28px; height:28px; display:flex; align-items:center; justify-content:center;
-  border-radius:4px; cursor:pointer; color:rgba(255,255,255,0.5); transition:all 0.2s;
+  width:32px; height:32px; display:flex; align-items:center; justify-content:center;
+  border-radius:4px; cursor:pointer; color:rgba(255,255,255,0.6); transition:all 0.2s;
 }
 .dl-close:hover { background:rgba(255,255,255,0.1); color:#fff; }
-.dl-body { padding:24px; overflow-y:auto; flex:1; }
+.dl-body { padding:30px; overflow-y:auto; flex:1; }
 
 /* 游戏信息 */
 .game-info { margin-bottom:20px; display:flex; align-items:center; gap:10px; }
-.game-name { font-size:18px; font-weight:600; color:#F7CE46; }
+.game-name { font-size:18px; font-weight:600; color:#00f0ff; text-shadow: 0 0 8px rgba(0, 240, 255, 0.4); }
 .badge {
   font-size:11px; padding:2px 8px; border-radius:4px; white-space:nowrap;
 }
@@ -1077,25 +1079,25 @@ watch(launcherApi, (api) => {
 /* 服务器选择 */
 .server-section { margin-bottom:16px; }
 .server-label {
-  display:block; font-size:13px; font-weight:500;
-  color:rgba(255,255,255,0.7); margin-bottom:8px;
+  display:block; font-size:14px;
+  color:rgba(255,255,255,0.8); margin-bottom:8px;
 }
 .server-options { display:flex; gap:8px; }
 .server-btn {
-  padding:6px 16px; border:1px solid rgba(255,255,255,0.12); border-radius:6px;
+  padding:6px 16px; border:1px solid rgba(255,255,255,0.12); border-radius:4px;
   background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.7);
   font-size:13px; cursor:pointer; transition:all 0.2s;
 }
 .server-btn:hover { background:rgba(255,255,255,0.1); border-color:rgba(255,255,255,0.2); }
 .server-btn.active {
-  background:rgba(247,206,70,0.15); color:#F7CE46;
-  border-color:rgba(247,206,70,0.4);
+  background:rgba(0, 240, 255, 0.15); color:#00f0ff;
+  border-color:rgba(0, 240, 255, 0.4);
 }
 
 /* 状态卡片 */
 .state-card {
   background:rgba(0,0,0,0.25); border:1px solid rgba(255,255,255,0.06);
-  border-radius:8px; padding:14px 16px; margin-bottom:16px;
+  border-radius:8px; padding:14px 16px; margin-bottom:24px;
 }
 .state-card.state-ok { border-color:rgba(103,194,58,0.3); }
 .state-card.state-install { border-color:rgba(247,206,70,0.3); }
@@ -1112,7 +1114,7 @@ watch(launcherApi, (api) => {
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
   padding: 12px 14px;
-  margin-bottom: 16px;
+  margin-bottom: 24px;
 }
 
 .channel-mode-head {
@@ -1174,53 +1176,65 @@ watch(launcherApi, (api) => {
 }
 
 /* 安装目录 */
-.install-dir-section { margin-bottom:16px; }
+.install-dir-section { margin-bottom:24px; }
 .install-dir-label {
-  display:block; font-size:13px; font-weight:500;
-  color:rgba(255,255,255,0.7); margin-bottom:6px;
+  display:block; font-size:14px;
+  color:rgba(255,255,255,0.8); margin-bottom:8px;
 }
-.install-dir-row { display:flex; gap:6px; }
-.install-dir-row .dl-input { flex:1; }
-.install-dir-row .icon-btn {
+.install-dir-row { display:flex; gap:12px; }
+.install-dir-row .dl-input { 
+  flex:1; 
+}
+.install-dir-row .dir-btn {
   display:flex; align-items:center; justify-content:center;
   color:rgba(255,255,255,0.6);
+  padding: 0 16px;
+  height: 36px;
+  border: none;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  transition: all 0.2s;
 }
-.install-dir-row .icon-btn:hover { color:#fff; }
+.install-dir-row .dir-btn:hover { 
+  color:#fff;
+  background: rgba(255, 255, 255, 0.2);
+}
 .install-dir-hint {
-  font-size:11px; color:rgba(255,255,255,0.35); margin-top:6px; line-height:1.4;
+  font-size:12px; color:rgba(255,255,255,0.4); margin-top:8px; line-height:1.4;
 }
 
 /* 语言包选择 */
-.lang-section { margin-bottom:16px; }
+.lang-section { margin-bottom:24px; }
 .lang-label {
-  display:block; font-size:13px; font-weight:500;
-  color:rgba(255,255,255,0.7); margin-bottom:8px;
+  display:block; font-size:14px;
+  color:rgba(255,255,255,0.8); margin-bottom:8px;
 }
 .lang-options {
-  display:flex; flex-wrap:wrap; gap:8px;
+  display:flex; flex-wrap:wrap; gap:12px;
 }
 .lang-checkbox {
-  display:flex; align-items:center; gap:6px;
-  padding:6px 12px; border-radius:6px;
-  background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.08);
+  display:flex; align-items:center; gap:8px;
+  padding:8px 16px; border-radius:4px;
+  background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1);
   cursor:pointer; transition:all 0.2s; user-select:none;
 }
-.lang-checkbox:hover { background:rgba(255,255,255,0.1); border-color:rgba(255,255,255,0.15); }
+.lang-checkbox:hover { background:rgba(255,255,255,0.1); border-color:rgba(255,255,255,0.2); }
 .lang-checkbox input[type="checkbox"] {
-  accent-color:#F7CE46; width:14px; height:14px; cursor:pointer;
+  accent-color:#00f0ff; width:16px; height:16px; cursor:pointer;
 }
-.lang-name { font-size:13px; color:rgba(255,255,255,0.85); }
+.lang-name { font-size:14px; color:rgba(255,255,255,0.9); }
 .lang-hint {
-  font-size:11px; color:#f0a030; margin-top:6px; line-height:1.4;
+  font-size:12px; color:#f0a030; margin-top:8px; line-height:1.4;
 }
 
 /* 主要操作按钮 */
-.main-actions { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
+.main-actions { display:flex; gap:12px; margin-bottom:24px; flex-wrap:wrap; }
 .protection-status {
   width: 100%;
-  font-size: 12px;
+  font-size: 13px;
   border-radius: 6px;
-  padding: 8px 10px;
+  padding: 10px 14px;
   border: 1px solid rgba(255,255,255,0.12);
   background: rgba(255,255,255,0.06);
 }
@@ -1238,17 +1252,19 @@ watch(launcherApi, (api) => {
   color: rgba(255,255,255,0.5);
 }
 .action-btn {
-  padding:8px 16px; border:none; border-radius:6px; font-size:13px; cursor:pointer;
+  padding:0 16px; height: 36px; border:none; border-radius:4px; font-size:13px; cursor:pointer;
   color:#fff; background:rgba(255,255,255,0.1); transition:all 0.2s;
-  display:inline-flex; align-items:center; gap:6px;
+  display:inline-flex; align-items:center; justify-content: center; gap:6px;
+  flex: 1;
 }
-.action-btn:hover { background:rgba(255,255,255,0.18); }
+.action-btn:hover { background:rgba(255,255,255,0.2); }
 .action-btn:disabled { opacity:0.5; cursor:not-allowed; }
+.action-btn.large { padding:0 24px; font-size:15px; font-weight:600; flex: none; width: auto; min-width: 120px; height: 44px; }
 .action-btn.primary {
-  background:rgba(247,206,70,0.2); color:#F7CE46; border:1px solid rgba(247,206,70,0.3);
+  background:rgba(0, 240, 255, 0.15); color:#00f0ff; border:1px solid rgba(0, 240, 255, 0.4);
 }
-.action-btn.primary:hover { background:rgba(247,206,70,0.3); }
-.action-btn.primary.large { padding:12px 24px; font-size:15px; font-weight:600; }
+.action-btn.primary:hover { background:rgba(0, 240, 255, 0.25); }
+.action-btn.primary.large { padding:0 24px; font-size:15px; font-weight:600; flex: none; width: auto; min-width: 120px; height: 44px; }
 .action-btn.danger { background:rgba(232,17,35,0.2); color:#ff6b6b; margin-top:8px; }
 .action-btn.danger:hover { background:rgba(232,17,35,0.3); }
 .action-btn.danger-soft {
@@ -1259,7 +1275,7 @@ watch(launcherApi, (api) => {
 .action-btn.danger-soft:hover {
   background: rgba(232, 17, 35, 0.2);
 }
-.action-btn.sm { padding:6px 12px; font-size:12px; margin-top:8px; }
+.action-btn.sm { padding:0 12px; font-size:12px; margin-top:8px; flex: none; height: 28px; }
 
 /* 进度条 */
 .progress-section {
@@ -1273,25 +1289,26 @@ watch(launcherApi, (api) => {
   width:100%; height:10px; background:rgba(255,255,255,0.08); border-radius:5px; overflow:hidden;
 }
 .progress-bar-fill {
-  height:100%; background:linear-gradient(90deg, #F7CE46, #f0a030); border-radius:5px;
+  height:100%; background:linear-gradient(90deg, #00f0ff, #00a0ff); border-radius:5px;
   transition: width 0.3s ease;
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.4);
 }
 .progress-bar-fill.verify-fill {
   background:linear-gradient(90deg, #67c23a, #4caf50);
 }
 .progress-info {
   display:flex; justify-content:space-between; font-size:13px;
-  color:rgba(255,255,255,0.7); margin-top:8px;
+  color:rgba(255,255,255,0.9); margin-top:8px; font-weight: 500;
 }
 .progress-detail {
   display:flex; justify-content:space-between; font-size:11px;
-  color:rgba(255,255,255,0.4); margin-top:4px;
+  color:rgba(255,255,255,0.6); margin-top:4px;
 }
 .progress-file {
   max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
 .progress-counts {
-  font-size:11px; color:rgba(255,255,255,0.35); margin-top:4px;
+  font-size:11px; color:rgba(255,255,255,0.5); margin-top:4px;
 }
 .progress-actions {
   display:flex;
@@ -1320,9 +1337,13 @@ watch(launcherApi, (api) => {
 .dl-input {
   width:100%; box-sizing:border-box; background:rgba(0,0,0,0.3);
   border:1px solid rgba(255,255,255,0.1); border-radius:4px;
-  padding:8px 10px; color:#fff; font-size:13px; outline:none;
+  padding:8px 12px; color:#fff; font-size:14px; outline:none;
+  transition: border-color 0.2s; height: 36px;
 }
-.dl-input:focus { border-color:#F7CE46; }
+.dl-input:focus {
+  border-color: #00f0ff;
+  box-shadow: 0 0 8px rgba(0, 240, 255, 0.2);
+}
 .input-row { display:flex; gap:6px; }
 .input-row .dl-input { flex:1; }
 .icon-btn {
@@ -1333,19 +1354,19 @@ watch(launcherApi, (api) => {
 
 /* 分隔线 */
 .divider {
-  display:flex; align-items:center; gap:12px; margin:20px 0;
-  color:rgba(255,255,255,0.3); font-size:12px;
+  display:flex; align-items:center; gap:12px; margin:24px 0;
+  color:rgba(255,255,255,0.3); font-size:12px; text-transform: uppercase;
 }
 .divider::before, .divider::after {
   content:''; flex:1; height:1px; background:rgba(255,255,255,0.08);
 }
 
 /* 手动安装区 */
-.section { margin-bottom:16px; }
+.section { margin-bottom:24px; }
 .section-title {
   font-size:14px; font-weight:600; color:rgba(255,255,255,0.8); margin-bottom:8px;
 }
-.hint { font-size:12px; color:rgba(255,255,255,0.4); margin-bottom:12px; line-height:1.5; }
+.hint { font-size:12px; color:rgba(255,255,255,0.4); margin-bottom:16px; line-height:1.5; }
 
 /* 错误 */
 .error-msg {

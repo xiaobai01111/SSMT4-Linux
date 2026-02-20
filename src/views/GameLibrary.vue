@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { gamesList, switchToGame, appSettings, loadGames } from '../store';
-import { reactive, type CSSProperties, ref, onMounted, onUnmounted } from 'vue';
+import { type CSSProperties, ref, onMounted, onUnmounted, computed } from 'vue';
 import { setGameVisibility, deleteGameConfigFolder, askConfirm, listGameTemplates, importGameTemplate, getGameTemplatesDir, type GameTemplateInfo } from '../api';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
@@ -11,14 +11,24 @@ const { t, te } = useI18n();
 // Router
 const router = useRouter();
 
-// Reactive styles for animation
-const cardStyles = reactive<Record<string, CSSProperties>>({});
-
 // Context Menu State
 const showMenu = ref(false);
 const menuX = ref(0);
 const menuY = ref(0);
 const targetGame = ref<any>(null);
+
+// Search and Filter
+const searchQuery = ref('');
+
+const filteredGames = computed(() => {
+    if (!searchQuery.value) return gamesList;
+    const q = searchQuery.value.toLowerCase();
+    return gamesList.filter((g: any) => {
+        const name = g.name.toLowerCase();
+        const display = (te(`games.${g.name}`) ? t(`games.${g.name}`) : (g.displayName || g.name)).toLowerCase();
+        return name.includes(q) || display.includes(q);
+    });
+});
 
 const handleContextMenu = (e: MouseEvent, game: any) => {
   e.preventDefault();
@@ -146,18 +156,6 @@ onUnmounted(() => {
   document.removeEventListener('click', handleCloseAll);
 });
 
-// Animation Timer Management
-let animationTimers: any[] = [];
-const clearTimers = () => { 
-    animationTimers.forEach(id => clearTimeout(id)); 
-    animationTimers = []; 
-};
-const addTimer = (callback: () => void, delay: number) => {
-    const id = setTimeout(callback, delay);
-    animationTimers.push(id);
-    return id;
-};
-
 // Love Particle System
 interface Particle {
     id: number;
@@ -284,108 +282,6 @@ const handleGameSelect = (game: any, event: MouseEvent) => {
     
     // Always switch (or refresh) and trigger animations
     switchToGame(game);
-    
-    // Clear any pending return/cleanup timers to prevent conflict/snapping
-    clearTimers();
-    
-    // Animate others being "blown away"
-    const others = gamesList.filter(g => g.name !== game.name);
-    
-    // 1. Others: Blast away + Gray out
-    others.forEach(g => {
-        // If already blown away (and not returning), maintain current momentum/position
-        const current = cardStyles[g.name];
-        const isAlreadyOut = current && current.transform && !(current.transform as string).includes('translate(0, 0)');
-
-        if (!isAlreadyOut) {
-            // Random direction (complete 360 scatter)
-            const angle = Math.random() * Math.PI * 2;
-            const distance = 600 + Math.random() * 900;
-            
-            const tx = Math.cos(angle) * distance;
-            const ty = Math.sin(angle) * distance;
-            
-            // Random rotation for chaotic effect
-            const rot = (Math.random() - 0.5) * 180; 
-
-            cardStyles[g.name] = {
-                transform: `translate(${tx}px, ${ty}px) rotate(${rot}deg) scale(0.5)`,
-                opacity: '0.4', // Fade slightly
-                filter: 'grayscale(1) brightness(0.5)', // Turn gray and dark
-                // Fast, explosive movement out
-                transition: 'transform 0.4s cubic-bezier(0.1, 0.9, 0.2, 1), opacity 0.4s ease, filter 0.4s ease'
-            };
-        }
-    });
-
-    // 2. Selected: Instant Pop + Shake Sequence
-    // Phase A: Instant expansion
-    cardStyles[game.name] = {
-        transform: 'scale(1.5)',
-        transition: 'transform 0.1s ease-out',
-        zIndex: '200',
-        filter: 'brightness(1.5)' // Flash bright
-    };
-
-    addTimer(() => {
-        // Phase B: Vibration (Shake)
-        // using animation property
-        cardStyles[game.name] = {
-            animation: 'impactShake 0.3s linear', // defined in CSS
-            zIndex: '200',
-            filter: 'brightness(1.2)'
-        };
-
-        // Phase C: Settle to Active State (Slow shrink)
-        addTimer(() => {
-            cardStyles[game.name] = {
-                transform: 'scale(1.2)',
-                transition: 'transform 0.6s ease-out',
-                zIndex: '200',
-                filter: 'none'
-            };
-            
-            // Cleanup selected after settle
-            addTimer(() => {
-                delete cardStyles[game.name];
-            }, 600);
-            
-        }, 300); // 300ms shake duration
-    }, 100);
-
-    // 3. Others: Schedule return (Traction force)
-    addTimer(() => {
-        others.forEach(g => {
-            cardStyles[g.name] = {
-                transform: 'translate(0, 0) rotate(0deg) scale(1)',
-                opacity: '', // Revert to class-controlled opacity
-                filter: 'grayscale(1) brightness(0.5)', // Keep gray during return!
-                // Elastic/Springy return
-                transition: 'transform 1.0s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.8s ease'
-            };
-        });
-
-        // 4. Others: Recover color with random delay (GRADUAL FADE IN)
-        addTimer(() => {
-            others.forEach(g => {
-                const randomDelay = Math.random() * 1000; // 0-1s random delay
-                addTimer(() => {
-                    // Transition to color (restore to default dim state)
-                    cardStyles[g.name] = {
-                         // Ensure we don't jump positions if they are still settling
-                         transform: 'translate(0, 0) rotate(0deg) scale(1)', 
-                         filter: 'grayscale(0.2) brightness(0.7)',
-                         transition: 'filter 1.5s ease-in-out' // Smooth color transition
-                    };
-                    
-                    // Final cleanup
-                    addTimer(() => {
-                        delete cardStyles[g.name]; 
-                    }, 1500);
-                }, randomDelay);
-            });
-        }, 1000); // Wait for return transition
-    }, 350); // Wait for blast
 };
 
 const spawnLoveExplosion = (e: MouseEvent) => {
@@ -514,13 +410,31 @@ const spawnLoveExplosion = (e: MouseEvent) => {
             </div>
         </div>
 
+        <!-- Toolbar -->
+        <div class="toolbar" @click.stop v-if="gamesList.length > 0 || searchQuery !== ''">
+            <button class="tech-btn" @click="openImportDialog">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: -2px;">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                {{ t('gamelibrary.importConfig') }}
+            </button>
+            <div style="flex-grow: 1;"></div>
+            <input 
+                type="text" 
+                class="search-input" 
+                v-model="searchQuery"
+                :placeholder="t('gamelibrary.searchGames') || 'Search games...'"
+            />
+        </div>
+
         <div class="games-grid">
             <div 
-                v-for="game in gamesList" 
+                v-for="(game, index) in filteredGames" 
                 :key="game.name"
                 class="game-card"
                 :class="{ active: appSettings.currentConfigName === game.name }"
-                :style="cardStyles[game.name]"
+                :style="{ animationDelay: `${index * 0.05}s` }"
                 @click="handleGameSelect(game, $event)"
                 @contextmenu.prevent="handleContextMenu($event, game)"
             >
@@ -532,8 +446,13 @@ const spawnLoveExplosion = (e: MouseEvent) => {
                         @load="(e) => (e.target as HTMLImageElement).style.opacity = '1'"
                         @error="(e) => (e.target as HTMLImageElement).style.opacity = '0'"
                     />
-                    <div class="game-label">{{ te(`games.${game.name}`) ? t(`games.${game.name}`) : (game.displayName || game.name) }}</div>
                 </div>
+                <div class="game-label">{{ te(`games.${game.name}`) ? t(`games.${game.name}`) : (game.displayName || game.name) }}</div>
+            </div>
+            
+            <div v-if="filteredGames.length === 0" class="empty-state">
+                <div class="empty-icon">!</div>
+                <div class="empty-text">No matches found.</div>
             </div>
         </div>
 
@@ -628,15 +547,62 @@ const spawnLoveExplosion = (e: MouseEvent) => {
     overflow-x: hidden; /* Prevent horizontal scrollbar caused by scaled breathing effects */
 }
 
+/* 
+   Toolbar & Inputs (Bright Tech)
+*/
+.toolbar { /* Assuming there will be a toolbar div, this acts as preparation or applies if it exists */
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(0, 240, 255, 0.3);
+  border-radius: 8px;
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.search-input {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: 4px;
+  transition: all 0.2s;
+  outline: none;
+}
+.search-input:focus {
+  border-color: #00f0ff;
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.3);
+}
+
+.tech-btn {
+  background: rgba(0, 240, 255, 0.1);
+  border: 1px solid #00f0ff;
+  color: #00f0ff;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-transform: uppercase;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 1px;
+}
+.tech-btn:hover {
+  background: #00f0ff;
+  color: #000;
+  box-shadow: 0 0 15px rgba(0, 240, 255, 0.5);
+}
+
 /* Context Menu */
 .context-menu {
   position: fixed;
   z-index: 10000;
-  background: rgba(30, 30, 30, 0.95);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(15, 15, 20, 0.95);
+  border: 1px solid rgba(0, 240, 255, 0.5); /* bright border */
   backdrop-filter: blur(8px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-  border-radius: 6px;
+  box-shadow: 0 4px 20px rgba(0, 240, 255, 0.2);
+  border-radius: 4px; /* sharp */
   padding: 4px;
   min-width: 140px;
 }
@@ -644,66 +610,68 @@ const spawnLoveExplosion = (e: MouseEvent) => {
 .menu-item {
   padding: 8px 12px;
   cursor: pointer;
-  color: #eee;
+  color: #fff;
   font-size: 13px;
-  border-radius: 4px;
+  border-radius: 2px;
   transition: background-color 0.1s;
 }
 
 .menu-item:hover {
-  background-color: rgba(255, 255, 255, 0.1);
-  color: #fff;
+  background-color: #00f0ff;
+  color: #000;
 }
 
 .menu-item-danger {
-  color: #ff6b6b;
+  color: #ff0055;
 }
 .menu-item-danger:hover {
-  background-color: rgba(255, 80, 80, 0.2);
-  color: #ff4444;
+  background-color: #ff0055;
+  color: #fff;
 }
 
-/* Import Dialog */
+/* Import Dialog (Tech Style) */
 .import-overlay {
   position: fixed;
   top: 0; left: 0;
   width: 100vw; height: 100vh;
-  background: rgba(0,0,0,0.6);
+  background: rgba(0,0,0,0.8);
   z-index: 20000;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 .import-dialog {
-  background: rgba(30, 30, 30, 0.98);
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 12px;
+  background: rgba(10, 15, 20, 0.98);
+  border: 1px solid #00f0ff;
+  border-radius: 8px; /* Sharper */
   width: 420px;
   max-height: 70vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  box-shadow: 0 0 30px rgba(0, 240, 255, 0.2), inset 0 0 20px rgba(255,255,255,0.02);
 }
 .import-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 16px 20px;
-  border-bottom: 1px solid rgba(255,255,255,0.08);
+  border-bottom: 1px solid rgba(0, 240, 255, 0.3);
   font-size: 16px;
   font-weight: 600;
-  color: #fff;
+  color: #00f0ff;
+  text-transform: uppercase;
+  letter-spacing: 1px;
 }
 .import-close {
   background: none;
   border: none;
-  color: #888;
+  color: rgba(255,255,255,0.5);
   font-size: 18px;
   cursor: pointer;
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: 2px;
 }
-.import-close:hover { color: #fff; background: rgba(255,255,255,0.1); }
+.import-close:hover { color: #ff0055; background: rgba(255, 0, 85, 0.1); }
 .import-body {
   flex: 1;
   overflow-y: auto;
@@ -711,80 +679,92 @@ const spawnLoveExplosion = (e: MouseEvent) => {
 }
 .import-loading, .import-empty {
   text-align: center;
-  color: #888;
+  color: #00f0ff;
   padding: 32px 0;
   font-size: 14px;
 }
 .import-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 .import-item {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: 4px;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: all 0.2s;
+  border: 1px solid transparent;
 }
-.import-item:hover { background: rgba(255,255,255,0.08); }
-.import-item-exists { opacity: 0.6; }
+.import-item:hover { 
+  background: rgba(0, 240, 255, 0.05); 
+  border-color: rgba(0, 240, 255, 0.3);
+}
+.import-item-exists { opacity: 0.5; filter: grayscale(1); }
 .import-icon {
   width: 40px;
   height: 40px;
-  border-radius: 8px;
+  border-radius: 4px;
   object-fit: cover;
+  border: 1px solid rgba(255,255,255,0.2);
 }
 .import-icon-placeholder {
   width: 40px;
   height: 40px;
-  border-radius: 8px;
-  background: rgba(255,255,255,0.1);
+  border-radius: 4px;
+  background: rgba(0, 240, 255, 0.1);
+  border: 1px dashed rgba(0, 240, 255, 0.4);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #666;
+  color: #00f0ff;
   font-size: 18px;
 }
 .import-info { flex: 1; min-width: 0; }
 .import-name {
-  color: #eee;
+  color: #fff;
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .import-name-sub {
-  color: #888;
+  color: rgba(255,255,255,0.5);
   font-size: 11px;
-  margin-top: 2px;
+  margin-top: 4px;
+  font-family: monospace;
 }
 .import-badge {
-  font-size: 11px;
-  color: #F7CE46;
-  background: rgba(247,206,70,0.15);
-  padding: 2px 8px;
-  border-radius: 4px;
+  font-size: 10px;
+  color: #ff0055;
+  border: 1px solid #ff0055;
+  background: rgba(255, 0, 85, 0.1);
+  padding: 2px 6px;
+  border-radius: 2px;
   white-space: nowrap;
+  text-transform: uppercase;
 }
 .import-footer {
-  padding: 12px 16px;
-  border-top: 1px solid rgba(255,255,255,0.08);
+  padding: 16px;
+  border-top: 1px solid rgba(0, 240, 255, 0.3);
   text-align: center;
 }
 .import-open-folder {
-  background: rgba(255,255,255,0.08);
-  border: 1px solid rgba(255,255,255,0.15);
-  color: #ccc;
+  background: transparent;
+  border: 1px solid #00f0ff;
+  color: #00f0ff;
   padding: 8px 16px;
-  border-radius: 6px;
+  border-radius: 4px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  transition: all 0.2s;
 }
-.import-open-folder:hover { background: rgba(255,255,255,0.15); color: #fff; }
+.import-open-folder:hover { background: #00f0ff; color: #000; box-shadow: 0 0 10px rgba(0,240,255,0.5); }
 
 /* Meteor Star CSS */
 .meteor-layer {
@@ -855,14 +835,14 @@ const spawnLoveExplosion = (e: MouseEvent) => {
 
 /* Custom Scrollbar */
 .game-library-container::-webkit-scrollbar {
-    width: 8px;
+    width: 6px;
 }
 .game-library-container::-webkit-scrollbar-track {
-    background: rgba(0, 0, 0, 0.2);
+    background: transparent;
 }
 .game-library-container::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.15);
-    border-radius: 4px;
+    border-radius: 3px;
 }
 .game-library-container::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.3);
@@ -871,258 +851,155 @@ const spawnLoveExplosion = (e: MouseEvent) => {
 .games-grid {
     display: flex;
     flex-wrap: wrap; 
-    justify-content: center;
-    gap: 30px;
-    padding: 20px 60px;
+    justify-content: flex-start;
+    gap: 32px 24px;
+    padding: 24px 60px 60px 60px;
+    margin: 0 auto;
+    max-width: 1400px;
 }
 
-/* --- Crystal Icon Styles (Reused & Adapted) --- */
+/* --- Bright Tech Sci-Fi Game Cards --- */
 
 .game-card {
     position: relative;
+    width: 110px; /* Fixed width */
     flex: 0 0 auto;
     display: flex;
     flex-direction: column;
     align-items: center;
     cursor: pointer;
-    transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.4s ease, filter 0.4s ease;
-    width: 110px; /* Slightly larger for grid */
-    opacity: 0.8; /* Slightly dim (visible but allows active to pop) */
-    filter: brightness(0.7) grayscale(0.2); 
-    transform-origin: center center;
-    z-index: 10; /* Ensure cards are above the effects layer */
+    
+    /* 
+      Staggered Entrance Animation 
+    */
+    animation: cardEntranceFade 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
+.game-card:nth-child(1)  { animation-delay: 0.05s; }
+.game-card:nth-child(2)  { animation-delay: 0.10s; }
+.game-card:nth-child(3)  { animation-delay: 0.15s; }
+.game-card:nth-child(4)  { animation-delay: 0.20s; }
+.game-card:nth-child(5)  { animation-delay: 0.25s; }
+.game-card:nth-child(6)  { animation-delay: 0.30s; }
+.game-card:nth-child(7)  { animation-delay: 0.35s; }
+.game-card:nth-child(8)  { animation-delay: 0.40s; }
+.game-card:nth-child(9)  { animation-delay: 0.45s; }
+.game-card:nth-child(10) { animation-delay: 0.50s; }
+.game-card:nth-child(11) { animation-delay: 0.55s; }
+.game-card:nth-child(12) { animation-delay: 0.60s; }
+.game-card:nth-child(n+13) { animation-delay: 0.65s; }
 
-.game-card:hover {
-    transition: transform 0.15s ease-out, opacity 0.2s ease, filter 0.2s ease;
-    transform: scale(1.1);
-    opacity: 1;
-    filter: none;
-    z-index: 100;
-}
-
-.game-card.active {
-    opacity: 1;
-    filter: none;
-    transform: scale(1.05); /* Slight highlight for active */
-    z-index: 10;
+@keyframes cardEntranceFade {
+    0% { opacity: 0; transform: translateY(20px); }
+    100% { opacity: 1; transform: translateY(0); }
 }
 
 .game-icon-wrapper {
     position: relative;
-    width: 90px;
-    height: 90px;
+    width: 100%;
+    /* 1:1 Aspect ratio based on width */
+    aspect-ratio: 1 / 1;
+    
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px; /* Sharper Tech Corners */
+    padding: 6px;
 
-    /* Crystal filling texture */
-    background: radial-gradient(circle at 50% 0%,
-            rgba(255, 255, 255, 0.15) 0%,
-            rgba(255, 255, 255, 0.05) 40%,
-            rgba(255, 255, 255, 0.02) 100%);
-    backdrop-filter: blur(3px);
-    border: 1px solid rgba(255, 255, 255, 0.25);
-    border-radius: 14px;
-    padding: 3px;
-
+    /* Base depth */
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    
+    transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
     display: flex;
-    align-items: center;
-    justify-content: center;
-
-    /* Constant radiating light */
-    box-shadow:
-        0 0 12px rgba(130, 200, 255, 0.15),
-        inset 0 0 15px rgba(255, 255, 255, 0.1);
-
-    transition: all 0.2s;
+    flex-direction: column;
     overflow: hidden;
-    /* Performance: Disable infinite animation on idle */
-    /* animation: crystalPulse 5s ease-in-out infinite; */
 }
 
 .game-card:hover .game-icon-wrapper {
-    animation: crystalPulse 5s ease-in-out infinite;
-    transform: translateY(-2px);
-    border-color: rgba(255, 255, 255, 0.6);
-    box-shadow: 0 0 25px rgba(150, 220, 255, 0.4), inset 0 0 25px rgba(255, 255, 255, 0.3);
+    transform: translateY(-6px) scale(1.05); /* Snappy scale */
+    border-color: #00f0ff; /* Bright cyan hover */
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4), 
+                0 0 15px rgba(0, 240, 255, 0.6);
 }
 
 .game-card.active .game-icon-wrapper {
-    animation: crystalPulse 5s ease-in-out infinite;
+    transform: translateY(-4px) scale(1.08); /* Snappy scale */
+    border-color: #fff; /* Crisp white active state */
+    box-shadow: 0 8px 15px rgba(0, 0, 0, 0.5), 
+                0 0 20px rgba(255, 255, 255, 0.8);
+    background: rgba(255, 255, 255, 0.1);
 }
 
-@keyframes crystalPulse {
-    0%, 100% {
-        box-shadow: 0 0 12px rgba(130, 200, 255, 0.15), inset 0 0 15px rgba(255, 255, 255, 0.1);
-        border-color: rgba(255, 255, 255, 0.25);
-    }
-    50% {
-        box-shadow: 0 0 22px rgba(130, 210, 255, 0.35), inset 0 0 22px rgba(255, 255, 255, 0.25);
-        border-color: rgba(255, 255, 255, 0.5);
-    }
-}
-
-/* Magic fluid/particle flow */
-.game-icon-wrapper::before {
-    content: "";
-    position: absolute;
-    top: -50%;
-    left: -50%;
-    width: 200%;
-    height: 200%;
-    background:
-        conic-gradient(from 0deg at 50% 50%,
-            transparent 0deg,
-            rgba(255, 255, 255, 0.05) 40deg,
-            rgba(100, 200, 255, 0.1) 90deg,
-            transparent 135deg,
-            rgba(255, 255, 255, 0.05) 200deg,
-            transparent 360deg);
-    filter: blur(15px);
-    /* Performance: Disable infinite animation on idle */
-    /* animation: magicRotate 7s linear infinite; */
-    z-index: 2;
-    pointer-events: none;
-    mix-blend-mode: screen;
-    opacity: 0; /* Hide by default to save blend cost */
-    transition: opacity 0.3s;
-}
-
-.game-card:hover .game-icon-wrapper::before,
-.game-card.active .game-icon-wrapper::before {
-    opacity: 1;
-    animation: magicRotate 7s linear infinite;
-}
-
-@keyframes magicRotate {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
-
-/* Crystal reflection sheen */
-.game-icon-wrapper::after {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: -150%;
-    width: 200%;
-    height: 100%;
-    background: linear-gradient(115deg,
-            transparent 40%,
-            rgba(255, 255, 255, 0.05) 45%,
-            rgba(255, 255, 255, 0.4) 50%,
-            rgba(255, 255, 255, 0.05) 55%,
-            transparent 60%);
-    transform: skewX(-20deg);
-    pointer-events: none;
-    z-index: 5;
-    /* Performance: Disable infinite animation on idle */
-    /* animation: subtleSheen 6s ease-in-out infinite; */
-}
-
-.game-card:hover .game-icon-wrapper::after,
+/* Mechanical Scanning Line for Active Game */
 .game-card.active .game-icon-wrapper::after {
-    animation: subtleSheen 6s ease-in-out infinite;
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  border-radius: 11px;
+  z-index: 4;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent 40%, rgba(0, 240, 255, 0.4) 50%, transparent 60%);
+  background-size: 100% 200%;
+  animation: techScan 2s linear infinite;
 }
 
-@keyframes subtleSheen {
-    0% { left: -150%; opacity: 0.3; }
-    40% { left: 150%; opacity: 0.3; }
-    100% { left: 150%; opacity: 0.3; }
-}
-
-.game-card:hover .game-icon-wrapper::after {
-    /* Override animation for hover specific behavior if needed, otherwise use keyframes above */
-    animation: subtleSheen 2s ease-in-out infinite; /* Faster sheen on hover */
-}
-
-/* Stronger hover effects - merged with .game-card:hover .game-icon-wrapper rule above */
-/* .game-card:hover .game-icon-wrapper { ... } */
-
-.game-card.active {
-    opacity: 1;
-    filter: none;
-    transform: scale(1.2); /* Moderately larger */
-    z-index: 100;
-}
-
-/* Radiating Warm White Breathing Light */
-.game-card.active::before {
-    content: "";
-    position: absolute;
-    top: 50%; left: 50%;
-    /* Significantly increased range */
-    width: 250%; height: 250%;
-    transform: translate(-50%, -50%);
-    
-    /* Warm white radial spectrum */
-    background: radial-gradient(
-        circle closest-side, 
-        rgba(255, 250, 230, 0.4) 0%,
-        rgba(255, 240, 200, 0.25) 30%,
-        rgba(255, 230, 180, 0.1) 60%,
-        transparent 80%
-    );
-    
-    z-index: -1;
-    border-radius: 50%; /* Soft circular glow */
-    filter: blur(20px);
-    animation: radiateBreath 4s ease-in-out infinite;
-    pointer-events: none; /* Critical: Prevent blocking clicks on adjacent items */
-}
-
-/* Remove the sharp second border */
-.game-card.active::after {
-    display: none;
-}
-
-/* No rotation, just pulsing outwards from center */
-@keyframes radiateBreath {
-    0%, 100% {
-        opacity: 0.5;
-        transform: translate(-50%, -50%) scale(0.9);
-    }
-    50% {
-        opacity: 0.9;
-        transform: translate(-50%, -50%) scale(1.1);
-    }
-}
-
-.game-card.active .game-icon-wrapper {
-    /* Hide the default white border so the rainbow shows nicely around it */
-    border-color: rgba(255, 255, 255, 0.2); 
-    /* Add an inner glow to blend with the outer rainbow */
-    box-shadow: inset 0 0 20px rgba(255, 255, 255, 0.5);
+@keyframes techScan {
+  0% { background-position: 0% -100%; }
+  100% { background-position: 0% 200%; }
 }
 
 .game-icon {
     width: 100%;
     height: 100%;
     object-fit: cover;
-    border-radius: 12px;
+    border-radius: 8px; /* Sharper image inside wrapper */
     display: block;
     z-index: 1;
-    position: relative;
+    filter: brightness(0.9);
+    transition: filter 0.2s ease, transform 0.2s ease;
 }
 
+.game-card:hover .game-icon {
+    filter: brightness(1.1);
+}
+.game-card.active .game-icon {
+    filter: brightness(1);
+}
+
+/* 
+  Game Label Below Icon
+*/
 .game-label {
-    position: absolute;
-    left: 0;
-    bottom: 0;
+    margin-top: 12px;
     width: 100%;
     text-align: center;
-    font-size: 11px;
-    font-weight: 600;
-    color: #fff;
-    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
-    background: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(2px);
-    padding: 3px 0;
-    line-height: 1.2;
-    z-index: 10;
+    font-size: 13px;
+    font-weight: 500;
+    color: #e0e0e0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    border-bottom-left-radius: 14px;
-    border-bottom-right-radius: 14px;
+    transition: color 0.3s ease, text-shadow 0.3s ease;
+}
+
+/* Hover effect on Label: Reveal text completely if previously hidden? 
+   Actually, just slightly highlighting the text works better. */
+.game-card:hover .game-label {
+    color: #fff;
+    text-shadow: 0 0 8px rgba(255, 255, 255, 0.6);
+}
+.game-card.active .game-label {
+    color: #00f0ff; /* Tech cyan instead of yellow */
+    text-shadow: 0 0 8px rgba(0, 240, 255, 0.6);
+}
+
+/* Active breathing light removed to favor the sleek border and shadow */
+/* Only keep the animation shake/impact logic defined in <script> by hiding the CSS pseudo elements */
+.game-card.active::before,
+.game-card.active::after,
+.game-icon-wrapper::before,
+.game-icon-wrapper::after {
+    display: none !important;
 }
 
 /* Animations and Layers */

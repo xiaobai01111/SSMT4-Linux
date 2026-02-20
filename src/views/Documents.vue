@@ -179,11 +179,23 @@ const handleDocClick = (e: MouseEvent) => {
   display: grid;
   grid-template-columns: 240px 1fr;
   overflow: hidden;
+  box-sizing: border-box;
+  animation: fadeIn 0.4s ease-out;
+
+  /* Tech Glass Wrapper */
+  background: rgba(10, 15, 20, 0.75);
+  backdrop-filter: blur(12px);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .doc-sidebar {
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 12px;
+  border-right: 1px solid rgba(0, 240, 255, 0.3); /* Tech Cyan Line */
+  background: rgba(0, 5, 10, 0.4);
+  padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -191,46 +203,64 @@ const handleDocClick = (e: MouseEvent) => {
 }
 
 .doc-sidebar-title {
-  color: #f2f2f2;
+  color: #00f0ff; /* Glowing cyan */
   font-size: 16px;
   font-weight: 700;
-  padding: 4px 6px 8px 6px;
+  padding: 4px 6px 12px 6px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
 }
 
 .doc-nav-btn {
   text-align: left;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.03);
-  color: rgba(255, 255, 255, 0.82);
-  border-radius: 8px;
-  padding: 9px 10px;
-  font-size: 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.65);
+  border-radius: 4px; /* Sharp */
+  padding: 10px 12px;
+  font-size: 13px;
   cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .doc-nav-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(0, 240, 255, 0.1);
+  color: #fff;
 }
 
 .doc-nav-btn.active {
-  background: rgba(64, 158, 255, 0.2);
-  border-color: rgba(64, 158, 255, 0.45);
-  color: #a8d4ff;
+  background: rgba(0, 240, 255, 0.15);
+  color: #00f0ff; /* Glowing cyan text */
+  font-weight: 600;
+  text-shadow: 0 0 10px rgba(0, 240, 255, 0.5);
+  box-shadow: inset 4px 0 0 #00f0ff; /* Sharp cyan left marker */
 }
 
+/* Hard tech button override */
 .doc-open-btn {
   margin-top: auto;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
+  background-color: rgba(0, 240, 255, 0.05);
+  border: 1px solid rgba(0, 240, 255, 0.5);
+  color: #00f0ff;
   font-size: 12px;
-  border-radius: 8px;
-  padding: 9px 10px;
+  border-radius: 4px;
+  padding: 10px;
   cursor: pointer;
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  transition: all 0.2s ease;
 }
 
 .doc-open-btn:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: #00f0ff;
+  color: #000;
+  box-shadow: 0 0 15px rgba(0, 240, 255, 0.6);
+  border-color: #00f0ff;
 }
 
 .doc-content-wrap {
@@ -244,82 +274,121 @@ const handleDocClick = (e: MouseEvent) => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 16px 24px;
+  border-bottom: 1px solid rgba(0, 240, 255, 0.3); /* Tech Cyan Line */
 }
 
 .doc-content-title {
-  color: #f2f2f2;
-  font-size: 18px;
+  color: #fff;
+  font-size: 20px;
   font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+}
+.doc-content-title::before {
+  content: '';
+  display: inline-block;
+  width: 4px;
+  height: 20px;
+  background-color: #00f0ff;
+  margin-right: 10px;
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.8);
 }
 
 .doc-link {
-  color: #79bbff;
-  font-size: 12px;
+  color: #00f0ff;
+  font-size: 13px;
   text-decoration: none;
+  font-family: monospace;
   max-width: 50%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: all 0.2s;
 }
 
 .doc-link:hover {
   text-decoration: underline;
+  text-shadow: 0 0 8px rgba(0, 240, 255, 0.6);
 }
 
 .doc-content {
   flex: 1;
   overflow-y: auto;
-  padding: 18px 22px 28px 22px;
-  color: rgba(255, 255, 255, 0.88);
-  line-height: 1.7;
+  padding: 24px 32px 40px 32px;
+  color: rgba(255, 255, 255, 0.85); /* Slightly darker for contrast */
+  line-height: 1.8;
+  font-size: 14px;
 }
 
+/* Markdown overrides for Tech Terminal look */
 :deep(.markdown-body h1),
 :deep(.markdown-body h2),
 :deep(.markdown-body h3) {
   margin-top: 0;
-  color: #f5f5f5;
+  color: #00f0ff;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
 }
 
+:deep(.markdown-body h1) { font-size: 26px; border-bottom: 1px solid rgba(0, 240, 255, 0.2); padding-bottom: 8px; margin-bottom: 24px; }
+:deep(.markdown-body h2) { font-size: 20px; margin-top: 32px; margin-bottom: 16px; }
+:deep(.markdown-body h3) { font-size: 16px; margin-top: 24px; margin-bottom: 12px; color: #fff; }
+
 :deep(.markdown-body p) {
-  margin: 0 0 10px 0;
+  margin: 0 0 16px 0;
 }
 
 :deep(.markdown-body ul),
 :deep(.markdown-body ol) {
-  margin: 0 0 10px 18px;
+  margin: 0 0 16px 20px;
   padding: 0;
 }
+:deep(.markdown-body li) { margin-bottom: 6px; }
 
 :deep(.markdown-body code) {
-  background: rgba(255, 255, 255, 0.1);
-  padding: 1px 5px;
-  border-radius: 4px;
-  font-size: 12px;
+  background: rgba(0, 240, 255, 0.1);
+  color: #00f0ff;
+  padding: 2px 6px;
+  border-radius: 4px; /* Sharp */
+  font-size: 13px;
+  font-family: monospace;
+  border: 1px solid rgba(0, 240, 255, 0.2);
 }
 
 :deep(.markdown-body pre) {
-  background: rgba(0, 0, 0, 0.34);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 10px;
-  border-radius: 8px;
+  background: rgba(0, 5, 10, 0.8);
+  border: 1px solid rgba(0, 240, 255, 0.3);
+  border-left: 4px solid #00f0ff; /* Tech accent */
+  padding: 16px;
+  border-radius: 4px; /* Sharp */
   overflow-x: auto;
+  margin-bottom: 24px;
+  box-shadow: inset 0 0 15px rgba(0, 240, 255, 0.05);
 }
 
 :deep(.markdown-body pre code) {
   background: transparent;
   padding: 0;
+  border: none;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 13px;
 }
 
 :deep(.markdown-body a) {
-  color: #79bbff;
+  color: #00f0ff;
   text-decoration: none;
+  transition: all 0.2s;
+  border-bottom: 1px solid transparent;
 }
 
 :deep(.markdown-body a:hover) {
-  text-decoration: underline;
+  text-decoration: none;
+  border-bottom-color: #00f0ff;
+  text-shadow: 0 0 8px rgba(0, 240, 255, 0.6);
 }
 
 @media (max-width: 980px) {

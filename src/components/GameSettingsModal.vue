@@ -1278,18 +1278,21 @@ defineExpose({
   backdrop-filter: blur(4px);
   z-index: 2000;
   /* High z-index */
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .settings-window {
-  position: absolute;
-  top: 50px;
-  bottom: 60px;
-  left: 100px;
-  right: 100px;
-  background: rgba(30, 30, 30, 0.95);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
-  border-radius: 12px;
+  width: 100%;
+  max-width: 900px;
+  height: 80vh;
+  max-height: 700px;
+  background: rgba(10, 15, 20, 0.85);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(0, 240, 255, 0.3);
+  box-shadow: 0 0 30px rgba(0, 240, 255, 0.1), inset 0 0 20px rgba(0, 240, 255, 0.05);
+  border-radius: 8px;
   display: flex;
   overflow: hidden;
   animation: slideUp 0.3s ease-out;
@@ -1376,10 +1379,10 @@ defineExpose({
 }
 
 .sidebar-item.active {
-  background: rgba(247, 206, 70, 0.1);
-  /* Yellow tint */
-  color: #F7CE46;
-  border-left: 3px solid #F7CE46;
+  background: rgba(0, 240, 255, 0.1);
+  color: #00f0ff;
+  border-left: 3px solid #00f0ff;
+  box-shadow: inset 20px 0 20px -20px rgba(0, 240, 255, 0.3);
 }
 
 /* Content */
@@ -1401,7 +1404,10 @@ defineExpose({
 .header-title {
   font-size: 18px;
   font-weight: 600;
-  color: #fff;
+  color: #00f0ff;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
 }
 
 .close-btn {
@@ -1462,7 +1468,8 @@ defineExpose({
 }
 
 .custom-input:focus {
-  border-color: #F7CE46;
+  border-color: #00f0ff;
+  box-shadow: 0 0 8px rgba(0, 240, 255, 0.2);
 }
 
 .button-row {
@@ -1488,23 +1495,25 @@ defineExpose({
 }
 
 .action-btn.create {
-  background: rgba(247, 206, 70, 0.2);
-  border: 1px solid rgba(247, 206, 70, 0.4);
-  color: #F7CE46;
+  background: rgba(0, 240, 255, 0.15);
+  border: 1px solid rgba(0, 240, 255, 0.4);
+  color: #00f0ff;
 }
 
 .action-btn.create:hover {
-  background: rgba(247, 206, 70, 0.3);
+  background: rgba(0, 240, 255, 0.3);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.3);
 }
 
 .action-btn.highlight {
-  background: rgba(0, 122, 204, 0.3);
-  border: 1px solid rgba(0, 122, 204, 0.5);
-  color: #61afef;
+  background: rgba(0, 240, 255, 0.15);
+  border: 1px solid rgba(0, 240, 255, 0.4);
+  color: #00f0ff;
 }
 
 .action-btn.highlight:hover {
-  background: rgba(0, 122, 204, 0.5);
+  background: rgba(0, 240, 255, 0.3);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.4);
 }
 
 .action-btn.delete {
@@ -1586,8 +1595,8 @@ defineExpose({
 }
 
 .badge {
-  background: rgba(247, 206, 70, 0.15);
-  color: #F7CE46;
+  background: rgba(0, 240, 255, 0.15);
+  color: #00f0ff;
   padding: 2px 8px;
   border-radius: 4px;
   font-size: 11px;
@@ -1724,14 +1733,14 @@ defineExpose({
   width: 40px;
   height: 40px;
   border: 4px solid rgba(255, 255, 255, 0.1);
-  border-top-color: #F7CE46;
+  border-top-color: #00f0ff;
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin-bottom: 12px;
 }
 
 .loading-text {
-  color: #F7CE46;
+  color: #00f0ff;
   font-size: 14px;
 }
 
@@ -1765,7 +1774,7 @@ defineExpose({
 }
 .component-dl-pct {
   margin-left: auto;
-  color: #F7CE46;
+  color: #00f0ff;
   font-weight: 600;
 }
 .component-dl-track {
@@ -1776,7 +1785,7 @@ defineExpose({
 }
 .component-dl-fill {
   height: 100%;
-  background: linear-gradient(90deg, #F7CE46, #f59e0b);
+  background: linear-gradient(90deg, #00f0ff, #0099ff);
   border-radius: 3px;
   transition: width 0.3s ease;
 }
