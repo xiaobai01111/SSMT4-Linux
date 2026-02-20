@@ -1,6 +1,6 @@
 [package]
 name = "SSMT4-linux"
-version = "0.0.2-beta"
+version = "0.0.3-beta"
 description = "SSMT4 - Linux Game Launcher"
 authors = ["you"]
 edition = "2021"

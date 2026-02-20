@@ -1,4 +1,4 @@
-2026-02-19 0.0.2-beta
+2026-02-19 0.0.3beta
 
 新增
 - 接入 `ArknightsEndfield`（明日方舟：终末地）预设，下载模式为官方启动器安装器（`launcher_installer`）。
