@@ -9,12 +9,18 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
 /// 最大并行下载数
 const MAX_CONCURRENT_DOWNLOADS: usize = 4;
+/// 单文件分片下载阈值（仅大文件启用）
+const PARALLEL_CHUNK_THRESHOLD: u64 = 512 * 1024 * 1024;
+/// 分片大小
+const PARALLEL_CHUNK_SIZE: u64 = 16 * 1024 * 1024;
+/// 单文件分片并发上限
+const MAX_CONCURRENT_CHUNKS: usize = 8;
 
 // ============================================================
 // 全量下载：下载压缩包 → 解压到游戏目录
@@ -237,6 +243,167 @@ pub async fn verify_game(
 // ============================================================
 
 /// 并行友好的文件下载（支持断点续传），通过 AtomicU64 汇报进度
+struct ActiveCounterGuard {
+    counter: Arc<AtomicUsize>,
+}
+
+impl ActiveCounterGuard {
+    fn new(counter: Arc<AtomicUsize>) -> Self {
+        counter.fetch_add(1, Ordering::Relaxed);
+        Self { counter }
+    }
+}
+
+impl Drop for ActiveCounterGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+async fn supports_parallel_range_download(
+    client: &Client,
+    url: &str,
+    active_streams: Arc<AtomicUsize>,
+) -> bool {
+    let _active_guard = ActiveCounterGuard::new(active_streams);
+    match client
+        .get(url)
+        .header("User-Agent", "Mozilla/5.0")
+        .header("Range", "bytes=0-0")
+        .send()
+        .await
+    {
+        Ok(resp) => resp.status().as_u16() == 206,
+        Err(_) => false,
+    }
+}
+
+async fn download_file_to_disk_chunked(
+    client: &Client,
+    url: &str,
+    temp_path: &Path,
+    expected_size: u64,
+    shared_bytes: Arc<AtomicU64>,
+    cancel_token: Arc<Mutex<bool>>,
+    active_streams: Arc<AtomicUsize>,
+) -> Result<(), String> {
+    let file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(temp_path)
+        .await
+        .map_err(|e| format!("创建临时文件失败: {}", e))?;
+    file.set_len(expected_size)
+        .await
+        .map_err(|e| format!("预分配临时文件失败: {}", e))?;
+    drop(file);
+
+    let chunk_count = ((expected_size + PARALLEL_CHUNK_SIZE - 1) / PARALLEL_CHUNK_SIZE) as usize;
+    let sem = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_CHUNKS));
+    let chunk_written = Arc::new(AtomicU64::new(0));
+    let mut handles = Vec::with_capacity(chunk_count);
+
+    for idx in 0..chunk_count {
+        let sem = sem.clone();
+        let cancel = cancel_token.clone();
+        let client = client.clone();
+        let active = active_streams.clone();
+        let temp = temp_path.to_path_buf();
+        let bytes_counter = shared_bytes.clone();
+        let chunk_written_counter = chunk_written.clone();
+        let url = url.to_string();
+        let start = idx as u64 * PARALLEL_CHUNK_SIZE;
+        let end = (start + PARALLEL_CHUNK_SIZE - 1).min(expected_size - 1);
+
+        let handle = tokio::spawn(async move {
+            let _permit = sem.acquire().await.map_err(|e| format!("信号量错误: {}", e))?;
+            if *cancel.lock().await {
+                return Err("Download cancelled".to_string());
+            }
+
+            let range_header = format!("bytes={}-{}", start, end);
+            let chunk_len = end - start + 1;
+
+            let chunk = {
+                let _active_guard = ActiveCounterGuard::new(active);
+                let resp = client
+                    .get(&url)
+                    .header("User-Agent", "Mozilla/5.0")
+                    .header("Range", range_header)
+                    .send()
+                    .await
+                    .map_err(|e| format!("分片请求失败: {}", e))?;
+                if resp.status().as_u16() != 206 {
+                    return Err("RANGE_UNSUPPORTED".to_string());
+                }
+                let bytes = resp
+                    .bytes()
+                    .await
+                    .map_err(|e| format!("分片读取失败: {}", e))?;
+                if bytes.len() as u64 != chunk_len {
+                    return Err(format!(
+                        "分片长度异常: expected={}, actual={}",
+                        chunk_len,
+                        bytes.len()
+                    ));
+                }
+                bytes
+            };
+
+            if *cancel.lock().await {
+                return Err("Download cancelled".to_string());
+            }
+
+            let mut file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .open(&temp)
+                .await
+                .map_err(|e| format!("打开临时文件失败: {}", e))?;
+            file.seek(std::io::SeekFrom::Start(start))
+                .await
+                .map_err(|e| format!("分片 seek 失败: {}", e))?;
+            file.write_all(&chunk)
+                .await
+                .map_err(|e| format!("分片写入失败: {}", e))?;
+
+            let written = chunk.len() as u64;
+            bytes_counter.fetch_add(written, Ordering::Relaxed);
+            chunk_written_counter.fetch_add(written, Ordering::Relaxed);
+            Ok::<(), String>(())
+        });
+        handles.push(handle);
+    }
+
+    let mut first_error: Option<String> = None;
+    for handle in handles {
+        match handle.await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
+            }
+            Err(e) => {
+                if first_error.is_none() {
+                    first_error = Some(format!("分片任务失败: {}", e));
+                }
+            }
+        }
+    }
+
+    if let Some(err) = first_error {
+        let wrote = chunk_written.load(Ordering::Relaxed);
+        if wrote > 0 {
+            shared_bytes.fetch_sub(wrote, Ordering::Relaxed);
+        }
+        tokio::fs::remove_file(temp_path).await.ok();
+        return Err(err);
+    }
+
+    Ok(())
+}
+
 async fn download_file_to_disk(
     client: &Client,
     url: &str,
@@ -246,6 +413,7 @@ async fn download_file_to_disk(
     expected_md5: &str,
     shared_bytes: Arc<AtomicU64>,
     cancel_token: Arc<Mutex<bool>>,
+    active_streams: Arc<AtomicUsize>,
 ) -> Result<(), String> {
     let temp_path = dest.with_file_name(format!(
         "{}.temp",
@@ -281,11 +449,56 @@ async fn download_file_to_disk(
         }
     }
 
+    if downloaded_bytes == 0 && expected_size >= PARALLEL_CHUNK_THRESHOLD {
+        if supports_parallel_range_download(client, url, active_streams.clone()).await {
+            info!(
+                "启用分片并发下载: {} (size={:.1} MB, chunk={} MB, 并发={})",
+                dest.display(),
+                expected_size as f64 / 1048576.0,
+                PARALLEL_CHUNK_SIZE / 1024 / 1024,
+                MAX_CONCURRENT_CHUNKS
+            );
+            match download_file_to_disk_chunked(
+                client,
+                url,
+                &temp_path,
+                expected_size,
+                shared_bytes.clone(),
+                cancel_token.clone(),
+                active_streams.clone(),
+            )
+            .await
+            {
+                Ok(()) => {
+                    if let Err(err) = hash_verify::verify_file_integrity(
+                        &temp_path,
+                        expected_size,
+                        Some(expected_sha256),
+                        Some(expected_md5),
+                    )
+                    .await
+                    {
+                        tokio::fs::remove_file(&temp_path).await.ok();
+                        return Err(format!("下载文件完整性校验失败: {} ({})", err, url));
+                    }
+                    tokio::fs::rename(&temp_path, dest)
+                        .await
+                        .map_err(|e| format!("重命名文件失败: {}", e))?;
+                    return Ok(());
+                }
+                Err(e) => {
+                    warn!("分片下载失败，回退到单连接流式下载: {}", e);
+                }
+            }
+        }
+    }
+
     let mut req = client.get(url).header("User-Agent", "Mozilla/5.0");
     if downloaded_bytes > 0 {
         req = req.header("Range", format!("bytes={}-", downloaded_bytes));
     }
 
+    let _active_guard = ActiveCounterGuard::new(active_streams);
     let resp = req
         .send()
         .await
@@ -1157,6 +1370,7 @@ async fn execute_plan(
 
         let shared_bytes = Arc::new(AtomicU64::new(cached_size));
         let shared_done = Arc::new(AtomicUsize::new(total_count - to_download.len()));
+        let shared_active_streams = Arc::new(AtomicUsize::new(0));
 
         // 进度上报任务
         let reporter = {
@@ -1164,6 +1378,7 @@ async fn execute_plan(
             let bytes = shared_bytes.clone();
             let done = shared_done.clone();
             let cancel = cancel_token.clone();
+            let active_streams = shared_active_streams.clone();
             tokio::spawn(async move {
                 let mut tracker = SpeedTracker::new();
                 let mut prev = bytes.load(Ordering::Relaxed);
@@ -1186,7 +1401,11 @@ async fn execute_plan(
                         total_size,
                         total_count,
                         done.load(Ordering::Relaxed),
-                        &format!("并行下载中 ({}路)", MAX_CONCURRENT_DOWNLOADS),
+                        &format!(
+                            "并行下载中 (活跃连接: {}，任务并发上限: {})",
+                            active_streams.load(Ordering::Relaxed),
+                            MAX_CONCURRENT_DOWNLOADS
+                        ),
                         tracker.speed_bps(),
                         tracker.eta_seconds(remaining),
                     );
@@ -1205,6 +1424,7 @@ async fn execute_plan(
             let cancel = cancel_token.clone();
             let bytes = shared_bytes.clone();
             let done = shared_done.clone();
+            let active_streams = shared_active_streams.clone();
             let dest = safe_join(game_folder, &task.filename)?;
             let url = task.url.clone();
             let md5 = task.md5.clone();
@@ -1253,6 +1473,7 @@ async fn execute_plan(
                         &md5,
                         bytes.clone(),
                         cancel.clone(),
+                        active_streams.clone(),
                     )
                     .await
                     {

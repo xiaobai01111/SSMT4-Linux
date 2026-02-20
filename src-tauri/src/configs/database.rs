@@ -357,6 +357,28 @@ fn ensure_game_catalog_seed(conn: &Connection) {
             }
         }
     }
+
+    // 兼容清理：移除已下架游戏（崩坏3）在旧数据库中的残留记录。
+    let _ = conn.execute(
+        "DELETE FROM game_presets WHERE lower(id) = lower('HonkaiImpact3rd')",
+        [],
+    );
+    let _ = conn.execute(
+        "DELETE FROM game_identities WHERE lower(canonical_key) = lower('HonkaiImpact3rd')",
+        [],
+    );
+    let _ = conn.execute(
+        "DELETE FROM game_key_aliases WHERE lower(canonical_key) = lower('HonkaiImpact3rd')",
+        [],
+    );
+    let _ = conn.execute(
+        "DELETE FROM game_configs WHERE lower(game_name) = lower('HonkaiImpact3rd')",
+        [],
+    );
+    let _ = conn.execute(
+        "DELETE FROM game_configs_v2 WHERE lower(game_name) = lower('HonkaiImpact3rd')",
+        [],
+    );
 }
 
 fn ensure_proton_catalog_seed(conn: &Connection) {

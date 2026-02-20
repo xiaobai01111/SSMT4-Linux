@@ -883,6 +883,243 @@ pub fn get_default_game_folder(game_name: String) -> Result<String, String> {
     Ok(game_dir.to_string_lossy().to_string())
 }
 
+#[tauri::command]
+pub fn resolve_downloaded_game_executable(
+    game_name: String,
+    game_folder: String,
+    launcher_api: Option<String>,
+) -> Result<Option<String>, String> {
+    let game_preset = crate::configs::game_identity::to_canonical_or_keep(&game_name);
+    let folder = game_folder.trim();
+    if folder.is_empty() {
+        return Ok(None);
+    }
+    let root = PathBuf::from(folder);
+    if !root.exists() || !root.is_dir() {
+        return Ok(None);
+    }
+    if !supports_auto_exe_detection(&game_preset) {
+        return Ok(None);
+    }
+
+    if let Some(path) =
+        resolve_known_game_executable(&game_preset, &root, launcher_api.as_deref())
+    {
+        return Ok(Some(path.to_string_lossy().to_string()));
+    }
+
+    Ok(resolve_best_executable_by_scan(&game_preset, &root)
+        .map(|p| p.to_string_lossy().to_string()))
+}
+
+fn supports_auto_exe_detection(game_preset: &str) -> bool {
+    matches!(
+        game_preset,
+        "HonkaiStarRail"
+            | "GenshinImpact"
+            | "ZenlessZoneZero"
+            | "WutheringWaves"
+            | "SnowbreakContainmentZone"
+    )
+}
+
+fn resolve_known_game_executable(
+    game_preset: &str,
+    game_root: &Path,
+    launcher_api: Option<&str>,
+) -> Option<PathBuf> {
+    let mut candidates: Vec<String> = Vec::new();
+    match game_preset {
+        "HonkaiStarRail" => candidates.push("StarRail.exe".to_string()),
+        "GenshinImpact" => {
+            let is_cn = launcher_api
+                .map(|api| api.contains("mihoyo.com"))
+                .unwrap_or(false);
+            if is_cn {
+                candidates.push("YuanShen.exe".to_string());
+                candidates.push("GenshinImpact.exe".to_string());
+            } else {
+                candidates.push("GenshinImpact.exe".to_string());
+                candidates.push("YuanShen.exe".to_string());
+            }
+        }
+        "ZenlessZoneZero" => candidates.push("ZenlessZoneZero.exe".to_string()),
+        "WutheringWaves" => {
+            candidates.push("Wuthering Waves.exe".to_string());
+            candidates.push("Client/Binaries/Win64/Client-Win64-Shipping.exe".to_string());
+        }
+        "SnowbreakContainmentZone" => {
+            candidates.push("Snowbreak.exe".to_string());
+            candidates.push("X6Game.exe".to_string());
+            candidates.push("X6Game/Binaries/Win64/X6Game-Win64-Shipping.exe".to_string());
+            candidates.push("Game/Binaries/Win64/Game-Win64-Shipping.exe".to_string());
+        }
+        _ => {}
+    }
+
+    for rel in candidates {
+        let path = game_root.join(rel);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn resolve_best_executable_by_scan(game_preset: &str, game_root: &Path) -> Option<PathBuf> {
+    let candidates = collect_exe_files(game_root, 7, 20_000);
+    let mut best: Option<(i32, usize, PathBuf)> = None;
+
+    for path in candidates {
+        let score = score_executable_candidate(game_preset, game_root, &path);
+        if score < 10 {
+            continue;
+        }
+        let depth = relative_depth(game_root, &path);
+        match &best {
+            None => best = Some((score, depth, path)),
+            Some((best_score, best_depth, _)) => {
+                if score > *best_score || (score == *best_score && depth < *best_depth) {
+                    best = Some((score, depth, path));
+                }
+            }
+        }
+    }
+
+    best.map(|(_, _, path)| path)
+}
+
+fn collect_exe_files(root: &Path, max_depth: usize, max_entries: usize) -> Vec<PathBuf> {
+    let mut result = Vec::new();
+    let mut stack: Vec<(PathBuf, usize)> = vec![(root.to_path_buf(), 0)];
+    let mut visited: usize = 0;
+
+    while let Some((dir, depth)) = stack.pop() {
+        if visited >= max_entries {
+            break;
+        }
+        let Ok(read_dir) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in read_dir.flatten() {
+            if visited >= max_entries {
+                break;
+            }
+            visited += 1;
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            let path = entry.path();
+            if file_type.is_dir() {
+                if depth < max_depth {
+                    stack.push((path, depth + 1));
+                }
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+            if path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("exe"))
+                .unwrap_or(false)
+            {
+                result.push(path);
+            }
+        }
+    }
+
+    result
+}
+
+fn relative_depth(root: &Path, path: &Path) -> usize {
+    path.strip_prefix(root)
+        .ok()
+        .map(|p| p.components().count())
+        .unwrap_or(usize::MAX)
+}
+
+fn score_executable_candidate(game_preset: &str, root: &Path, path: &Path) -> i32 {
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let rel = path
+        .strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+
+    let blocked_tokens = [
+        "launcher",
+        "uninstall",
+        "unins",
+        "updater",
+        "repair",
+        "crashreport",
+        "crashpad",
+        "cef",
+        "elevate",
+        "easyanticheat",
+        "eac",
+        "vc_redist",
+        "dxsetup",
+    ];
+    if blocked_tokens
+        .iter()
+        .any(|token| file_name.contains(token) || rel.contains(token))
+    {
+        return -1000;
+    }
+
+    let mut score = 0;
+
+    if file_name.ends_with("-win64-shipping.exe") {
+        score += 55;
+    }
+    if rel.contains("/binaries/win64/") {
+        score += 25;
+    }
+    if rel.contains("/engine/") || rel.contains("/thirdparty/") {
+        score -= 25;
+    }
+    if relative_depth(root, path) <= 2 {
+        score += 10;
+    }
+
+    let keywords: &[&str] = match game_preset {
+        "WutheringWaves" => &["wuthering", "client-win64-shipping"],
+        "SnowbreakContainmentZone" => &["snowbreak", "x6game", "shipping"],
+        "HonkaiStarRail" => &["starrail"],
+        "GenshinImpact" => &["yuanshen", "genshinimpact"],
+        "ZenlessZoneZero" => &["zenlesszonezero", "zenless"],
+        _ => &[],
+    };
+    for kw in keywords {
+        if rel.contains(kw) || file_name.contains(kw) {
+            score += 30;
+        }
+    }
+
+    if let Ok(meta) = std::fs::metadata(path) {
+        let size = meta.len();
+        if size < 300 * 1024 {
+            score -= 20;
+        }
+        if size >= 20 * 1024 * 1024 {
+            score += 8;
+        }
+        if size >= 80 * 1024 * 1024 {
+            score += 8;
+        }
+    }
+
+    score
+}
+
 /// Snowbreak 游戏状态检测
 async fn get_game_state_snowbreak(
     game_path: &Path,

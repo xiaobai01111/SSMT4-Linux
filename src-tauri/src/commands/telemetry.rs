@@ -989,7 +989,7 @@ pub fn get_game_protection_info(game_preset: String) -> Result<serde_json::Value
     let channel = get_channel_protection_config(&game_preset);
 
     let category = match game_preset.as_str() {
-        "GenshinImpact" | "HonkaiStarRail" | "ZenlessZoneZero" | "HonkaiImpact3rd" => "HoYoverse",
+        "GenshinImpact" | "HonkaiStarRail" | "ZenlessZoneZero" => "HoYoverse",
         "WutheringWaves" => "Kuro Games",
         "SnowbreakContainmentZone" => "Seasun",
         _ => "Unknown",

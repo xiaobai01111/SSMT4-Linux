@@ -17,10 +17,6 @@
       "displayNameEn": "Zenless Zone Zero"
     },
     {
-      "canonicalKey": "HonkaiImpact3rd",
-      "displayNameEn": "Honkai Impact 3rd"
-    },
-    {
       "canonicalKey": "SnowbreakContainmentZone",
       "displayNameEn": "Snowbreak: Containment Zone"
     },
@@ -93,13 +89,13 @@
           "id": "cn",
           "label": "国服",
           "launcherApi": "https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1",
-          "bizPrefix": "hkrpg_"
+          "bizPrefix": "hkrpg_cn"
         },
         {
           "id": "global",
           "label": "国际服",
           "launcherApi": "https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8",
-          "bizPrefix": "hkrpg_"
+          "bizPrefix": "hkrpg_global"
         }
       ],
       "audioLanguages": [
@@ -131,13 +127,13 @@
           "id": "cn",
           "label": "国服",
           "launcherApi": "https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1",
-          "bizPrefix": "nap_"
+          "bizPrefix": "nap_cn"
         },
         {
           "id": "global",
           "label": "国际服",
           "launcherApi": "https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8",
-          "bizPrefix": "nap_"
+          "bizPrefix": "nap_global"
         }
       ],
       "audioLanguages": [
@@ -169,13 +165,13 @@
           "id": "cn",
           "label": "国服",
           "launcherApi": "https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1",
-          "bizPrefix": "hk4e_"
+          "bizPrefix": "hk4e_cn"
         },
         {
           "id": "global",
           "label": "国际服",
           "launcherApi": "https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8",
-          "bizPrefix": "hk4e_"
+          "bizPrefix": "hk4e_global"
         }
       ],
       "audioLanguages": [
@@ -198,36 +194,6 @@
         "YuanShen_Data/Plugins/x86_64/Telemetry.dll",
         "YuanShen_Data/Plugins/x86_64/telemetry.dll"
       ]
-    },
-    {
-      "id": "HonkaiImpact3rd",
-      "displayNameEn": "Honkai Impact 3rd",
-      "supported": true,
-      "defaultFolder": "HonkaiImpact3rd",
-      "downloadServers": [
-        {
-          "id": "cn",
-          "label": "国服",
-          "launcherApi": "https://hyp-api.mihoyo.com/hyp/hyp-connect/api/getGamePackages?launcher_id=jGHBHlcOq1",
-          "bizPrefix": "bh3_"
-        },
-        {
-          "id": "global",
-          "label": "国际服",
-          "launcherApi": "https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages?launcher_id=VYTpXlbWo8",
-          "bizPrefix": "bh3_"
-        }
-      ],
-      "audioLanguages": [],
-      "telemetryServers": [
-        "log-upload.mihoyo.com",
-        "uspider.yuanshen.com",
-        "log-upload-os.hoyoverse.com",
-        "overseauspider.yuanshen.com",
-        "sg-public-data-api.hoyoverse.com",
-        "public-data-api.mihoyo.com"
-      ],
-      "telemetryDlls": []
     },
     {
       "id": "SnowbreakContainmentZone",

@@ -80,6 +80,48 @@ interface ServerOption {
 const availableServers = ref<ServerOption[]>([]);
 const selectedServer = ref<ServerOption | null>(null);
 const isLauncherInstallerMode = computed(() => downloadMode.value === 'launcher_installer');
+const loadSeq = ref(0);
+type RuntimeChannelMode = 'init' | 'protected' | 'unknown';
+
+const toFiniteNumber = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+};
+
+const channelCurrentValue = computed(() => toFiniteNumber(channelProtection.value?.channel?.currentValue));
+const channelInitValue = computed(() => toFiniteNumber(channelProtection.value?.channel?.initValue) ?? 19);
+const channelProtectedValue = computed(() => toFiniteNumber(channelProtection.value?.channel?.protectedValue) ?? 205);
+const currentRuntimeChannelMode = computed<RuntimeChannelMode>(() => {
+  const current = channelCurrentValue.value;
+  if (current === null) return 'unknown';
+  if (current === channelProtectedValue.value) return 'protected';
+  if (current === channelInitValue.value) return 'init';
+  return 'unknown';
+});
+const runtimeChannelModeLabel = computed(() => {
+  switch (currentRuntimeChannelMode.value) {
+    case 'protected':
+      return `游戏(${channelProtectedValue.value})`;
+    case 'init':
+      return `初始化(${channelInitValue.value})`;
+    default:
+      return '未知';
+  }
+});
+const runtimeChannelPillLabel = computed(() => {
+  switch (currentRuntimeChannelMode.value) {
+    case 'protected':
+      return '游戏模式';
+    case 'init':
+      return '初始化模式';
+    default:
+      return '未知模式';
+  }
+});
 
 const protectionStatusLabel = computed(() => {
   if (!protectionInfo.value?.hasProtections) return '该游戏暂无可用防护';
@@ -147,10 +189,18 @@ const isHoyoverseApi = (api: string): boolean =>
   api.includes('mihoyo.com') || api.includes('hoyoverse.com');
 
 const currentBizPrefix = (): string => (selectedServer.value?.bizPrefix || '').trim();
+const resolvedBizPrefix = (): string => {
+  const api = launcherApi.value.trim();
+  if (api && availableServers.value.length > 0) {
+    const matched = availableServers.value.find((s) => s.launcherApi.trim() === api);
+    if (matched?.bizPrefix) return matched.bizPrefix.trim();
+  }
+  return currentBizPrefix();
+};
 
 const ensureBizPrefixReady = (): boolean => {
   if (!isHoyoverseApi(launcherApi.value)) return true;
-  if (currentBizPrefix()) return true;
+  if (resolvedBizPrefix()) return true;
   error.value = '当前 HoYoverse 服务器缺少 biz_prefix，请检查游戏预设配置';
   return false;
 };
@@ -239,8 +289,14 @@ const setChannelMode = async (mode: 'init' | 'protected') => {
 // 打开时自动加载：检测是否支持自动下载 + 读取配置
 const loadState = async () => {
   if (!props.gameName) return;
+  const seq = ++loadSeq.value;
+  const isStale = () => seq !== loadSeq.value || !props.modelValue;
   error.value = '';
   statusMsg.value = '正在加载配置...';
+  selectedServer.value = null;
+  availableServers.value = [];
+  availableLanguages.value = [];
+  selectedLanguages.value = [];
 
   // 1. 先尝试从 Config.json 读取 GamePreset，失败则直接用 gameName
   let preset = canonicalPreset(props.gameName);
@@ -255,12 +311,15 @@ const loadState = async () => {
   } catch (e) {
     console.warn('[GameDownload] loadGameConfig 失败，使用 gameName 作为 preset:', e);
   }
+  if (isStale()) return;
   gamePreset.value = preset;
   console.log('[GameDownload] gameName =', props.gameName, ', preset =', preset);
   await refreshProtectionStatus();
+  if (isStale()) return;
 
   // 2. 检测是否支持自动下载
   const launcherInfo = await getGameLauncherApi(preset);
+  if (isStale()) return;
   const knownApi: LauncherApiConfig | null = launcherInfo.supported
     ? {
         defaultFolder: launcherInfo.defaultFolder || '',
@@ -285,10 +344,9 @@ const loadState = async () => {
     const matched = savedApi
       ? availableServers.value.find((s) => s.launcherApi.trim() === savedApi) || null
       : null;
-    if (matched) {
-      selectedServer.value = matched;
-    } else if (!selectedServer.value) {
-      selectedServer.value = availableServers.value[0]; // 默认选择第一个（国服）
+    selectedServer.value = matched || availableServers.value[0]; // 默认选择第一个（国服）
+    if (selectedServer.value) {
+      launcherApi.value = selectedServer.value.launcherApi;
     }
   }
 
@@ -312,6 +370,7 @@ const loadState = async () => {
   // 4. 始终从后端获取最新默认目录（跟随 dataDir 变化）
   try {
     const baseDir = await getDefaultGameFolder(props.gameName);
+    if (isStale()) return;
     const defaultFolderPart = trimFolderPart(knownApi.defaultFolder);
     const defaultFolder = defaultFolderPart ? `${baseDir}/${defaultFolderPart}` : baseDir;
     const defaultNorm = normalizePathForCompare(defaultFolder);
@@ -352,6 +411,7 @@ const loadState = async () => {
     console.warn('[GameDownload] getDefaultGameFolder failed:', e);
     gameFolder.value = savedFolder || '';
   }
+  if (isStale()) return;
 
   statusMsg.value = '';
   console.log('[GameDownload] launcherApi =', launcherApi.value);
@@ -398,7 +458,7 @@ const checkState = async () => {
       };
     } else {
       installerOfficialUrl.value = '';
-      const biz = currentBizPrefix() || undefined;
+      const biz = resolvedBizPrefix() || undefined;
       gameState.value = await getGameState(launcherApi.value, gameFolder.value, biz);
     }
     await refreshProtectionStatus();
@@ -440,7 +500,7 @@ const startDownload = async () => {
     launcherApi: launcherApi.value,
     gameFolder: gameFolder.value,
     languages: selectedLanguages.value.length > 0 ? [...selectedLanguages.value] : undefined,
-    bizPrefix: currentBizPrefix() || undefined,
+    bizPrefix: resolvedBizPrefix() || undefined,
     isUpdate: gameState.value?.state === 'needupdate',
   });
 };
@@ -460,7 +520,7 @@ const startVerify = async () => {
     displayName: props.displayName,
     launcherApi: launcherApi.value,
     gameFolder: gameFolder.value,
-    bizPrefix: currentBizPrefix() || undefined,
+    bizPrefix: resolvedBizPrefix() || undefined,
   });
 };
 
@@ -679,6 +739,23 @@ watch(() => props.modelValue, (val) => {
     loadState();
   }
 }, { immediate: true });
+
+watch(() => props.gameName, () => {
+  if (!props.modelValue) return;
+  error.value = '';
+  statusMsg.value = '';
+  gameState.value = null;
+  loadState();
+});
+
+watch(launcherApi, (api) => {
+  const normalized = api.trim();
+  if (!normalized || availableServers.value.length === 0) return;
+  const matched = availableServers.value.find((s) => s.launcherApi.trim() === normalized);
+  if (matched) {
+    selectedServer.value = matched;
+  }
+});
 </script>
 
 <template>
@@ -742,15 +819,15 @@ watch(() => props.modelValue, (val) => {
                 <span class="channel-mode-title">渠道模式</span>
                 <span
                   class="channel-mode-pill"
-                  :class="{ ok: channelProtection.channel?.enabled, warn: !channelProtection.channel?.enabled }"
+                  :class="{ ok: currentRuntimeChannelMode === 'protected', warn: currentRuntimeChannelMode !== 'protected' }"
                 >
-                  {{ channelProtection.channel?.enabled ? '已匹配' : '未匹配' }}
+                  {{ runtimeChannelPillLabel }}
                 </span>
               </div>
               <div class="channel-mode-meta">
-                <span>当前值: {{ channelProtection.channel?.currentValue ?? '未知' }}</span>
+                <span>当前值: {{ channelCurrentValue ?? '未知' }}</span>
                 <span>目标值: {{ channelProtection.channel?.expectedValue ?? '未知' }}</span>
-                <span>当前模式: {{ channelProtection.channel?.mode || '-' }}</span>
+                <span>当前模式: {{ runtimeChannelModeLabel }}</span>
               </div>
               <div class="channel-mode-actions">
                 <button class="action-btn sm" @click="setChannelMode('init')" :disabled="isChannelModeBusy || !gameFolder">
@@ -763,14 +840,14 @@ watch(() => props.modelValue, (val) => {
                   恢复默认(19)
                 </button>
               </div>
-              <p v-if="channelProtection.channel?.mode === 'init'" class="channel-mode-hint">
+              <p v-if="currentRuntimeChannelMode === 'init'" class="channel-mode-hint">
                 当前处于初始化模式。完成首次初始化后，请手动切换到联机模式(205)。
               </p>
               <p
-                v-else-if="!channelProtection.channel?.enabled"
+                v-else-if="currentRuntimeChannelMode === 'unknown'"
                 class="channel-mode-hint warning"
               >
-                当前模式与配置值不一致，建议重新应用当前模式。
+                当前渠道值无法识别（既不是 19 也不是 205），建议重新应用当前模式。
               </p>
             </div>
 

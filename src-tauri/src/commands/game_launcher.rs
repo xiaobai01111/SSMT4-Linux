@@ -524,7 +524,7 @@ async fn start_game_internal(
     // 检测 jadeite 补丁（HoYoverse 游戏反作弊包装器）
     let is_hoyoverse = matches!(
         game_preset.as_str(),
-        "GenshinImpact" | "HonkaiStarRail" | "ZenlessZoneZero" | "HonkaiImpact3rd"
+        "GenshinImpact" | "HonkaiStarRail" | "ZenlessZoneZero"
     );
     let jadeite_exe = if is_hoyoverse {
         // 使用与 install_jadeite 相同的 resolve_patch_dir（从配置读取 gameFolder）

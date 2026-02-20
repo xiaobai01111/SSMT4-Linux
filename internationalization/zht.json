@@ -4,7 +4,6 @@
     "HonkaiStarRail": "崩壞：星穹鐵道",
     "ZenlessZoneZero": "絕區零",
     "WutheringWaves": "鳴潮",
-    "HonkaiImpact3rd": "崩壞3",
     "SnowbreakContainmentZone": "塵白禁區",
     "ArknightsEndfield": "明日方舟：終末地",
     "Arknights": "明日方舟"
@@ -81,10 +80,6 @@
       },
       "zzz": {
         "name": "絕區零 (Zenless Zone Zero)",
-        "desc": "官方網站"
-      },
-      "hi3": {
-        "name": "崩壞3 (Honkai Impact 3rd)",
         "desc": "官方網站"
       },
       "ww": {

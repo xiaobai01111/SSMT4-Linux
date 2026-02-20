@@ -25,7 +25,6 @@ SSMT4 Linux 是一个基于 `Tauri + Vue 3 + Rust` 的 Linux 游戏工具箱，�
 - `HonkaiStarRail`
 - `ZenlessZoneZero`
 - `WutheringWaves`
-- `HonkaiImpact3rd`
 - `SnowbreakContainmentZone`
 
 ## 架构说明
@@ -123,7 +122,9 @@ npm run tauri dev
 
 - <https://github.com/xiaobai01111/SSMT4-Linux>
 
-[![Star History Chart](https://api.star-history.com/svg?repos=xiaobai01111/SSMT4-Linux&type=Date)](https://star-history.com/#xiaobai01111/SSMT4-Linux&Date)
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=xiaobai01111/SSMT4-Linux&type=date&legend=top-left)](https://www.star-history.com/#xiaobai01111/SSMT4-Linux&type=date&legend=top-left)
 
 ## License
 

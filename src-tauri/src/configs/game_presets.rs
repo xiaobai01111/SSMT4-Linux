@@ -334,7 +334,6 @@ mod tests {
             "HonkaiStarRail",
             "ZenlessZoneZero",
             "GenshinImpact",
-            "HonkaiImpact3rd",
             "SnowbreakContainmentZone",
             "ArknightsEndfield",
             "Arknights",

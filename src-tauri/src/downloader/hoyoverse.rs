@@ -1,5 +1,6 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use tracing::info;
 
 // ============================================================
@@ -100,6 +101,10 @@ pub struct ResourceEntry {
 /// 获取 HoYoverse 游戏包信息
 /// biz_prefix: 用于匹配游戏，如 "hkrpg_" (星穹铁道), "hk4e_" (原神), "nap_" (绝区零)
 pub async fn fetch_game_packages(api_url: &str, biz_prefix: &str) -> Result<GamePackage, String> {
+    fetch_game_packages_via_hyp(api_url, biz_prefix).await
+}
+
+async fn fetch_game_packages_via_hyp(api_url: &str, biz_prefix: &str) -> Result<GamePackage, String> {
     let client = Client::new();
     let resp = client
         .get(api_url)
@@ -120,11 +125,105 @@ pub async fn fetch_game_packages(api_url: &str, biz_prefix: &str) -> Result<Game
         ));
     }
 
-    data.data
-        .game_packages
+    let packages = data.data.game_packages;
+    let exact_match = !biz_prefix.ends_with('_');
+    let mut candidates: Vec<GamePackage> = packages
+        .iter()
+        .filter(|pkg| {
+            if exact_match {
+                pkg.game.biz == biz_prefix
+            } else {
+                pkg.game.biz.starts_with(biz_prefix)
+            }
+        })
+        .cloned()
+        .collect();
+
+    // 兼容旧数据：历史上某些配置使用 "hk4e"/"hkrpg" 这种非 *_ 前缀，允许回退到前缀匹配。
+    if candidates.is_empty() && exact_match {
+        candidates = packages
+            .into_iter()
+            .filter(|pkg| pkg.game.biz.starts_with(biz_prefix))
+            .collect();
+    }
+
+    if candidates.is_empty() {
+        return Err(format!("API 响应中未找到游戏 (biz prefix: {})", biz_prefix));
+    }
+
+    let region_hint = infer_region_hint_from_api_url(api_url);
+    if let Some(hint) = region_hint {
+        let hinted: Vec<GamePackage> = candidates
+            .iter()
+            .filter(|pkg| biz_matches_region_hint(&pkg.game.biz, hint))
+            .cloned()
+            .collect();
+        if !hinted.is_empty() {
+            candidates = hinted;
+        }
+    }
+
+    candidates.sort_by(|a, b| compare_version_desc(major_version_of(a), major_version_of(b)));
+
+    let selected = candidates
         .into_iter()
-        .find(|pkg| pkg.game.biz.starts_with(biz_prefix))
-        .ok_or_else(|| format!("API 响应中未找到游戏 (biz prefix: {})", biz_prefix))
+        .next()
+        .ok_or_else(|| format!("API 响应中未找到可用游戏包 (biz prefix: {})", biz_prefix))?;
+
+    info!(
+        "HoYoverse package selected: biz={}, version={}, api={}",
+        selected.game.biz,
+        selected.main.major.version,
+        api_url
+    );
+    Ok(selected)
+}
+
+fn major_version_of(pkg: &GamePackage) -> &str {
+    pkg.main.major.version.trim()
+}
+
+fn infer_region_hint_from_api_url(api_url: &str) -> Option<&'static str> {
+    if api_url.contains("hyp-api.mihoyo.com") {
+        Some("cn")
+    } else if api_url.contains("sg-hyp-api.hoyoverse.com") {
+        Some("global")
+    } else {
+        None
+    }
+}
+
+fn biz_matches_region_hint(biz: &str, hint: &str) -> bool {
+    let biz = biz.trim().to_ascii_lowercase();
+    let hint = hint.trim().to_ascii_lowercase();
+    if hint == "cn" {
+        return biz.ends_with("_cn");
+    }
+    if hint == "global" {
+        return biz.ends_with("_global") || biz.ends_with("_overseas") || biz.ends_with("_os");
+    }
+    false
+}
+
+fn parse_version_segments(raw: &str) -> Vec<u32> {
+    raw.split(|c: char| !c.is_ascii_digit())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.parse::<u32>().unwrap_or(0))
+        .collect()
+}
+
+fn compare_version_desc(a: &str, b: &str) -> Ordering {
+    let av = parse_version_segments(a);
+    let bv = parse_version_segments(b);
+    let max_len = av.len().max(bv.len());
+    for i in 0..max_len {
+        let ai = *av.get(i).unwrap_or(&0);
+        let bi = *bv.get(i).unwrap_or(&0);
+        if ai != bi {
+            return bi.cmp(&ai);
+        }
+    }
+    Ordering::Equal
 }
 
 /// 获取资源文件列表（用于校验）
@@ -243,4 +342,25 @@ pub fn write_local_version(game_folder: &std::path::Path, version: &str) -> Resu
     std::fs::write(&config_path, content).map_err(|e| format!("写入版本配置失败: {}", e))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compare_version_desc_prefers_newer() {
+        assert_eq!(compare_version_desc("2.1.0", "2.0.9"), Ordering::Less);
+        assert_eq!(compare_version_desc("1.9.9", "2.0.0"), Ordering::Greater);
+        assert_eq!(compare_version_desc("3.0.0", "3.0"), Ordering::Equal);
+    }
+
+    #[test]
+    fn region_hint_matches_expected_biz_suffix() {
+        assert!(biz_matches_region_hint("hk4e_cn", "cn"));
+        assert!(!biz_matches_region_hint("hk4e_global", "cn"));
+        assert!(biz_matches_region_hint("hkrpg_global", "global"));
+        assert!(biz_matches_region_hint("hkrpg_overseas", "global"));
+        assert!(!biz_matches_region_hint("hkrpg_cn", "global"));
+    }
 }

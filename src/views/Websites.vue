@@ -22,7 +22,6 @@ const links = computed<LinkItem[]>(() => [
   { key: 'genshin', category: 'games', cnUrl: 'https://ys.mihoyo.com/', globalUrl: 'https://genshin.hoyoverse.com/' },
   { key: 'hsr', category: 'games', cnUrl: 'https://sr.mihoyo.com/', globalUrl: 'https://hsr.hoyoverse.com/' },
   { key: 'zzz', category: 'games', cnUrl: 'https://zzz.mihoyo.com/', globalUrl: 'https://zenless.hoyoverse.com/' },
-  { key: 'hi3', category: 'games', cnUrl: 'https://bh3.mihoyo.com/', globalUrl: 'https://honkaiimpact3.hoyoverse.com/' },
   { key: 'ww', category: 'games', cnUrl: 'https://mc.kurogames.com/', globalUrl: 'https://wutheringwaves.kurogames.com/' },
   { key: 'snowbreak', category: 'games', cnUrl: 'https://snowbreak.amazingseasun.com/', globalUrl: 'https://snowbreak.amazingseasun.com/' },
 ]);

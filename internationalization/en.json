@@ -4,7 +4,6 @@
     "HonkaiStarRail": "Honkai: Star Rail",
     "ZenlessZoneZero": "Zenless Zone Zero",
     "WutheringWaves": "Wuthering Waves",
-    "HonkaiImpact3rd": "Honkai Impact 3rd",
     "SnowbreakContainmentZone": "Snowbreak: Containment Zone",
     "ArknightsEndfield": "Arknights: Endfield",
     "Arknights": "Arknights"
@@ -81,10 +80,6 @@
       },
       "zzz": {
         "name": "Zenless Zone Zero",
-        "desc": "Official website"
-      },
-      "hi3": {
-        "name": "Honkai Impact 3rd",
         "desc": "Official website"
       },
       "ww": {

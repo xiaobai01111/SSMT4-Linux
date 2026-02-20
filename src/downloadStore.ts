@@ -14,6 +14,7 @@ import {
   updateLauncherInstaller as apiUpdateLauncherInstaller,
   verifyGameFiles as apiVerifyGameFiles,
   cancelDownload as apiCancelDownload,
+  resolveDownloadedGameExecutable,
   listenEvent,
   showMessage,
   saveGameConfig,
@@ -175,9 +176,18 @@ async function runTask(task: DownloadTaskModel) {
           config.other.gameFolder = task.gameFolder;
           // 自动设置游戏可执行文件路径（首次安装时）
           if (!config.other.gamePath) {
-            const exeName = resolveGameExeName(task.gameName, task.launcherApi);
-            if (exeName) {
-              config.other.gamePath = task.gameFolder + '/' + exeName;
+            const detectedExe = await resolveDownloadedGameExecutable(
+              task.gameName,
+              task.gameFolder,
+              task.launcherApi,
+            ).catch(() => null);
+            if (detectedExe) {
+              config.other.gamePath = detectedExe;
+            } else {
+              const exeName = resolveGameExeName(task.gameName, task.launcherApi);
+              if (exeName) {
+                config.other.gamePath = task.gameFolder + '/' + exeName;
+              }
             }
           }
           await saveGameConfig(task.gameName, config);
@@ -469,8 +479,6 @@ function resolveGameExeName(gameName: string, launcherApi: string): string | nul
       return isCN ? 'YuanShen.exe' : 'GenshinImpact.exe';
     case 'ZenlessZoneZero':
       return 'ZenlessZoneZero.exe';
-    case 'HonkaiImpact3rd':
-      return 'BH3.exe';
     default:
       return null;
   }

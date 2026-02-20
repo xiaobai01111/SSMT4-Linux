@@ -281,7 +281,7 @@ const isJadeiteInstalling = ref(false);
 const prefixInfo = ref<PrefixInfo | null>(null);
 
 const isHoyoverse = computed(() =>
-  ['GenshinImpact', 'HonkaiStarRail', 'ZenlessZoneZero', 'HonkaiImpact3rd'].includes(
+  ['GenshinImpact', 'HonkaiStarRail', 'ZenlessZoneZero'].includes(
     config.basic.gamePreset,
   ),
 );

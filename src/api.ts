@@ -890,6 +890,18 @@ export async function getDefaultGameFolder(gameName: string): Promise<string> {
   return invoke<string>('get_default_game_folder', { gameName });
 }
 
+export async function resolveDownloadedGameExecutable(
+  gameName: string,
+  gameFolder: string,
+  launcherApi?: string,
+): Promise<string | null> {
+  return invoke<string | null>('resolve_downloaded_game_executable', {
+    gameName,
+    gameFolder,
+    launcherApi: launcherApi || null,
+  });
+}
+
 // ============================================================
 // Tauri 辅助函数封装
 // ============================================================
