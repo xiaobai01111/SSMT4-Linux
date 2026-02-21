@@ -5,8 +5,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::Manager;
 use tauri::State;
+use tracing::instrument;
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "load_settings"), err)]
 pub fn load_settings(config: State<'_, Mutex<AppConfig>>) -> Result<AppConfig, String> {
     // 优先从 SQLite 读取
     let pairs = db::get_all_settings();
@@ -32,6 +34,7 @@ pub fn load_settings(config: State<'_, Mutex<AppConfig>>) -> Result<AppConfig, S
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "save_settings"), err)]
 pub fn save_settings(
     config: State<'_, Mutex<AppConfig>>,
     mut settings: AppConfig,
@@ -130,6 +133,7 @@ async fn fetch_remote_data_parameters_version() -> Result<String, String> {
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "get_version_check_info"), err)]
 pub fn get_version_check_info(app: tauri::AppHandle) -> Result<VersionCheckInfo, String> {
     let current_version = env!("CARGO_PKG_VERSION").to_string();
     let mut latest_version = String::new();
@@ -167,6 +171,12 @@ pub fn get_version_check_info(app: tauri::AppHandle) -> Result<VersionCheckInfo,
 }
 
 #[tauri::command]
+#[instrument(
+    level = "info",
+    skip_all,
+    fields(cmd = "get_resource_version_info"),
+    err
+)]
 pub async fn get_resource_version_info() -> Result<VersionCheckInfo, String> {
     let mut notes = vec![format!("资源仓库: {}", DATA_PARAMETERS_REPO_URL)];
     let (current_version, local_path_note) = match read_data_parameters_local_version() {
@@ -201,6 +211,7 @@ pub async fn get_resource_version_info() -> Result<VersionCheckInfo, String> {
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "pull_resource_updates"), err)]
 pub fn pull_resource_updates() -> Result<String, String> {
     crate::utils::data_parameters::sync_managed_repo()?;
     let version = read_data_parameters_local_version()
@@ -219,7 +230,7 @@ fn migrate_json_to_db() -> Result<AppConfig, String> {
             .map_err(|e| format!("读取 settings.json 失败: {}", e))?;
         let loaded: AppConfig = serde_json::from_str(&content)
             .map_err(|e| format!("解析 settings.json 失败: {}", e))?;
-        tracing::info!("从 settings.json 迁移到 SQLite");
+        crate::log_info!("从 settings.json 迁移到 SQLite");
         loaded
     } else {
         AppConfig::default()
@@ -526,12 +537,12 @@ fn apply_data_dir(cfg: &AppConfig) {
 
         // 创建符号链接：~/.local/share/ssmt4 -> 自定义目录
         if let Err(e) = crate::utils::file_manager::setup_data_dir_symlink(&dir) {
-            tracing::error!("设置数据目录符号链接失败: {}", e);
+            crate::log_error!("设置数据目录符号链接失败: {}", e);
         }
 
         // 创建 Games 子目录
         let games_dir = crate::utils::file_manager::get_global_games_dir();
         crate::utils::file_manager::ensure_dir(&games_dir).ok();
     }
-    tracing::info!("数据目录: {}", app_config::get_app_data_dir().display());
+    crate::log_info!("数据目录: {}", app_config::get_app_data_dir().display());
 }

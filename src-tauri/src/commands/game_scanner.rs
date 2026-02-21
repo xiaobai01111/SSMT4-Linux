@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tauri::Manager;
-use tracing::info;
+use tracing::instrument;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,9 +29,14 @@ fn get_default_display_name(game_key: &str) -> String {
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "scan_games"), err)]
 pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
     let user_games_dir = get_user_games_dir()?;
     let hidden_games = load_hidden_games(&user_games_dir);
+    let known_identity_keys: HashSet<String> = crate::configs::game_identity::all_identities()
+        .into_iter()
+        .map(|item| item.canonical_key.to_ascii_lowercase())
+        .collect();
 
     let mut scan_dirs = vec![user_games_dir.clone()];
     for resource_games_dir in get_resource_games_dirs(&app)? {
@@ -80,6 +85,21 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
                 .unwrap_or_else(|| {
                     crate::configs::game_identity::to_canonical_or_keep(&folder_name)
                 });
+
+            // 已下架：崩坏3不再展示，即使目录残留也忽略。
+            if game_id.eq_ignore_ascii_case("HonkaiImpact3rd") {
+                continue;
+            }
+
+            // 资源目录只接受 catalog 已知游戏，避免旧打包资源中的下架条目混入。
+            if dir_idx > 0 && !known_identity_keys.contains(&game_id.to_ascii_lowercase()) {
+                crate::utils::trace_event::warn(
+                    "game_scanner",
+                    "unknown_resource_game",
+                    format!("忽略资源目录中的未知游戏条目: {}", game_id),
+                );
+                continue;
+            }
 
             all_dir_names.insert(game_id.clone());
 
@@ -181,7 +201,7 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
             if let Some(ref data) = fs_config {
                 let content = serde_json::to_string_pretty(data).unwrap_or_default();
                 crate::configs::database::set_game_config(&game_id, &content);
-                info!("从文件迁移游戏配置到 SQLite: {}", game_id);
+                crate::log_info!("从文件迁移游戏配置到 SQLite: {}", game_id);
             }
         }
 
@@ -214,11 +234,15 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
         if !all_dir_names.contains(db_name.as_str()) {
             crate::configs::database::delete_game_config(db_name);
             crate::configs::database::delete_game_config_v2(db_name);
-            info!("已清理过期游戏配置: {}", db_name);
+            crate::log_info!("已清理过期游戏配置: {}", db_name);
         }
     }
 
-    info!("Scanned {} games", games.len());
+    crate::utils::trace_event::info(
+        "game_scanner",
+        "scan_games_completed",
+        format!("Scanned {} games", games.len()),
+    );
     Ok(games)
 }
 
@@ -243,6 +267,7 @@ fn find_background_video(game_dir: &Path) -> Option<String> {
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "set_game_visibility"), err)]
 pub fn set_game_visibility(
     app: tauri::AppHandle,
     game_name: String,
@@ -313,6 +338,7 @@ fn get_templates_dir() -> PathBuf {
 
 /// 返回模板文件夹路径，前端可用于打开文件夹
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "get_game_templates_dir"), err)]
 pub fn get_game_templates_dir() -> Result<String, String> {
     let dir = get_templates_dir();
     crate::utils::file_manager::ensure_dir(&dir)
@@ -322,6 +348,7 @@ pub fn get_game_templates_dir() -> Result<String, String> {
 
 /// 扫描可用的游戏配置模板
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "list_game_templates"), err)]
 pub fn list_game_templates(app: tauri::AppHandle) -> Result<Vec<GameTemplateInfo>, String> {
     let templates_dir = get_templates_dir();
     if !templates_dir.exists() {
@@ -389,7 +416,7 @@ pub fn list_game_templates(app: tauri::AppHandle) -> Result<Vec<GameTemplateInfo
     }
 
     templates.sort_by(|a, b| a.name.cmp(&b.name));
-    info!("扫描到 {} 个游戏配置模板", templates.len());
+    crate::log_info!("扫描到 {} 个游戏配置模板", templates.len());
     Ok(templates)
 }
 
@@ -442,6 +469,7 @@ fn find_game_dir_by_logic_name(
 
 /// 导入游戏配置模板到 Games 目录
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "import_game_template"), err)]
 pub fn import_game_template(
     app: tauri::AppHandle,
     template_name: String,
@@ -487,7 +515,7 @@ pub fn import_game_template(
     // 递归复制模板目录
     copy_dir_recursive(&template_dir, &target_dir)?;
 
-    info!(
+    crate::log_info!(
         "已导入游戏配置模板: {} ({}) -> {}",
         template_name,
         game_id,

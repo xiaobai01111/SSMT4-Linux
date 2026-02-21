@@ -10,7 +10,6 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
-use tracing::{info, warn};
 
 /// 最大并行下载数（小文件多时高并发效果好）
 const MAX_CONCURRENT: usize = 64;
@@ -26,7 +25,7 @@ pub async fn download_game(
     let total_count = resource_index.resource.len();
     let total_size: u64 = resource_index.resource.iter().map(|r| r.size).sum();
 
-    info!(
+    crate::log_info!(
         "开始并行下载: {} 个文件, {:.1} GB, 最大并发 {}",
         total_count,
         total_size as f64 / 1073741824.0,
@@ -54,7 +53,7 @@ pub async fn download_game(
                     continue;
                 }
                 Err(err) => {
-                    warn!("{} 完整性校验失败，需重下: {}", file.dest, err);
+                    crate::log_warn!("{} 完整性校验失败，需重下: {}", file.dest, err);
                 }
             }
         }
@@ -63,7 +62,7 @@ pub async fn download_game(
 
     let cached_count = total_count - to_download.len();
     if cached_count > 0 {
-        info!(
+        crate::log_info!(
             "跳过 {} 个已下载文件 ({:.1} GB), 需下载 {} 个文件",
             cached_count,
             cached_size as f64 / 1073741824.0,
@@ -72,7 +71,7 @@ pub async fn download_game(
     }
 
     if to_download.is_empty() {
-        info!("所有文件已存在，无需下载");
+        crate::log_info!("所有文件已存在，无需下载");
         emit_progress(
             &app,
             cached_size,
@@ -209,7 +208,7 @@ pub async fn download_game(
         0,
         0,
     );
-    info!("并行下载完成: {} 个文件", total_count);
+    crate::log_info!("并行下载完成: {} 个文件", total_count);
     Ok(())
 }
 

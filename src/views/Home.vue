@@ -36,6 +36,18 @@ const sidebarGames = computed(() => {
     .reverse();
 });
 
+const MAX_VISIBLE_DOCK_GAMES = 8;
+const gamesDockStyle = computed(() => {
+  const visibleSlots = Math.min(
+    Math.max(sidebarGames.value.length, 1),
+    MAX_VISIBLE_DOCK_GAMES,
+  );
+  return {
+    '--dock-visible-slots': String(visibleSlots),
+    '--dock-max-visible-slots': String(MAX_VISIBLE_DOCK_GAMES),
+  };
+});
+
 const isGameActive = (gameName: string) => {
   return appSettings.currentConfigName === gameName;
 };
@@ -344,7 +356,7 @@ onUnmounted(() => {
       <div class="dashboard-panel">
         
         <!-- Game Selection (Dock) -->
-        <div class="games-dock">
+        <div class="games-dock" :style="gamesDockStyle">
           <!-- Empty state: guide to Game Library -->
           <el-tooltip v-if="sidebarGames.length === 0" content="添加游戏到侧边栏" placement="top" effect="dark" popper-class="game-tooltip">
             <div class="dock-icon add-game-btn" @click="router.push('/games')">
@@ -594,11 +606,28 @@ onUnmounted(() => {
 
 /* Games Dock */
 .games-dock {
+  --dock-item-size: 64px;
+  --dock-gap: 16px;
+  --dock-inline-padding: 16px;
+  --dock-visible-slots: 1;
+  --dock-max-visible-slots: 8;
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: var(--dock-gap);
   padding: 24px 8px;
-  max-width: 60vw;
+  width: min(
+    88vw,
+    calc(
+      (var(--dock-visible-slots) * var(--dock-item-size))
+      + ((var(--dock-visible-slots) - 1) * var(--dock-gap))
+      + var(--dock-inline-padding)
+    )
+  );
+  max-width: calc(
+    (var(--dock-max-visible-slots) * var(--dock-item-size))
+    + ((var(--dock-max-visible-slots) - 1) * var(--dock-gap))
+    + var(--dock-inline-padding)
+  );
   overflow-x: auto;
   overflow-y: hidden;
   scroll-behavior: smooth;
@@ -612,8 +641,8 @@ onUnmounted(() => {
 /* Sci-Fi Crisp Hover Dock Icons */
 .dock-icon {
   flex-shrink: 0;
-  width: 64px;
-  height: 64px;
+  width: var(--dock-item-size);
+  height: var(--dock-item-size);
   border-radius: 12px; /* Sharper */
   position: relative;
   cursor: pointer;

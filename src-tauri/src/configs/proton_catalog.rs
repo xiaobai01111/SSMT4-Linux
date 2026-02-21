@@ -4,7 +4,6 @@ use futures_util::future::join_all;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use tracing::{info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtonFamily {
@@ -437,9 +436,9 @@ pub async fn fetch_remote_by_catalog(
     if !failures.is_empty() {
         let joined = failures.join(" | ");
         if total_items == 0 {
-            warn!("Proton 远程源全部失败: {}", joined);
+            crate::log_warn!("Proton 远程源全部失败: {}", joined);
         } else {
-            info!("部分 Proton 远程源失败（已忽略）: {}", joined);
+            crate::log_info!("部分 Proton 远程源失败（已忽略）: {}", joined);
         }
     }
 
@@ -553,6 +552,15 @@ async fn fetch_source_releases(
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        let source_repo = if !source.repo.trim().is_empty() {
+            source.repo.clone()
+        } else {
+            source.endpoint.clone()
+        };
+        let tag_lower = tag.to_lowercase();
+        let installed = installed_set.contains(&tag_lower)
+            || installed_set.iter().any(|item| item.contains(&tag_lower));
+        let mut added = false;
 
         if let Some(assets) = release.get("assets").and_then(|v| v.as_array()) {
             let pick_by_pattern = || {
@@ -565,7 +573,7 @@ async fn fetch_source_releases(
             let selected_asset = if source.asset_index >= 0 {
                 let direct = assets.get(source.asset_index as usize);
                 if direct.is_none() && !logged_asset_index_fallback {
-                    info!(
+                    crate::log_info!(
                         "Proton source asset_index 越界，回退匹配: family={}, repo={}, asset_index={}, assets_len={}",
                         source.family_key,
                         if source.repo.trim().is_empty() {
@@ -591,9 +599,6 @@ async fn fetch_source_releases(
                     .to_string();
                 if !download_url.is_empty() {
                     let file_size = asset.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let tag_lower = tag.to_lowercase();
-                    let installed = installed_set.contains(&tag_lower)
-                        || installed_set.iter().any(|item| item.contains(&tag_lower));
 
                     items.push(ProtonRemoteVersionItem {
                         tag: tag.clone(),
@@ -603,13 +608,42 @@ async fn fetch_source_releases(
                         file_size,
                         published_at: published_at.clone(),
                         installed,
-                        source_repo: if !source.repo.trim().is_empty() {
-                            source.repo.clone()
-                        } else {
-                            source.endpoint.clone()
-                        },
+                        source_repo: source_repo.clone(),
                     });
+                    added = true;
                 }
+            }
+        }
+
+        // ValveSoftware/Proton 等仓库的 release 可能没有 assets，仅提供 tarball_url / zipball_url。
+        if !added {
+            for (url_key, pseudo_name) in [
+                ("tarball_url", "release.tar.gz"),
+                ("zipball_url", "release.zip"),
+            ] {
+                let download_url = release
+                    .get(url_key)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if download_url.is_empty() {
+                    continue;
+                }
+                if !matches_pattern(pseudo_name, &source.asset_pattern) {
+                    continue;
+                }
+
+                items.push(ProtonRemoteVersionItem {
+                    tag: tag.clone(),
+                    version: tag.clone(),
+                    variant: source.family_key.clone(),
+                    download_url,
+                    file_size: 0,
+                    published_at: published_at.clone(),
+                    installed,
+                    source_repo: source_repo.clone(),
+                });
+                break;
             }
         }
     }

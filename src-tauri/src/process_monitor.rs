@@ -3,7 +3,6 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::info;
 
 #[derive(Debug, Clone)]
 pub struct GameProcess {
@@ -27,7 +26,7 @@ impl Drop for LaunchGuard {
     fn drop(&mut self) {
         if let Ok(mut launching) = LAUNCHING_GAMES.lock() {
             launching.remove(&self.game_name);
-            info!("已释放游戏启动锁: {}", self.game_name);
+            crate::log_info!("已释放游戏启动锁: {}", self.game_name);
         }
     }
 }
@@ -41,7 +40,7 @@ impl Drop for GameWriteGuard {
     fn drop(&mut self) {
         if let Ok(mut scopes) = GAME_WRITE_SCOPES.lock() {
             scopes.remove(&self.scope_key);
-            info!("已释放游戏写操作锁: {}", self.scope_key);
+            crate::log_info!("已释放游戏写操作锁: {}", self.scope_key);
         }
     }
 }
@@ -54,7 +53,7 @@ pub fn acquire_launch_guard(game_name: &str) -> Result<LaunchGuard, String> {
         return Err("游戏正在启动中，请勿重复点击".to_string());
     }
     launching.insert(game_name.to_string());
-    info!("已加锁游戏启动流程: {}", game_name);
+    crate::log_info!("已加锁游戏启动流程: {}", game_name);
     Ok(LaunchGuard {
         game_name: game_name.to_string(),
     })
@@ -78,7 +77,7 @@ pub fn acquire_game_write_guard(
     }
 
     scopes.insert(scope_key.clone());
-    info!("已加锁游戏写操作: op={}, scope={}", operation, scope_key);
+    crate::log_info!("已加锁游戏写操作: op={}, scope={}", operation, scope_key);
     Ok(GameWriteGuard { scope_key })
 }
 
@@ -211,13 +210,13 @@ pub async fn register_game_process(game_name: String, pid: u32, exe_path: String
         exe_path,
     };
     games.insert(game_name.clone(), proc);
-    info!("已注册游戏进程: {} (PID: {})", game_name, pid);
+    crate::log_info!("已注册游戏进程: {} (PID: {})", game_name, pid);
 }
 
 pub async fn unregister_game_process(game_name: &str) {
     let mut games = RUNNING_GAMES.lock().await;
     if games.remove(game_name).is_some() {
-        info!("已注销游戏进程: {}", game_name);
+        crate::log_info!("已注销游戏进程: {}", game_name);
     }
 }
 
@@ -279,6 +278,6 @@ pub async fn cleanup_stale_processes() {
 
     for game_name in to_remove {
         games.remove(&game_name);
-        info!("清理已结束的游戏进程记录: {}", game_name);
+        crate::log_info!("清理已结束的游戏进程记录: {}", game_name);
     }
 }

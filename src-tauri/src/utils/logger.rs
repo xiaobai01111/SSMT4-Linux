@@ -1,6 +1,11 @@
 use std::path::Path;
 use tracing_appender::rolling;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{
+    fmt::{self, format::FmtSpan},
+    layer::SubscriberExt,
+    util::SubscriberInitExt,
+    EnvFilter,
+};
 
 pub fn init_logger(log_dir: &Path) {
     std::fs::create_dir_all(log_dir).ok();
@@ -20,15 +25,23 @@ pub fn init_logger(log_dir: &Path) {
                 .with_writer(non_blocking)
                 .with_ansi(false)
                 .with_target(true)
-                .with_thread_ids(false),
+                .with_thread_ids(true)
+                .with_file(true)
+                .with_line_number(true)
+                .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE),
         )
         .with(
             fmt::layer()
                 .with_writer(std::io::stderr)
                 .with_ansi(true)
-                .with_target(true),
+                .with_target(true)
+                .with_span_events(FmtSpan::CLOSE),
         )
         .init();
 
-    tracing::info!("Logger initialized, log_dir={}", log_dir.display());
+    tracing::info!(
+        log_dir = %log_dir.display(),
+        rust_log = %std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()),
+        "Logger initialized"
+    );
 }

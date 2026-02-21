@@ -1,7 +1,6 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use tracing::{info, warn};
 
 // ============================================================
 // Snowbreak manifest 数据结构
@@ -110,7 +109,7 @@ impl ResolvedCdn {
 
 /// 从 GitHub launcher-manifest.json 解析 CDN base URL 列表
 async fn resolve_cdn_from_community_manifest(client: &Client) -> Result<ResolvedCdn, String> {
-    info!(
+    crate::log_info!(
         "[Snowbreak] 获取 launcher manifest: {}",
         LAUNCHER_MANIFEST_URL
     );
@@ -160,7 +159,7 @@ async fn resolve_cdn_from_community_manifest(client: &Client) -> Result<Resolved
         })
         .collect();
 
-    info!(
+    crate::log_info!(
         "[Snowbreak] 解析到 {} 个 CDN: {:?}",
         base_urls.len(),
         base_urls
@@ -188,7 +187,7 @@ fn resolve_cdn_from_official_defaults() -> ResolvedCdn {
         }
     }
 
-    info!(
+    crate::log_info!(
         "[Snowbreak] 使用官方内置 CDN 配置，数量: {}",
         base_urls.len()
     );
@@ -203,7 +202,7 @@ async fn fetch_manifest_from_cdn(
     let mut last_err = String::new();
     for idx in 0..cdn.len() {
         let url = cdn.manifest_url(idx);
-        info!(
+        crate::log_info!(
             "[Snowbreak] [{}] 尝试获取 manifest: {}",
             source.label(),
             url
@@ -213,12 +212,12 @@ async fn fetch_manifest_from_cdn(
             Ok(resp) => {
                 if !resp.status().is_success() {
                     last_err = format!("HTTP {} from {}", resp.status(), url);
-                    warn!("[Snowbreak] {}", last_err);
+                    crate::log_warn!("[Snowbreak] {}", last_err);
                     continue;
                 }
                 match resp.json::<Manifest>().await {
                     Ok(manifest) => {
-                        info!(
+                        crate::log_info!(
                             "[Snowbreak] [{}] manifest 获取成功: version={}, paks={}",
                             source.label(),
                             manifest.version,
@@ -228,14 +227,14 @@ async fn fetch_manifest_from_cdn(
                     }
                     Err(e) => {
                         last_err = format!("解析 manifest 失败: {}", e);
-                        warn!("[Snowbreak] {}", last_err);
+                        crate::log_warn!("[Snowbreak] {}", last_err);
                         continue;
                     }
                 }
             }
             Err(e) => {
                 last_err = format!("请求失败: {}", e);
-                warn!("[Snowbreak] {}", last_err);
+                crate::log_warn!("[Snowbreak] {}", last_err);
                 continue;
             }
         }
@@ -271,7 +270,7 @@ pub async fn fetch_manifest_with_policy(
         let cdn = match cdn_result {
             Ok(cdn) => cdn,
             Err(e) => {
-                warn!("[Snowbreak] [{}] 解析 CDN 失败: {}", source.label(), e);
+                crate::log_warn!("[Snowbreak] [{}] 解析 CDN 失败: {}", source.label(), e);
                 errors.push(format!("[{}] {}", source.label(), e));
                 continue;
             }

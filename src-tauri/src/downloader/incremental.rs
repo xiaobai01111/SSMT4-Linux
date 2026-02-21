@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
-use tracing::{info, warn};
 
 fn emit_update_progress(app: &AppHandle, progress: &DownloadProgress) {
     app.emit("game-update-progress", progress).ok();
@@ -30,9 +29,10 @@ pub async fn update_game_full(
     let total_count = resource_index.resource.len();
     let total_size: u64 = resource_index.resource.iter().map(|r| r.size).sum();
 
-    info!(
+    crate::log_info!(
         "Starting full comparison update: {} files, {} bytes",
-        total_count, total_size
+        total_count,
+        total_size
     );
 
     let mut finished_size: u64 = 0;
@@ -47,7 +47,7 @@ pub async fn update_game_full(
         let file_path = match safe_join_remote(game_folder, &file.dest) {
             Ok(p) => p,
             Err(e) => {
-                warn!("跳过不安全的清单路径: {} ({})", file.dest, e);
+                crate::log_warn!("跳过不安全的清单路径: {} ({})", file.dest, e);
                 continue;
             }
         };
@@ -60,7 +60,7 @@ pub async fn update_game_full(
         )
         .await;
         if verified.is_ok() {
-            info!("{} checksum match, skipping", file.dest);
+            crate::log_info!("{} checksum match, skipping", file.dest);
             finished_size += file.size;
             finished_count += 1;
 
@@ -86,7 +86,7 @@ pub async fn update_game_full(
             continue;
         }
 
-        warn!(
+        crate::log_warn!(
             "{} checksum mismatch, re-downloading: {}",
             file.dest,
             verified.err().unwrap_or_else(|| "unknown".to_string())
@@ -124,7 +124,7 @@ pub async fn update_game_full(
         emit_update_progress(&app, &progress);
     }
 
-    info!("Full comparison update complete");
+    crate::log_info!("Full comparison update complete");
     Ok(())
 }
 
@@ -149,7 +149,7 @@ pub async fn update_game_patch(
         );
     }
 
-    info!(
+    crate::log_info!(
         "Starting incremental patch from {} to latest",
         local_version
     );
@@ -278,7 +278,7 @@ pub async fn update_game_patch(
         tokio::fs::remove_file(diff_path).await.ok();
     }
 
-    info!("Incremental patch update complete");
+    crate::log_info!("Incremental patch update complete");
     Ok(())
 }
 
@@ -291,7 +291,7 @@ async fn run_hpatchz(
     // 执行前再次做完整性检查，降低运行时被替换二进制的风险。
     verify_hpatchz_integrity(&hpatchz).await?;
 
-    info!(
+    crate::log_info!(
         "Running hpatchz: {} {} {} -f",
         original_path.display(),
         patch_path.display(),
@@ -354,11 +354,11 @@ async fn ensure_hpatchz() -> Result<PathBuf, String> {
 
     let client = Client::new();
 
-    info!("Downloading hpatchz from GitHub...");
+    crate::log_info!("Downloading hpatchz from GitHub...");
     let result = fetcher::download_simple(&client, github_url, &hpatchz_path).await;
 
     if result.is_err() {
-        warn!("GitHub download failed, trying gitee...");
+        crate::log_warn!("GitHub download failed, trying gitee...");
         fetcher::download_simple(&client, gitee_url, &hpatchz_path).await?;
     }
 
@@ -377,7 +377,7 @@ async fn ensure_hpatchz() -> Result<PathBuf, String> {
             .map_err(|e| format!("Failed to chmod hpatchz: {}", e))?;
     }
 
-    info!("hpatchz downloaded and ready at {}", hpatchz_path.display());
+    crate::log_info!("hpatchz downloaded and ready at {}", hpatchz_path.display());
     Ok(hpatchz_path)
 }
 
@@ -406,10 +406,10 @@ async fn verify_hpatchz_integrity(path: &Path) -> Result<(), String> {
                 actual_hash
             ));
         }
-        info!("hpatchz SHA256 校验通过: {}", actual_hash);
+        crate::log_info!("hpatchz SHA256 校验通过: {}", actual_hash);
     } else {
         if allow_unverified_hpatchz() {
-            warn!(
+            crate::log_warn!(
                 "未配置 hpatchz SHA256 白名单，但 {}=1，已按不安全模式放行。请仅在受信环境临时使用。",
                 HPATCHZ_ALLOW_UNVERIFIED_ENV
             );

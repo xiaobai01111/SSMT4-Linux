@@ -4,9 +4,10 @@ use crate::configs::wine_config::{
 use crate::wine::{detector, display, graphics, prefix, runtime};
 use std::sync::Mutex;
 use tauri::State;
-use tracing::info;
+use tracing::instrument;
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "scan_wine_versions"), err)]
 pub fn scan_wine_versions(
     settings: State<'_, Mutex<crate::configs::app_config::AppConfig>>,
 ) -> Result<Vec<WineVersion>, String> {
@@ -18,6 +19,7 @@ pub fn scan_wine_versions(
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "get_game_wine_config"), err)]
 pub fn get_game_wine_config(game_id: &str) -> Result<GameWineConfig, String> {
     let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
     let prefix_config = prefix::load_prefix_config(&game_id).ok();
@@ -65,6 +67,7 @@ fn should_enable_umu_by_default(game_id: &str) -> bool {
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "set_game_wine_config"), err)]
 pub fn set_game_wine_config(
     game_id: &str,
     wine_version_id: &str,
@@ -85,11 +88,12 @@ pub fn set_game_wine_config(
         };
         prefix::create_prefix(&game_id, &config)?;
     }
-    info!("Updated wine config for game {}", game_id);
+    crate::log_info!("Updated wine config for game {}", game_id);
     Ok(())
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "create_prefix"), err)]
 pub fn create_prefix(game_id: &str, template_id: Option<String>) -> Result<String, String> {
     let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
     let path = if let Some(tid) = template_id {
@@ -106,18 +110,21 @@ pub fn create_prefix(game_id: &str, template_id: Option<String>) -> Result<Strin
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "delete_prefix"), err)]
 pub fn delete_prefix(game_id: &str) -> Result<(), String> {
     let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
     prefix::delete_prefix(&game_id)
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "get_prefix_info"), err)]
 pub fn get_prefix_info(game_id: &str) -> Result<prefix::PrefixInfo, String> {
     let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
     prefix::get_prefix_info(&game_id)
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "install_dxvk"), err)]
 pub async fn install_dxvk(game_id: &str, version: &str, variant: &str) -> Result<String, String> {
     let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
     let pfx_dir = prefix::get_prefix_pfx_dir(&game_id);
@@ -125,6 +132,7 @@ pub async fn install_dxvk(game_id: &str, version: &str, variant: &str) -> Result
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "uninstall_dxvk"), err)]
 pub fn uninstall_dxvk(game_id: &str) -> Result<String, String> {
     let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
     let pfx_dir = prefix::get_prefix_pfx_dir(&game_id);
@@ -132,18 +140,29 @@ pub fn uninstall_dxvk(game_id: &str) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn install_vkd3d(game_id: &str, version: &str) -> Result<String, String> {
+#[instrument(level = "info", skip_all, fields(cmd = "install_vkd3d"), err)]
+pub async fn install_vkd3d(game_id: &str, version: &str, variant: &str) -> Result<String, String> {
     let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
     let pfx_dir = prefix::get_prefix_pfx_dir(&game_id);
-    graphics::install_vkd3d(&pfx_dir, version).await
+    graphics::install_vkd3d(&pfx_dir, version, variant).await
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "uninstall_vkd3d"), err)]
+pub fn uninstall_vkd3d(game_id: &str) -> Result<String, String> {
+    let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
+    let pfx_dir = prefix::get_prefix_pfx_dir(&game_id);
+    graphics::uninstall_vkd3d(&pfx_dir)
+}
+
+#[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "check_vulkan"), err)]
 pub fn check_vulkan() -> Result<graphics::VulkanInfo, String> {
     Ok(graphics::check_vulkan())
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "install_runtime"), err)]
 pub async fn install_runtime(game_id: &str, component: &str) -> Result<String, String> {
     let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
     let pfx_dir = prefix::get_prefix_pfx_dir(&game_id);
@@ -167,11 +186,13 @@ pub async fn install_runtime(game_id: &str, component: &str) -> Result<String, S
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "list_available_runtimes"), err)]
 pub fn list_available_runtimes() -> Result<Vec<runtime::RuntimeComponent>, String> {
     Ok(runtime::list_available_runtimes())
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "get_installed_runtimes"), err)]
 pub fn get_installed_runtimes(game_id: &str) -> Result<Vec<String>, String> {
     let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
     let config = prefix::load_prefix_config(&game_id)?;
@@ -179,11 +200,13 @@ pub fn get_installed_runtimes(game_id: &str) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "get_display_info"), err)]
 pub fn get_display_info() -> Result<display::DisplayInfo, String> {
     Ok(display::detect_display_info())
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "get_recent_logs"), err)]
 pub fn get_recent_logs(lines: Option<usize>) -> Result<Vec<String>, String> {
     let log_dir = crate::utils::file_manager::get_logs_dir();
     let max_lines = lines.unwrap_or(100);
@@ -213,6 +236,7 @@ pub fn get_recent_logs(lines: Option<usize>) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "open_log_folder"), err)]
 pub fn open_log_folder() -> Result<(), String> {
     let log_dir = crate::utils::file_manager::get_logs_dir();
     crate::utils::file_manager::ensure_dir(&log_dir)?;
@@ -224,11 +248,13 @@ pub fn open_log_folder() -> Result<(), String> {
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "list_prefix_templates"), err)]
 pub fn list_prefix_templates() -> Result<Vec<PrefixTemplate>, String> {
     prefix::list_templates()
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "save_prefix_template"), err)]
 pub fn save_prefix_template(template: PrefixTemplate) -> Result<(), String> {
     prefix::save_template(&template)
 }
@@ -238,11 +264,13 @@ pub fn save_prefix_template(template: PrefixTemplate) -> Result<(), String> {
 // ============================================================
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "get_proton_catalog"), err)]
 pub fn get_proton_catalog() -> Result<crate::configs::proton_catalog::ProtonCatalog, String> {
     crate::configs::proton_catalog::load_catalog_from_db()
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "save_proton_catalog"), err)]
 pub fn save_proton_catalog(
     catalog: crate::configs::proton_catalog::ProtonCatalog,
 ) -> Result<(), String> {
@@ -250,6 +278,12 @@ pub fn save_proton_catalog(
 }
 
 #[tauri::command]
+#[instrument(
+    level = "info",
+    skip_all,
+    fields(cmd = "scan_local_proton_grouped"),
+    err
+)]
 pub fn scan_local_proton_grouped(
     settings: State<'_, Mutex<crate::configs::app_config::AppConfig>>,
 ) -> Result<Vec<crate::configs::proton_catalog::ProtonFamilyLocalGroup>, String> {
@@ -261,6 +295,12 @@ pub fn scan_local_proton_grouped(
 }
 
 #[tauri::command]
+#[instrument(
+    level = "info",
+    skip_all,
+    fields(cmd = "fetch_remote_proton_grouped"),
+    err
+)]
 pub async fn fetch_remote_proton_grouped(
     settings: State<'_, Mutex<crate::configs::app_config::AppConfig>>,
 ) -> Result<Vec<crate::configs::proton_catalog::ProtonFamilyRemoteGroup>, String> {
@@ -279,6 +319,7 @@ pub async fn fetch_remote_proton_grouped(
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "fetch_remote_proton"), err)]
 pub async fn fetch_remote_proton(
     settings: State<'_, Mutex<crate::configs::app_config::AppConfig>>,
 ) -> Result<Vec<detector::RemoteWineVersion>, String> {
@@ -291,6 +332,7 @@ pub async fn fetch_remote_proton(
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "download_proton"), err)]
 pub async fn download_proton(
     app: tauri::AppHandle,
     download_url: String,
@@ -305,11 +347,13 @@ pub async fn download_proton(
 // ============================================================
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "scan_local_dxvk"), err)]
 pub fn scan_local_dxvk() -> Result<Vec<graphics::DxvkLocalVersion>, String> {
     Ok(graphics::scan_local_dxvk_versions())
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "detect_dxvk_status"), err)]
 pub fn detect_dxvk_status(game_id: &str) -> Result<graphics::DxvkInstalledStatus, String> {
     let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
     let pfx_dir = prefix::get_prefix_pfx_dir(&game_id);
@@ -317,6 +361,7 @@ pub fn detect_dxvk_status(game_id: &str) -> Result<graphics::DxvkInstalledStatus
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "fetch_dxvk_versions"), err)]
 pub async fn fetch_dxvk_versions(
     settings: State<'_, Mutex<crate::configs::app_config::AppConfig>>,
 ) -> Result<Vec<graphics::DxvkRemoteVersion>, String> {
@@ -328,6 +373,43 @@ pub async fn fetch_dxvk_versions(
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "download_dxvk"), err)]
 pub async fn download_dxvk(version: &str, variant: &str) -> Result<String, String> {
     graphics::download_dxvk_only(version, variant).await
+}
+
+// ============================================================
+// VKD3D 版本管理命令
+// ============================================================
+
+#[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "scan_local_vkd3d"), err)]
+pub fn scan_local_vkd3d() -> Result<Vec<graphics::Vkd3dLocalVersion>, String> {
+    Ok(graphics::scan_local_vkd3d_versions())
+}
+
+#[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "detect_vkd3d_status"), err)]
+pub fn detect_vkd3d_status(game_id: &str) -> Result<graphics::Vkd3dInstalledStatus, String> {
+    let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
+    let pfx_dir = prefix::get_prefix_pfx_dir(&game_id);
+    Ok(graphics::detect_installed_vkd3d(&pfx_dir))
+}
+
+#[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "fetch_vkd3d_versions"), err)]
+pub async fn fetch_vkd3d_versions(
+    settings: State<'_, Mutex<crate::configs::app_config::AppConfig>>,
+) -> Result<Vec<graphics::Vkd3dRemoteVersion>, String> {
+    let github_token = {
+        let s = settings.lock().map_err(|e| e.to_string())?;
+        s.github_token.clone()
+    };
+    graphics::fetch_vkd3d_releases(20, Some(&github_token)).await
+}
+
+#[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "download_vkd3d"), err)]
+pub async fn download_vkd3d(version: &str, variant: &str) -> Result<String, String> {
+    graphics::download_vkd3d_only(version, variant).await
 }

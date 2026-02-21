@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, reactive, computed } from 'vue';
+import { ref, watch, reactive, computed, onUnmounted } from 'vue';
 import {
   loadGameConfig as apiLoadGameConfig,
   saveGameConfig as apiSaveGameConfig,
@@ -18,6 +18,15 @@ import {
   setGameWineConfig,
   checkVulkan,
   getDisplayInfo,
+  listGamepads,
+  getGamepadSelection,
+  setGamepadSelection,
+  getGamepadDiagnostics,
+  checkGamepadPrefixOverrides,
+  repairGamepadPrefixOverrides,
+  startGamepadMonitor,
+  stopGamepadMonitor,
+  listenEvent,
   getPrefixInfo,
   getJadeiteStatus,
   installJadeite,
@@ -25,6 +34,10 @@ import {
   uninstallDxvk,
   scanLocalDxvk,
   detectDxvkStatus,
+  installVkd3d,
+  uninstallVkd3d,
+  scanLocalVkd3d,
+  detectVkd3dStatus,
   getLocalVersion,
   type WineVersion,
   type ProtonSettings,
@@ -32,8 +45,15 @@ import {
   type JadeiteStatus,
   type VulkanInfo,
   type DisplayInfo,
+  type GamepadInfo,
+  type GamepadSelection,
+  type GamepadDiagnostics,
+  type GamepadPrefixOverrideStatus,
+  type GamepadMonitorEvent,
   type DxvkLocalVersion,
   type DxvkInstalledStatus,
+  type Vkd3dLocalVersion,
+  type Vkd3dInstalledStatus,
   type RuntimeEnv,
 } from '../api';
 import { loadGames, gamesList, switchToGame } from '../store';
@@ -183,7 +203,22 @@ const protonSettings = reactive<ProtonSettings>({
   proton_media_use_gst: false,
   proton_enable_wayland: false,
   proton_no_d3d12: false,
+  dxvk_enabled: true,
+  vkd3d_enabled: true,
+  vkd3d_variant: 'builtin',
+  vkd3d_version: '',
   mangohud: false,
+  fsr_enabled: false,
+  fsr_strength: 2,
+  dlss_compat_enabled: false,
+  vsync_mode: 'auto',
+  esync_enabled: true,
+  fsync_enabled: true,
+  resolution_scale_percent: 100,
+  gamemode_enabled: false,
+  auto_performance_mode: false,
+  cpu_limit_enabled: false,
+  cpu_limit_percent: 100,
   steam_deck_compat: false,
   steamos_compat: false,
   sandbox_enabled: false,
@@ -192,6 +227,7 @@ const protonSettings = reactive<ProtonSettings>({
   dxvk_async: false,
   dxvk_frame_rate: 0,
   disable_gpu_filter: false,
+  gamepad_compat_mode: 'off',
   custom_env: {},
 });
 const vulkanInfo = ref<VulkanInfo | null>(null);
@@ -202,6 +238,178 @@ const newEnvValue = ref('');
 // 系统选项状态
 const selectedGpuIndex = ref(-1); // -1 = 自动
 const gameLang = ref(''); // '' = 跟随系统
+const gamepads = ref<GamepadInfo[]>([]);
+const gamepadSelection = ref<GamepadSelection | null>(null);
+const defaultGamepadStableId = ref('');
+const defaultGamepadPlayerIndex = ref(1);
+const gamepadDiagnostics = ref<GamepadDiagnostics | null>(null);
+const gamepadPrefixStatus = ref<GamepadPrefixOverrideStatus | null>(null);
+const gamepadPrefixBusy = ref(false);
+const gamepadEventLogs = ref<string[]>([]);
+const gamepadMonitorActive = ref(false);
+const gamepadEventUnlisten = ref<null | (() => void)>(null);
+
+const gamepadPlayerOptions = [1, 2, 3, 4, 5, 6, 7, 8];
+
+const shortenStableId = (id: string) => {
+  if (!id) return '';
+  if (id.length <= 36) return id;
+  return `${id.slice(0, 16)}...${id.slice(-12)}`;
+};
+
+const pushGamepadEventLog = (text: string) => {
+  gamepadEventLogs.value.unshift(text);
+  if (gamepadEventLogs.value.length > 80) {
+    gamepadEventLogs.value.length = 80;
+  }
+};
+
+const applySelectionState = (selection: GamepadSelection | null) => {
+  gamepadSelection.value = selection;
+  defaultGamepadStableId.value = selection?.defaultStableId || '';
+  defaultGamepadPlayerIndex.value = selection?.defaultPlayerIndex || 1;
+};
+
+const refreshGamepadState = async (withDiagnostics: boolean = false) => {
+  try {
+    const [pads, selection] = await Promise.all([
+      listGamepads(),
+      getGamepadSelection(),
+    ]);
+    gamepads.value = pads;
+    applySelectionState(selection);
+    if (!defaultGamepadStableId.value && pads.length > 0) {
+      const preferred = pads.find(p => p.isDefault) || pads[0];
+      if (preferred) {
+        defaultGamepadStableId.value = preferred.stableId;
+      }
+    }
+    if (withDiagnostics) {
+      gamepadDiagnostics.value = await getGamepadDiagnostics();
+      if (props.gameName) {
+        gamepadPrefixStatus.value = await checkGamepadPrefixOverrides(props.gameName);
+      }
+    }
+  } catch (e) {
+    console.error('[gamepad] 刷新状态失败:', e);
+  }
+};
+
+const refreshGamepadPrefixOverrides = async () => {
+  if (!props.gameName) return;
+  try {
+    gamepadPrefixStatus.value = await checkGamepadPrefixOverrides(props.gameName);
+  } catch (e) {
+    console.warn('[gamepad] 读取 prefix 覆盖状态失败:', e);
+    gamepadPrefixStatus.value = null;
+  }
+};
+
+const repairGamepadPrefixInputOverrides = async () => {
+  if (!props.gameName || gamepadPrefixBusy.value) return;
+  const confirmed = await askConfirm(
+    '将从当前 Prefix 的 DllOverrides 中移除 xinput/dinput/hid/rawinput 覆盖，恢复为 Wine builtin。是否继续？',
+    { title: '手柄修复', kind: 'warning' },
+  );
+  if (!confirmed) return;
+
+  try {
+    gamepadPrefixBusy.value = true;
+    gamepadPrefixStatus.value = await repairGamepadPrefixOverrides(props.gameName);
+    await refreshGamepadState(true);
+    notify?.success('修复完成', '已恢复输入 DLL 覆盖为 builtin 默认行为');
+  } catch (e) {
+    notify?.error('修复失败', `${e}`);
+  } finally {
+    gamepadPrefixBusy.value = false;
+  }
+};
+
+const saveDefaultGamepadSelection = async () => {
+  try {
+    await setGamepadSelection(
+      defaultGamepadStableId.value || null,
+      defaultGamepadPlayerIndex.value || null,
+    );
+    await refreshGamepadState(true);
+    notify?.success('已保存', '默认手柄与玩家编号已保存');
+  } catch (e) {
+    notify?.error('保存失败', `${e}`);
+  }
+};
+
+const copyGamepadDiagnostics = async () => {
+  try {
+    if (!gamepadDiagnostics.value) {
+      await refreshGamepadState(true);
+    }
+    if (!gamepadDiagnostics.value) return;
+    const text = JSON.stringify({
+      collectedAt: new Date().toISOString(),
+      runtime: {
+        runtimeEnv: config.basic.runtimeEnv,
+        selectedWineVersionId: selectedWineVersionId.value || null,
+        selectedWineVersionName: selectedWineVersion.value?.name || null,
+        gamepadCompatMode: protonSettings.gamepad_compat_mode || 'off',
+      },
+      diagnostics: gamepadDiagnostics.value,
+      prefixOverrides: gamepadPrefixStatus.value,
+    }, null, 2);
+    await navigator.clipboard.writeText(text);
+    notify?.success('已复制', '手柄诊断信息已复制到剪贴板');
+  } catch (e) {
+    notify?.error('复制失败', `${e}`);
+  }
+};
+
+const startGamepadHotplugMonitor = async () => {
+  try {
+    if (!gamepadEventUnlisten.value) {
+      gamepadEventUnlisten.value = await listenEvent(GAMEPAD_EVENT_NAME, async (evt: any) => {
+        const payload = evt.payload as GamepadMonitorEvent;
+        if (!payload || typeof payload !== 'object') return;
+        const label = payload.name || payload.stableId || 'Unknown';
+        if (payload.eventType === 'connected') {
+          pushGamepadEventLog(`[${payload.timestamp}] 已连接: ${label}`);
+          await refreshGamepadState(true);
+        } else if (payload.eventType === 'disconnected') {
+          pushGamepadEventLog(`[${payload.timestamp}] 已断开: ${label}`);
+          await refreshGamepadState(true);
+        } else if (payload.eventType === 'button_pressed' || payload.eventType === 'button_released') {
+          pushGamepadEventLog(
+            `[${payload.timestamp}] ${label} ${payload.button || 'Button'} ${payload.eventType === 'button_pressed' ? '按下' : '释放'}`,
+          );
+        } else if (payload.eventType === 'axis_changed') {
+          pushGamepadEventLog(
+            `[${payload.timestamp}] ${label} ${payload.axis || 'Axis'}=${(payload.value ?? 0).toFixed(3)}`,
+          );
+        } else if (payload.eventType === 'monitor_error') {
+          pushGamepadEventLog(`[${payload.timestamp}] 监听错误：无法初始化手柄监控`);
+        }
+      });
+    }
+    await startGamepadMonitor();
+    gamepadMonitorActive.value = true;
+    pushGamepadEventLog(`[${new Date().toISOString()}] 已启动手柄热插拔监听`);
+  } catch (e) {
+    notify?.error('监听启动失败', `${e}`);
+  }
+};
+
+const stopGamepadHotplugMonitor = async () => {
+  try {
+    await stopGamepadMonitor();
+  } catch (e) {
+    console.warn('[gamepad] 停止监听失败:', e);
+  }
+  gamepadMonitorActive.value = false;
+  if (gamepadEventUnlisten.value) {
+    gamepadEventUnlisten.value();
+    gamepadEventUnlisten.value = null;
+  }
+};
+
+const GAMEPAD_EVENT_NAME = 'gamepad-event';
 
 const loadWineState = async () => {
   try {
@@ -211,8 +419,32 @@ const loadWineState = async () => {
       selectedWineVersionId.value = wineConfig.wine_version_id;
     }
     Object.assign(protonSettings, wineConfig.proton_settings);
+    // 兼容旧配置：无 vkd3d_variant 时回退到旧开关语义
+    if (!protonSettings.vkd3d_variant) {
+      protonSettings.vkd3d_variant = protonSettings.proton_no_d3d12 ? 'disabled' : 'builtin';
+    }
+    if (protonSettings.proton_no_d3d12 || protonSettings.vkd3d_variant === 'disabled') {
+      protonSettings.vkd3d_enabled = false;
+      protonSettings.proton_no_d3d12 = true;
+      protonSettings.vkd3d_variant = 'disabled';
+      protonSettings.vkd3d_version = '';
+    } else {
+      protonSettings.vkd3d_enabled = true;
+      protonSettings.proton_no_d3d12 = false;
+      if (!protonSettings.vkd3d_variant) {
+        protonSettings.vkd3d_variant = 'builtin';
+      }
+    }
+    // 约束数值范围
+    protonSettings.fsr_strength = Math.min(5, Math.max(0, protonSettings.fsr_strength || 0));
+    protonSettings.resolution_scale_percent = Math.min(100, Math.max(50, protonSettings.resolution_scale_percent || 100));
+    protonSettings.cpu_limit_percent = Math.min(100, Math.max(1, protonSettings.cpu_limit_percent || 100));
+    if (!protonSettings.gamepad_compat_mode) {
+      protonSettings.gamepad_compat_mode = 'off';
+    }
     vulkanInfo.value = await checkVulkan();
     displayInfo.value = await getDisplayInfo();
+    await loadVkd3dState();
   } catch (e) {
     console.error('Failed to load wine state:', e);
   }
@@ -221,6 +453,30 @@ const loadWineState = async () => {
 const saveWineConfig = async () => {
   if (!props.gameName || !selectedWineVersionId.value) return;
   try {
+    if (vkd3dSelectedKey.value === 'disabled') {
+      protonSettings.vkd3d_enabled = false;
+      protonSettings.proton_no_d3d12 = true;
+      protonSettings.vkd3d_variant = 'disabled';
+      protonSettings.vkd3d_version = '';
+    } else if (vkd3dSelectedKey.value === 'builtin') {
+      protonSettings.vkd3d_enabled = true;
+      protonSettings.proton_no_d3d12 = false;
+      protonSettings.vkd3d_variant = 'builtin';
+      protonSettings.vkd3d_version = '';
+    } else {
+      protonSettings.vkd3d_enabled = true;
+      protonSettings.proton_no_d3d12 = false;
+      if (vkd3dSelectedKey.value.includes('|')) {
+        const [version, variant] = vkd3dSelectedKey.value.split('|');
+        if (version && variant) {
+          protonSettings.vkd3d_version = version;
+          protonSettings.vkd3d_variant = variant;
+        }
+      }
+    }
+    protonSettings.fsr_strength = Math.min(5, Math.max(0, protonSettings.fsr_strength || 0));
+    protonSettings.resolution_scale_percent = Math.min(100, Math.max(50, protonSettings.resolution_scale_percent || 100));
+    protonSettings.cpu_limit_percent = Math.min(100, Math.max(1, protonSettings.cpu_limit_percent || 100));
     await setGameWineConfig(props.gameName, selectedWineVersionId.value, protonSettings);
     // Also save wineVersionId into game config other section
     config.other.wineVersionId = selectedWineVersionId.value;
@@ -236,9 +492,14 @@ const saveSystemOptions = async () => {
     // 保存 GPU 和语言到 config.other
     config.other.gpuIndex = selectedGpuIndex.value;
     config.other.gameLang = gameLang.value;
+    await setGamepadSelection(
+      defaultGamepadStableId.value || null,
+      defaultGamepadPlayerIndex.value || null,
+    );
     await saveConfig();
     // 同步保存 Proton 设置（沙盒等）
     await saveWineConfig();
+    await refreshGamepadState(false);
     notify?.success('保存成功', '系统选项已保存');
   } catch (e) {
     notify?.error('保存失败', `系统选项保存失败: ${e}`);
@@ -261,10 +522,19 @@ const selectedWineVersion = computed(() =>
   wineVersions.value.find(v => v.id === selectedWineVersionId.value)
 );
 
+const gamepadRunnerHint = computed(() => {
+  if (config.basic.runtimeEnv === 'steam') {
+    return '当前 Runner: Steam。手柄优先走 Steam Input，兼容性通常最佳。';
+  }
+  if (config.basic.runtimeEnv === 'linux') {
+    return '当前 Runner: Linux 原生。手柄行为由 SDL/游戏本体决定。';
+  }
+  return '当前 Runner: Wine/Proton。若手柄失效，请优先检查 Prefix 的 xinput/dinput DLL 覆盖状态。';
+});
+
 const variantLabel = (variant: string) => {
   const labels: Record<string, string> = {
     official: 'Proton (Official)',
-    experimental: 'Proton Experimental',
     geproton: 'GE-Proton',
     dwproton: 'DW-Proton',
     protontkg: 'Proton-TKG',
@@ -412,6 +682,168 @@ const doUninstallDxvk = async () => {
     notify?.error('DXVK 卸载失败', `${e}`);
   } finally {
     isDxvkBusy.value = false;
+  }
+};
+
+// VKD3D 版本管理（本地安装/卸载）
+const vkd3dLocalVersions = ref<Vkd3dLocalVersion[]>([]);
+const vkd3dInstalledStatus = ref<Vkd3dInstalledStatus | null>(null);
+const vkd3dSelectedKey = ref('builtin'); // "builtin" / "disabled" / "version|variant"
+const isVkd3dBusy = ref(false);
+
+const vkd3dVariantLabel = (variant: string) => {
+  const labels: Record<string, string> = {
+    vkd3d: 'VKD3D',
+    'vkd3d-proton': 'VKD3D-Proton',
+    'vkd3d-proton-ge': 'VKD3D-Proton GE',
+    builtin: '使用内置 VKD3D',
+    disabled: '禁用 VKD3D',
+  };
+  return labels[variant] || `VKD3D-${variant}`;
+};
+
+const vkd3dGroupedLocalVersions = computed(() => {
+  const groups = new Map<string, Vkd3dLocalVersion[]>();
+  for (const item of vkd3dLocalVersions.value) {
+    const list = groups.get(item.variant) || [];
+    list.push(item);
+    groups.set(item.variant, list);
+  }
+  return Array.from(groups.entries())
+    .sort((a, b) => {
+      if (a[0] === 'vkd3d-proton') return -1;
+      if (b[0] === 'vkd3d-proton') return 1;
+      return a[0].localeCompare(b[0]);
+    })
+    .map(([variant, items]) => ({
+      variant,
+      label: vkd3dVariantLabel(variant),
+      items,
+    }));
+});
+
+const setVkd3dSelectionByStatus = (
+  local: Vkd3dLocalVersion[],
+  status: Vkd3dInstalledStatus | null,
+) => {
+  if (status?.installed) {
+    const statusVersion = status.version || '';
+    const statusVariant = status.variant || '';
+    let match =
+      (statusVersion && statusVariant)
+        ? local.find(lv => lv.version === statusVersion && lv.variant === statusVariant)
+        : null;
+    if (!match && statusVersion) {
+      match = local.find(lv => lv.version === statusVersion) || null;
+    }
+    if (!match && statusVariant) {
+      match = local.find(lv => lv.variant === statusVariant) || null;
+    }
+    if (match) {
+      vkd3dSelectedKey.value = `${match.version}|${match.variant}`;
+      protonSettings.vkd3d_variant = match.variant;
+      protonSettings.vkd3d_version = match.version;
+      protonSettings.vkd3d_enabled = true;
+      protonSettings.proton_no_d3d12 = false;
+      return;
+    }
+    if (statusVersion && statusVariant) {
+      vkd3dSelectedKey.value = `${statusVersion}|${statusVariant}`;
+      protonSettings.vkd3d_variant = statusVariant;
+      protonSettings.vkd3d_version = statusVersion;
+      protonSettings.vkd3d_enabled = true;
+      protonSettings.proton_no_d3d12 = false;
+      return;
+    }
+  }
+
+  if (
+    protonSettings.vkd3d_variant &&
+    protonSettings.vkd3d_variant !== 'disabled' &&
+    protonSettings.vkd3d_variant !== 'builtin' &&
+    protonSettings.vkd3d_version
+  ) {
+    const preferred = `${protonSettings.vkd3d_version}|${protonSettings.vkd3d_variant}`;
+    vkd3dSelectedKey.value = preferred;
+    return;
+  }
+
+  if (!protonSettings.proton_no_d3d12) {
+    vkd3dSelectedKey.value = 'builtin';
+    protonSettings.vkd3d_enabled = true;
+    protonSettings.proton_no_d3d12 = false;
+    protonSettings.vkd3d_variant = 'builtin';
+    protonSettings.vkd3d_version = '';
+    return;
+  }
+
+  vkd3dSelectedKey.value = 'disabled';
+  protonSettings.vkd3d_enabled = false;
+  protonSettings.proton_no_d3d12 = true;
+  protonSettings.vkd3d_variant = 'disabled';
+  protonSettings.vkd3d_version = '';
+};
+
+const loadVkd3dState = async () => {
+  if (!props.gameName) return;
+  try {
+    const [local, status] = await Promise.all([
+      scanLocalVkd3d(),
+      detectVkd3dStatus(props.gameName),
+    ]);
+    vkd3dLocalVersions.value = local;
+    vkd3dInstalledStatus.value = status;
+    setVkd3dSelectionByStatus(local, status);
+  } catch (e) {
+    console.warn('[vkd3d] 加载状态失败:', e);
+  }
+};
+
+const doInstallVkd3d = async () => {
+  if (
+    isVkd3dBusy.value ||
+    !vkd3dSelectedKey.value ||
+    vkd3dSelectedKey.value === 'disabled' ||
+    vkd3dSelectedKey.value === 'builtin'
+  ) return;
+  const [version, variant] = vkd3dSelectedKey.value.split('|');
+  if (!version || !variant) return;
+  try {
+    isVkd3dBusy.value = true;
+    const label = vkd3dVariantLabel(variant);
+    notify?.info(label, `正在应用 ${label} ${version}...`);
+    const result = await installVkd3d(props.gameName, version, variant);
+    protonSettings.vkd3d_enabled = true;
+    protonSettings.proton_no_d3d12 = false;
+    protonSettings.vkd3d_variant = variant;
+    protonSettings.vkd3d_version = version;
+    notify?.success(`${label} 应用完成`, result);
+    await loadVkd3dState();
+  } catch (e) {
+    notify?.error('VKD3D 应用失败', `${e}`);
+  } finally {
+    isVkd3dBusy.value = false;
+  }
+};
+
+const doUninstallVkd3d = async () => {
+  if (isVkd3dBusy.value) return;
+  const confirmed = await askConfirm('确定要从当前 Prefix 中卸载 VKD3D 吗？', { title: 'VKD3D', kind: 'warning' });
+  if (!confirmed) return;
+  try {
+    isVkd3dBusy.value = true;
+    const result = await uninstallVkd3d(props.gameName);
+    vkd3dSelectedKey.value = 'builtin';
+    protonSettings.vkd3d_enabled = true;
+    protonSettings.proton_no_d3d12 = false;
+    protonSettings.vkd3d_variant = 'builtin';
+    protonSettings.vkd3d_version = '';
+    notify?.success('VKD3D 卸载完成', result);
+    await loadVkd3dState();
+  } catch (e) {
+    notify?.error('VKD3D 卸载失败', `${e}`);
+  } finally {
+    isVkd3dBusy.value = false;
   }
 };
 
@@ -598,7 +1030,14 @@ const loadConfig = async () => {
     config.basic = normalized.basic;
     config.other = normalized.other || {};
     // 恢复系统选项
-    selectedGpuIndex.value = typeof config.other.gpuIndex === 'number' ? config.other.gpuIndex : -1;
+    if (typeof config.other.gpuIndex === 'number') {
+      selectedGpuIndex.value = config.other.gpuIndex;
+    } else if (typeof config.other.gpuIndex === 'string' && config.other.gpuIndex.trim() !== '') {
+      const parsed = Number(config.other.gpuIndex);
+      selectedGpuIndex.value = Number.isFinite(parsed) ? parsed : -1;
+    } else {
+      selectedGpuIndex.value = -1;
+    }
     gameLang.value = typeof config.other.gameLang === 'string' ? config.other.gameLang : '';
     await refreshGameVersion();
     hasLoadedConfig.value = true;
@@ -805,7 +1244,10 @@ watch(() => props.modelValue, async (val) => {
     loadJadeiteState();
     loadPrefixState();
     loadDxvkState();
+    void refreshGamepadState(true);
+    void startGamepadHotplugMonitor();
   } else {
+    await stopGamepadHotplugMonitor();
     // Only save when current modal session loaded successfully.
     if (hasLoadedConfig.value) {
       await saveConfig();
@@ -832,7 +1274,12 @@ watch(() => props.gameName, async (newGame, oldGame) => {
     loadJadeiteState();
     loadPrefixState();
     loadDxvkState();
+    void refreshGamepadState(true);
   }
+});
+
+onUnmounted(() => {
+  void stopGamepadHotplugMonitor();
 });
 
 const close = async () => {
@@ -843,6 +1290,7 @@ const close = async () => {
     });
     if (!discard) return;
   }
+  await stopGamepadHotplugMonitor();
   emit('update:modelValue', false);
 };
 
@@ -1033,7 +1481,6 @@ defineExpose({
                       { label: 'GE-Proton', items: wineVersions.filter(v => v.variant === 'geproton') },
                       { label: 'DW-Proton', items: wineVersions.filter(v => v.variant === 'dwproton') },
                       { label: 'Proton Official', items: wineVersions.filter(v => v.variant === 'official') },
-                      { label: 'Proton Experimental', items: wineVersions.filter(v => v.variant === 'experimental') },
                       { label: 'Proton-TKG', items: wineVersions.filter(v => v.variant === 'protontkg') },
                       { label: 'Lutris Wine', items: wineVersions.filter(v => v.variant === 'lutris') },
                       { label: 'System Wine', items: wineVersions.filter(v => v.variant === 'systemwine') },
@@ -1072,12 +1519,25 @@ defineExpose({
                     <span :class="dxvkInstalledStatus.installed ? 'text-ok' : 'text-err'">
                       {{ dxvkInstalledStatus.installed ? '✓ 已安装' : '✗ 未安装' }}
                     </span>
+                    <span class="info-key">64 位 DLL</span>
+                    <span class="info-val">{{ dxvkInstalledStatus.has_64bit ? '✓ 已检测' : '✗ 缺失' }}</span>
+                    <span class="info-key">32 位 DLL</span>
+                    <span class="info-val">{{ dxvkInstalledStatus.has_32bit ? '✓ 已检测' : '✗ 缺失' }}</span>
                     <template v-if="dxvkInstalledStatus.installed">
                       <span class="info-key">当前版本</span>
                       <span class="info-val">{{ dxvkInstalledStatus.version || '未知' }}</span>
                       <span class="info-key">DLL 文件</span>
                       <span class="info-val">{{ dxvkInstalledStatus.dlls_found.join(', ') }}</span>
                     </template>
+                  </div>
+                  <div
+                    v-if="dxvkInstalledStatus?.arch_conflict && dxvkInstalledStatus?.conflict_details.length"
+                    class="dxvk-warning"
+                    style="margin-top: 10px;"
+                  >
+                    <div v-for="(detail, idx) in dxvkInstalledStatus.conflict_details" :key="`dxvk-conflict-${idx}`">
+                      {{ detail }}
+                    </div>
                   </div>
                   <div v-else class="text-muted" style="font-size:13px">加载中...</div>
                 </div>
@@ -1119,6 +1579,76 @@ defineExpose({
                 </div>
               </div>
 
+              <!-- VKD3D 版本管理 -->
+              <div class="setting-group">
+                <div class="setting-label">VKD3D (D3D12 → Vulkan)</div>
+
+                <div class="info-card" style="margin-bottom: 10px;">
+                  <div v-if="vkd3dInstalledStatus" class="info-grid" style="grid-template-columns: 100px 1fr;">
+                    <span class="info-key">安装状态</span>
+                    <span :class="vkd3dInstalledStatus.installed ? 'text-ok' : 'text-err'">
+                      {{ vkd3dInstalledStatus.installed ? '✓ 已安装' : '✗ 未安装' }}
+                    </span>
+                    <span class="info-key">64 位 DLL</span>
+                    <span class="info-val">{{ vkd3dInstalledStatus.has_64bit ? '✓ 已检测' : '✗ 缺失' }}</span>
+                    <span class="info-key">32 位 DLL</span>
+                    <span class="info-val">{{ vkd3dInstalledStatus.has_32bit ? '✓ 已检测' : '✗ 缺失' }}</span>
+                    <template v-if="vkd3dInstalledStatus.installed">
+                      <span class="info-key">当前版本</span>
+                      <span class="info-val">{{ vkd3dInstalledStatus.version || '未知' }}</span>
+                      <span class="info-key">当前变体</span>
+                      <span class="info-val">{{ vkd3dInstalledStatus.variant ? vkd3dVariantLabel(vkd3dInstalledStatus.variant) : '未知' }}</span>
+                      <span class="info-key">DLL 文件</span>
+                      <span class="info-val">{{ vkd3dInstalledStatus.dlls_found.join(', ') }}</span>
+                    </template>
+                  </div>
+                  <div
+                    v-if="vkd3dInstalledStatus?.arch_conflict && vkd3dInstalledStatus?.conflict_details.length"
+                    class="dxvk-warning"
+                    style="margin-top: 10px;"
+                  >
+                    <div v-for="(detail, idx) in vkd3dInstalledStatus.conflict_details" :key="`vkd3d-conflict-${idx}`">
+                      {{ detail }}
+                    </div>
+                  </div>
+                  <div v-else class="text-muted" style="font-size:13px">加载中...</div>
+                </div>
+
+                <div class="flex-row" style="align-items:flex-end; gap:8px; margin-top:8px;">
+                  <div style="flex:1">
+                    <select v-model="vkd3dSelectedKey" class="custom-input" style="width:100%">
+                      <option value="builtin">使用内置 VKD3D（默认）</option>
+                      <option value="disabled">禁用 VKD3D（设置 PROTON_NO_D3D12=1）</option>
+                      <optgroup
+                        v-for="group in vkd3dGroupedLocalVersions"
+                        :key="group.variant"
+                        :label="group.label"
+                      >
+                        <option
+                          v-for="lv in group.items"
+                          :key="`${lv.version}|${lv.variant}`"
+                          :value="`${lv.version}|${lv.variant}`"
+                        >
+                          {{ lv.version }}
+                        </option>
+                      </optgroup>
+                    </select>
+                  </div>
+                </div>
+                <div class="button-row" style="margin-top:8px;">
+                  <button class="action-btn highlight" @click="doInstallVkd3d" :disabled="isVkd3dBusy || !vkd3dSelectedKey || vkd3dSelectedKey === 'disabled' || vkd3dSelectedKey === 'builtin'">
+                    {{ isVkd3dBusy ? '应用中...' : '应用 / 切换版本' }}
+                  </button>
+                  <button class="action-btn delete" @click="doUninstallVkd3d" :disabled="isVkd3dBusy || !vkd3dInstalledStatus?.installed">
+                    卸载 VKD3D
+                  </button>
+                </div>
+
+                <div class="info-sub" style="margin-top:8px;">
+                  如需下载更多 VKD3D 版本，请前往「设置 → VKD3D 管理」页面。
+                </div>
+              </div>
+
               <!-- Proton 设置 -->
               <div class="setting-group">
                 <div class="setting-label">Proton 设置</div>
@@ -1128,17 +1658,38 @@ defineExpose({
                 <div class="setting-checkbox-row">
                   <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.use_pressure_vessel" /> 使用 Pressure Vessel 容器</label>
                 </div>
-                <div class="setting-checkbox-row">
-                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.proton_enable_wayland" /> 启用 Wayland</label>
+                <div class="setting-inline-row">
+                  <span class="setting-inline-label">手柄兼容模式</span>
+                  <select v-model="protonSettings.gamepad_compat_mode" class="custom-input" style="flex: 1;">
+                    <option value="off">关闭（默认）</option>
+                    <option value="auto">自动（推荐）</option>
+                    <option value="steam_input">Steam Input 优先</option>
+                    <option value="background_input">后台输入兼容</option>
+                  </select>
+                </div>
+                <div class="info-sub" style="margin-top:-8px; margin-bottom:8px;">
+                  自动模式会按 runner 注入推荐环境变量；关闭即一键回滚到默认行为。
                 </div>
                 <div class="setting-checkbox-row">
-                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.proton_no_d3d12" /> 禁用 D3D12</label>
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.gamemode_enabled" /> 启用 GameMode（gamemoderun）</label>
+                </div>
+                <div class="setting-checkbox-row">
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.auto_performance_mode" /> 自动性能模式切换（powerprofilesctl）</label>
+                </div>
+                <div class="setting-checkbox-row">
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.proton_enable_wayland" /> 启用 Wayland</label>
                 </div>
                 <div class="setting-checkbox-row">
                   <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.proton_media_use_gst" /> 使用 GStreamer 媒体</label>
                 </div>
                 <div class="setting-checkbox-row">
                   <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.mangohud" /> MangoHud 性能覆盖</label>
+                </div>
+                <div class="setting-checkbox-row">
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.esync_enabled" /> 启用 ESYNC</label>
+                </div>
+                <div class="setting-checkbox-row">
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.fsync_enabled" /> 启用 FSYNC</label>
                 </div>
                 <div class="setting-checkbox-row">
                   <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.steam_deck_compat" /> Steam Deck 兼容模式</label>
@@ -1150,12 +1701,60 @@ defineExpose({
 
               <!-- DXVK/VKD3D 设置 -->
               <div class="setting-group">
-                <div class="setting-label">DXVK / 图形设置</div>
+                <div class="setting-label">DXVK / VKD3D / 图形设置</div>
+                <div class="setting-checkbox-row">
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.dxvk_enabled" /> 启用 DXVK</label>
+                </div>
+                <div class="setting-inline-row">
+                  <span class="setting-inline-label">VKD3D 模式</span>
+                  <select v-model="vkd3dSelectedKey" class="custom-input" style="flex: 1;">
+                    <option value="builtin">使用内置 VKD3D（默认）</option>
+                    <option value="disabled">禁用 VKD3D（禁用 D3D12）</option>
+                    <optgroup
+                      v-for="group in vkd3dGroupedLocalVersions"
+                      :key="`graphics-vkd3d-${group.variant}`"
+                      :label="`${group.label}（已缓存）`"
+                    >
+                      <option
+                        v-for="lv in group.items"
+                        :key="`graphics-${lv.version}|${lv.variant}`"
+                        :value="`${lv.version}|${lv.variant}`"
+                      >
+                        {{ lv.version }}
+                      </option>
+                    </optgroup>
+                  </select>
+                </div>
+                <div class="info-sub" style="margin-top:-8px; margin-bottom:12px;">
+                  选择自定义版本后，请在上方「VKD3D 版本管理」里点击“应用 / 切换版本”写入 Prefix。
+                </div>
                 <div class="setting-checkbox-row">
                   <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.dxvk_async" /> DXVK 异步着色器编译</label>
                 </div>
                 <div class="setting-checkbox-row">
                   <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.disable_gpu_filter" /> 禁用 GPU 自动过滤</label>
+                </div>
+                <div class="setting-checkbox-row">
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.fsr_enabled" /> 启用 FSR（全屏缩放）</label>
+                </div>
+                <div class="setting-inline-row">
+                  <span class="setting-inline-label">FSR 锐化</span>
+                  <input v-model.number="protonSettings.fsr_strength" type="number" class="custom-input" style="flex: 1;" min="0" max="5" />
+                </div>
+                <div class="setting-inline-row">
+                  <span class="setting-inline-label">分辨率缩放%</span>
+                  <input v-model.number="protonSettings.resolution_scale_percent" type="number" class="custom-input" style="flex: 1;" min="50" max="100" />
+                </div>
+                <div class="setting-checkbox-row">
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.dlss_compat_enabled" /> DLSS 兼容模式（兼容时）</label>
+                </div>
+                <div class="setting-inline-row">
+                  <span class="setting-inline-label">VSync</span>
+                  <select v-model="protonSettings.vsync_mode" class="custom-input" style="flex: 1;">
+                    <option value="auto">自动</option>
+                    <option value="on">开启</option>
+                    <option value="off">关闭</option>
+                  </select>
                 </div>
                 <div class="setting-inline-row">
                   <span class="setting-inline-label">DXVK HUD</span>
@@ -1170,6 +1769,21 @@ defineExpose({
                 <div class="setting-inline-row">
                   <span class="setting-inline-label">帧率限制</span>
                   <input v-model.number="protonSettings.dxvk_frame_rate" type="number" class="custom-input" style="flex: 1;" placeholder="0 = 不限制" min="0" />
+                </div>
+                <div class="setting-checkbox-row">
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.cpu_limit_enabled" /> 启用 CPU 限制（cpulimit）</label>
+                </div>
+                <div class="setting-inline-row">
+                  <span class="setting-inline-label">CPU 限制%</span>
+                  <input
+                    v-model.number="protonSettings.cpu_limit_percent"
+                    type="number"
+                    class="custom-input"
+                    style="flex: 1;"
+                    min="1"
+                    max="100"
+                    :disabled="!protonSettings.cpu_limit_enabled"
+                  />
                 </div>
               </div>
 
@@ -1220,12 +1834,160 @@ defineExpose({
                 </div>
               </div>
 
+              <!-- 手柄诊断 -->
+              <div class="setting-group">
+                <div class="setting-label">手柄诊断与热插拔</div>
+                <div class="button-row">
+                  <button class="action-btn" @click="refreshGamepadState(true)">刷新手柄列表</button>
+                  <button
+                    class="action-btn highlight"
+                    @click="startGamepadHotplugMonitor"
+                    :disabled="gamepadMonitorActive"
+                  >
+                    {{ gamepadMonitorActive ? '监听中...' : '开始热插拔监听' }}
+                  </button>
+                  <button class="action-btn" @click="stopGamepadHotplugMonitor" :disabled="!gamepadMonitorActive">
+                    停止监听
+                  </button>
+                  <button class="action-btn" @click="copyGamepadDiagnostics">复制诊断信息</button>
+                </div>
+
+                <div class="info-sub" style="margin-top: 6px;">
+                  检测基于 gilrs。默认手柄选择会持久化保存，供后续启动链路和诊断使用。
+                </div>
+                <div class="info-sub" style="margin-top: 4px;">
+                  {{ gamepadRunnerHint }}
+                </div>
+
+                <div class="flex-row" style="margin-top: 10px; gap: 8px; align-items: flex-end;">
+                  <div style="flex: 1;">
+                    <div class="info-sub">默认手柄</div>
+                    <select v-model="defaultGamepadStableId" class="custom-input" style="width: 100%;">
+                      <option value="">自动（首个可用手柄）</option>
+                      <option
+                        v-for="pad in gamepads"
+                        :key="pad.stableId"
+                        :value="pad.stableId"
+                      >
+                        {{ pad.name }} [{{ pad.runtimeId }}]
+                      </option>
+                    </select>
+                  </div>
+                  <div style="width: 160px;">
+                    <div class="info-sub">玩家编号</div>
+                    <select v-model.number="defaultGamepadPlayerIndex" class="custom-input" style="width: 100%;">
+                      <option v-for="idx in gamepadPlayerOptions" :key="idx" :value="idx">
+                        玩家 {{ idx }}
+                      </option>
+                    </select>
+                  </div>
+                  <button class="action-btn highlight" @click="saveDefaultGamepadSelection">
+                    保存选择
+                  </button>
+                </div>
+
+                <div class="info-card" style="margin-top: 10px;">
+                  <div class="setting-label" style="margin-bottom: 8px;">当前手柄列表</div>
+                  <div v-if="gamepads.length === 0" class="info-sub text-muted">未检测到手柄设备</div>
+                  <div v-else class="gamepad-list">
+                    <div v-for="pad in gamepads" :key="pad.stableId" class="gamepad-item">
+                      <div class="gamepad-head">
+                        <span class="info-val">{{ pad.name }}</span>
+                        <span class="badge">{{ pad.isConnected ? 'Connected' : 'Disconnected' }}</span>
+                        <span v-if="pad.isDefault" class="badge">Default</span>
+                        <span class="badge" :class="pad.xinputLike ? 'text-ok' : 'text-err'">
+                          {{ pad.xinputLike ? 'XInput-like' : 'DirectInput-like' }}
+                        </span>
+                      </div>
+                      <div class="info-sub">
+                        runtime={{ pad.runtimeId }} |
+                        vid:pid={{ (pad.vendorId ?? 0).toString(16).padStart(4, '0') }}:{{ (pad.productId ?? 0).toString(16).padStart(4, '0') }} |
+                        buttons={{ pad.buttonCount }} |
+                        axes={{ pad.axisCount }} |
+                        mapping={{ pad.mappingSource }}
+                      </div>
+                      <div class="info-sub text-muted">stable={{ shortenStableId(pad.stableId) }}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="info-card" style="margin-top: 10px;">
+                  <div class="setting-label" style="margin-bottom: 8px;">Prefix 输入 DLL 覆盖检查</div>
+                  <div class="button-row">
+                    <button class="action-btn" @click="refreshGamepadPrefixOverrides">刷新覆盖状态</button>
+                    <button
+                      class="action-btn highlight"
+                      @click="repairGamepadPrefixInputOverrides"
+                      :disabled="gamepadPrefixBusy || !gamepadPrefixStatus?.userRegExists"
+                    >
+                      {{ gamepadPrefixBusy ? '修复中...' : '一键恢复 builtin' }}
+                    </button>
+                  </div>
+                  <div v-if="!gamepadPrefixStatus" class="info-sub text-muted" style="margin-top: 8px;">
+                    尚未读取 Prefix 覆盖状态
+                  </div>
+                  <div v-else style="margin-top: 8px;">
+                    <div class="info-sub">Prefix: {{ gamepadPrefixStatus.prefixPath }}</div>
+                    <div v-if="!gamepadPrefixStatus.userRegExists" class="info-sub text-muted">
+                      未找到 user.reg，可能 Prefix 尚未初始化。
+                    </div>
+                    <template v-else>
+                      <div class="info-sub">
+                        xinput={{ gamepadPrefixStatus.xinputOverrides.length }},
+                        dinput={{ gamepadPrefixStatus.dinputOverrides.length }},
+                        hid/rawinput={{ gamepadPrefixStatus.hidOverrides.length }}
+                      </div>
+                      <div
+                        v-if="gamepadPrefixStatus.riskyOverrides.length > 0"
+                        class="dxvk-warning"
+                        style="margin-top: 8px;"
+                      >
+                        <div class="info-sub" style="margin-bottom: 6px;">
+                          检测到 {{ gamepadPrefixStatus.riskyOverrides.length }} 条 native 覆盖，可能导致手柄失效：
+                        </div>
+                        <div
+                          v-for="(item, idx) in gamepadPrefixStatus.riskyOverrides"
+                          :key="`gp-risk-${idx}`"
+                          class="info-sub"
+                        >
+                          {{ item }}
+                        </div>
+                      </div>
+                      <div v-else class="info-sub text-ok" style="margin-top: 6px;">
+                        未发现输入 DLL native 覆盖风险。
+                      </div>
+                    </template>
+                  </div>
+                </div>
+
+                <div v-if="gamepadDiagnostics?.notes?.length" class="info-card" style="margin-top: 10px;">
+                  <div class="setting-label" style="margin-bottom: 8px;">兼容性建议</div>
+                  <div
+                    v-for="(note, idx) in gamepadDiagnostics.notes"
+                    :key="`gp-note-${idx}`"
+                    class="info-sub"
+                  >
+                    {{ idx + 1 }}. {{ note }}
+                  </div>
+                </div>
+
+                <div class="info-card" style="margin-top: 10px;">
+                  <div class="setting-label" style="margin-bottom: 8px;">实时按键/摇杆回显</div>
+                  <div v-if="gamepadEventLogs.length === 0" class="info-sub text-muted">暂无输入事件</div>
+                  <div v-else class="gamepad-event-log">
+                    <div v-for="(line, idx) in gamepadEventLogs" :key="`evt-${idx}`" class="gamepad-event-line">
+                      {{ line }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <!-- GPU 选择（多显卡切换） -->
               <div class="setting-group">
                 <div class="setting-label">指定显卡</div>
                 <div v-if="displayInfo && displayInfo.gpus.length > 0">
-                  <select v-model="selectedGpuIndex" class="custom-input" style="width:100%">
-                    <option value="-1">自动（系统默认）</option>
+                  <select v-model.number="selectedGpuIndex" class="custom-input" style="width:100%">
+                    <option :value="-1">自动（系统默认）</option>
                     <option v-for="gpu in displayInfo.gpus" :key="gpu.index" :value="gpu.index">
                       GPU {{ gpu.index }}: {{ gpu.name }} ({{ gpu.driver }})
                     </option>
@@ -1836,5 +2598,44 @@ defineExpose({
   color: rgba(255, 255, 255, 0.4);
   margin-top: 4px;
   text-align: right;
+}
+
+.gamepad-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gamepad-item {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.gamepad-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.gamepad-event-log {
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 8px;
+}
+
+.gamepad-event-line {
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.82);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

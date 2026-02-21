@@ -1,7 +1,6 @@
 use reqwest::Client;
 use std::path::Path;
 use tokio::io::AsyncWriteExt;
-use tracing::{info, warn};
 
 /// Download a file with resume support using .temp intermediate file.
 /// Mirrors the logic from LutheringLaves.py `download_file_with_resume`.
@@ -73,7 +72,7 @@ pub async fn download_with_resume(
         200 => {
             // Full content - server doesn't support resume or fresh download
             if downloaded_bytes > 0 {
-                warn!("Server doesn't support resume for {}, restarting", url);
+                crate::log_warn!("Server doesn't support resume for {}, restarting", url);
                 downloaded_bytes = 0;
             }
         }
@@ -141,7 +140,7 @@ pub async fn download_simple(client: &Client, url: &str, dest: &Path) -> Result<
     use futures_util::StreamExt;
     use tokio::io::AsyncWriteExt;
 
-    info!("Downloading {} -> {}", url, dest.display());
+    crate::log_info!("Downloading {} -> {}", url, dest.display());
 
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent)

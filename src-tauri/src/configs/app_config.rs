@@ -8,7 +8,7 @@ static CUSTOM_DATA_DIR: once_cell::sync::Lazy<RwLock<Option<PathBuf>>> =
 
 /// 启动时设置自定义数据根目录
 pub fn set_custom_data_dir(dir: PathBuf) {
-    tracing::info!("Custom data dir set to: {}", dir.display());
+    crate::log_info!("Custom data dir set to: {}", dir.display());
     *CUSTOM_DATA_DIR.write().unwrap() = Some(dir);
 }
 

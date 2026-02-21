@@ -1,7 +1,6 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
-use tracing::info;
 
 // ============================================================
 // HoYoverse getGamePackages API 数据结构
@@ -173,9 +172,11 @@ async fn fetch_game_packages_via_hyp(
         .next()
         .ok_or_else(|| format!("API 响应中未找到可用游戏包 (biz prefix: {})", biz_prefix))?;
 
-    info!(
+    crate::log_info!(
         "HoYoverse package selected: biz={}, version={}, api={}",
-        selected.game.biz, selected.main.major.version, api_url
+        selected.game.biz,
+        selected.main.major.version,
+        api_url
     );
     Ok(selected)
 }
@@ -248,7 +249,7 @@ pub async fn fetch_resource_list(res_list_url: &str) -> Result<Vec<ResourceEntry
 
     // 尝试解析为 JSON 数组
     if let Ok(list) = serde_json::from_str::<Vec<ResourceEntry>>(&text) {
-        info!("资源列表: {} 个文件 (JSON 数组)", list.len());
+        crate::log_info!("资源列表: {} 个文件 (JSON 数组)", list.len());
         return Ok(list);
     }
 
@@ -268,7 +269,7 @@ pub async fn fetch_resource_list(res_list_url: &str) -> Result<Vec<ResourceEntry
         return Err("无法解析资源列表".to_string());
     }
 
-    info!("资源列表: {} 个文件 (NDJSON)", files.len());
+    crate::log_info!("资源列表: {} 个文件 (NDJSON)", files.len());
     Ok(files)
 }
 

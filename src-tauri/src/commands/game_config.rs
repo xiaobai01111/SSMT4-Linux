@@ -11,7 +11,6 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
-use tracing::{info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
@@ -200,7 +199,7 @@ pub fn load_game_config(app: tauri::AppHandle, game_name: &str) -> Result<Value,
     let normalized_content = serde_json::to_string_pretty(&val)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
     db::set_game_config(&game_name, &normalized_content);
-    info!("从文件迁移游戏配置到 SQLite: {}", game_name);
+    crate::log_info!("从文件迁移游戏配置到 SQLite: {}", game_name);
     Ok(val)
 }
 
@@ -215,7 +214,7 @@ pub fn save_game_config(
     let content = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
     db::set_game_config(&game_name, &content);
-    info!("Saved config for game: {}", game_name);
+    crate::log_info!("Saved config for game: {}", game_name);
     Ok(())
 }
 
@@ -398,9 +397,10 @@ pub fn load_game_info_v2(
                     let mut fallback = game_config_adapter::legacy_to_v2(&game_name, &legacy);
                     fallback.read_only = true;
                     fallback.warning_code = Some("MIGRATE_FAILED_READONLY".to_string());
-                    warn!(
+                    crate::log_warn!(
                         "迁移 {} 到 V2 失败，已降级为 legacy 只读模式: {}",
-                        game_name, migrate_error
+                        game_name,
+                        migrate_error
                     );
                     Ok(fallback)
                 }
@@ -905,7 +905,7 @@ pub fn create_new_config(
     let v2 = game_config_adapter::legacy_to_v2(&new_name, &final_config);
     let _ = save_v2_and_legacy(&new_name, &v2);
 
-    info!("Created new config for game: {}", new_name);
+    crate::log_info!("Created new config for game: {}", new_name);
     Ok(())
 }
 
@@ -917,7 +917,7 @@ pub fn delete_game_config_folder(app: tauri::AppHandle, game_name: &str) -> Resu
         if game_dir.exists() {
             std::fs::remove_dir_all(&game_dir)
                 .map_err(|e| format!("Failed to delete game folder: {}", e))?;
-            info!("Deleted config folder for game: {}", game_name);
+            crate::log_info!("Deleted config folder for game: {}", game_name);
         }
     }
     // 同时清理 SQLite 中的游戏配置
@@ -937,7 +937,7 @@ pub fn reset_game_background(app: tauri::AppHandle, game_name: &str) -> Result<(
         let path = game_dir.join(format!("Background.{}", ext));
         if path.exists() {
             std::fs::remove_file(&path).ok();
-            info!("Removed custom background: {}", path.display());
+            crate::log_info!("Removed custom background: {}", path.display());
         }
     }
     if let Ok(mut v2) = ensure_v2_config(&app, &game_name) {
@@ -964,7 +964,7 @@ pub fn reset_game_icon(app: tauri::AppHandle, game_name: &str) -> Result<(), Str
         let path = game_dir.join(name);
         if path.exists() {
             std::fs::remove_file(&path).ok();
-            info!("Removed custom icon: {}", path.display());
+            crate::log_info!("Removed custom icon: {}", path.display());
         }
     }
     if let Ok(mut v2) = ensure_v2_config(&app, &game_name) {
@@ -1027,7 +1027,7 @@ pub fn set_game_background(
         }
         let content = serde_json::to_string_pretty(&config).unwrap_or_default();
         db::set_game_config(&game_name, &content);
-        info!("Updated backgroundType to {} for {}", bt, game_name);
+        crate::log_info!("Updated backgroundType to {} for {}", bt, game_name);
 
         if let Ok(mut v2) = ensure_v2_config(&app, &game_name) {
             v2.assets.background_type = crate::configs::game_config_v2::BackgroundType::Image;
@@ -1172,7 +1172,7 @@ fn get_writable_game_dir(app: &tauri::AppHandle, game_name: &str) -> Result<Path
 
         if !dst_dir.exists() {
             crate::utils::file_manager::copy_dir_recursive(&src_dir, &dst_dir)?;
-            info!(
+            crate::log_info!(
                 "Copied game resources to writable dir: {} -> {}",
                 src_dir.display(),
                 dst_dir.display()

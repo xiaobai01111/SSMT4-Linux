@@ -16,7 +16,7 @@ pub fn run() {
     let log_dir = utils::file_manager::get_logs_dir();
     utils::logger::init_logger(&log_dir);
 
-    tracing::info!("SSMT4 Linux starting...");
+    crate::log_info!("SSMT4 Linux starting...");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())

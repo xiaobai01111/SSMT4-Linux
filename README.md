@@ -21,11 +21,20 @@ SSMT4 Linux 是一个基于 `Tauri + Vue 3 + Rust` 的 Linux 游戏工具箱，�
 
 当前默认支持的游戏配置包括：
 
-- `GenshinImpact`
-- `HonkaiStarRail`
-- `ZenlessZoneZero`
-- `WutheringWaves`
-- `SnowbreakContainmentZone`
+- `鸣潮：Wuthering Waves`（`WutheringWaves`）
+- `原神：Genshin Impact`（`GenshinImpact`）
+- `崩坏：星穹铁道：Honkai: Star Rail`（`HonkaiStarRail`）
+- `绝区零：Zenless Zone Zero`（`ZenlessZoneZero`）
+- `尘白禁区：Snowbreak: Containment Zone`（`SnowbreakContainmentZone`）
+- `明日方舟：终末地：Arknights: Endfield`（`ArknightsEndfield`）
+- `明日方舟：Arknights`（`Arknights`）
+
+近期核心更新（摘要）：
+
+- 新增 DX12（VKD3D）支持链路：支持内置/禁用/自定义变体（`vkd3d`、`vkd3d-proton`、`vkd3d-proton-ge`）。
+- 增强 DXVK / VKD3D 状态检测：支持 32/64 位冲突识别与状态提示。
+- 新增手柄诊断与热插拔：支持实时事件回显、默认手柄/玩家编号保存。
+- 新增 Prefix 输入 DLL 覆盖诊断与一键恢复（`xinput/dinput/hid/rawinput`）。
 
 ## 架构说明
 

@@ -10,7 +10,6 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{Mutex, Semaphore};
-use tracing::{error, info, warn};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VerifyResult {
@@ -87,9 +86,10 @@ pub async fn verify_game_files(
     let total_files = resource_index.resource.len();
     let total_size: u64 = resource_index.resource.iter().map(|r| r.size).sum();
 
-    info!(
+    crate::log_info!(
         "开始校验 {} 个文件（总计 {} bytes）",
-        total_files, total_size
+        total_files,
+        total_size
     );
 
     // 清理无效 pak 文件
@@ -105,7 +105,7 @@ pub async fn verify_game_files(
         let file_path = match safe_join_remote(game_folder, &file.dest) {
             Ok(p) => p,
             Err(e) => {
-                warn!("不安全的清单路径（计入失败）: {} ({})", file.dest, e);
+                crate::log_warn!("不安全的清单路径（计入失败）: {} ({})", file.dest, e);
                 unsafe_paths.push(format!("{} (unsafe path: {})", file.dest, e));
                 continue;
             }
@@ -117,7 +117,7 @@ pub async fn verify_game_files(
             }
             Ok(meta) => {
                 // 文件存在但 size 不对，直接标记重下
-                warn!(
+                crate::log_warn!(
                     "{} size mismatch (expected: {}, got: {})",
                     file.dest,
                     file.size,
@@ -128,14 +128,14 @@ pub async fn verify_game_files(
             }
             Err(_) => {
                 // 文件不存在，直接标记重下
-                warn!("{} 文件不存在", file.dest);
+                crate::log_warn!("{} 文件不存在", file.dest);
                 need_download.push((i, file));
                 _phase1_skipped += file.size;
             }
         }
     }
 
-    info!(
+    crate::log_info!(
         "第一阶段完成: {} 个文件需 MD5 校验, {} 个文件需重新下载（size 不匹配/不存在）",
         need_hash.len(),
         need_download.len()
@@ -151,7 +151,7 @@ pub async fn verify_game_files(
 
     // 将第一阶段发现的不安全路径计入 failed 和 finished_count
     if !unsafe_paths.is_empty() {
-        warn!("{} 个清单条目因路径不安全被标记为失败", unsafe_paths.len());
+        crate::log_warn!("{} 个清单条目因路径不安全被标记为失败", unsafe_paths.len());
         failed.lock().await.extend(unsafe_paths);
     }
 
@@ -175,7 +175,7 @@ pub async fn verify_game_files(
         let file_path = match safe_join(game_folder, &file.dest) {
             Ok(p) => p,
             Err(e) => {
-                warn!("不安全的清单路径（计入失败）: {} ({})", file.dest, e);
+                crate::log_warn!("不安全的清单路径（计入失败）: {} ({})", file.dest, e);
                 failed
                     .lock()
                     .await
@@ -214,7 +214,7 @@ pub async fn verify_game_files(
                 {
                     Ok(_) => true,
                     Err(err) => {
-                        warn!("{} SHA256 校验失败: {}", file_dest, err);
+                        crate::log_warn!("{} SHA256 校验失败: {}", file_dest, err);
                         false
                     }
                 }
@@ -223,9 +223,11 @@ pub async fn verify_game_files(
                 if current_md5 == file_md5 {
                     true
                 } else {
-                    warn!(
+                    crate::log_warn!(
                         "{} MD5 mismatch (expected: {}, got: {})",
-                        file_dest, file_md5, current_md5
+                        file_dest,
+                        file_md5,
+                        current_md5
                     );
                     false
                 }
@@ -295,7 +297,7 @@ pub async fn verify_game_files(
         let file_path = match safe_join(game_folder, &file.dest) {
             Ok(p) => p,
             Err(e) => {
-                warn!("不安全的清单路径（计入失败）: {} ({})", file.dest, e);
+                crate::log_warn!("不安全的清单路径（计入失败）: {} ({})", file.dest, e);
                 failed
                     .lock()
                     .await
@@ -374,7 +376,7 @@ pub async fn verify_game_files(
             } else {
                 format!("校验子任务被取消: {}", e)
             };
-            error!("{}", msg);
+            crate::log_error!("{}", msg);
             failed.lock().await.push(msg);
         }
     }
@@ -383,7 +385,7 @@ pub async fn verify_game_files(
     let redl = redownloaded.load(Ordering::Relaxed);
     let fail = failed.lock().await.clone();
 
-    info!(
+    crate::log_info!(
         "校验完成: ok={}, redownloaded={}, failed={}",
         ok,
         redl,
@@ -408,7 +410,7 @@ async fn redownload_and_verify(
     file_size: u64,
 ) -> bool {
     if let Err(e) = fetcher::download_with_resume(client, url, file_path, true, None).await {
-        error!("Failed to re-download {}: {}", file_path.display(), e);
+        crate::log_error!("Failed to re-download {}: {}", file_path.display(), e);
         return false;
     }
 
@@ -426,15 +428,15 @@ async fn redownload_and_verify(
             if !expected_md5.trim().is_empty() {
                 db::set_cached_md5(&path_str, file_size as i64, mtime, expected_md5);
             }
-            info!("{} MD5 OK after re-download", file_path.display());
+            crate::log_info!("{} MD5 OK after re-download", file_path.display());
             true
         }
         Ok(crate::utils::hash_verify::VerifiedHashAlgo::Sha256) => {
-            info!("{} SHA256 OK after re-download", file_path.display());
+            crate::log_info!("{} SHA256 OK after re-download", file_path.display());
             true
         }
         Err(err) => {
-            error!(
+            crate::log_error!(
                 "{} still checksum mismatch after re-download: {}",
                 file_path.display(),
                 err
@@ -467,7 +469,7 @@ async fn remove_invalid_paks(game_folder: &Path, resource_index: &ResourceIndex)
     while let Ok(Some(entry)) = entries.next_entry().await {
         let name = entry.file_name().to_string_lossy().to_string();
         if !valid_paks.contains(&name) {
-            warn!("Removing invalid pak: {}", name);
+            crate::log_warn!("Removing invalid pak: {}", name);
             tokio::fs::remove_file(entry.path()).await.ok();
         }
     }

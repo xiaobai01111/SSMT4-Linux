@@ -8,7 +8,6 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
-use tracing::{info, warn};
 
 // ============================================================
 // 全量下载 / 更新
@@ -23,7 +22,7 @@ pub async fn download_or_update_game(
 ) -> Result<(), String> {
     // 1. 获取远程 manifest（自动 CDN 轮询）
     let (remote_manifest, cdn) = snowbreak::fetch_manifest_with_policy(source_policy).await?;
-    info!(
+    crate::log_info!(
         "[Snowbreak] 远程版本: {}, 文件数: {}",
         remote_manifest.version,
         remote_manifest.paks.len(),
@@ -35,14 +34,14 @@ pub async fn download_or_update_game(
     // 3. 计算需要下载的文件
     let tasks = compute_download_tasks(&remote_manifest, &local_manifest, game_folder);
     if tasks.is_empty() {
-        info!("[Snowbreak] 所有文件已是最新");
+        crate::log_info!("[Snowbreak] 所有文件已是最新");
         snowbreak::save_local_manifest(game_folder, &remote_manifest)?;
         return Ok(());
     }
 
     let total_size: u64 = tasks.iter().map(|t| t.size).sum();
     let total_count = tasks.len();
-    info!(
+    crate::log_info!(
         "[Snowbreak] 需下载 {} 个文件, 总大小 {:.1} MB",
         total_count,
         total_size as f64 / 1024.0 / 1024.0
@@ -110,7 +109,7 @@ pub async fn download_or_update_game(
         0,
     );
 
-    info!("[Snowbreak] 下载完成, 版本: {}", remote_manifest.version);
+    crate::log_info!("[Snowbreak] 下载完成, 版本: {}", remote_manifest.version);
     Ok(())
 }
 
@@ -146,7 +145,7 @@ pub async fn verify_game(
         let file_path = match safe_join(game_folder, &pak.name) {
             Ok(p) => p,
             Err(e) => {
-                tracing::warn!("跳过不安全的清单路径: {} ({})", pak.name, e);
+                crate::log_warn!("跳过不安全的清单路径: {} ({})", pak.name, e);
                 continue;
             }
         };
@@ -201,7 +200,7 @@ pub async fn verify_game(
             {
                 Ok(_) => redownloaded += 1,
                 Err(e) => {
-                    warn!("[Snowbreak] 重下失败 {}: {}", pak.name, e);
+                    crate::log_warn!("[Snowbreak] 重下失败 {}: {}", pak.name, e);
                     failed.push(pak.name.clone());
                 }
             }
@@ -326,7 +325,7 @@ async fn download_file_with_cdn_fallback(
                     return Err(e);
                 }
                 last_err = format!("{} (cdn #{})", e, idx);
-                warn!("[Snowbreak] CDN #{} 下载失败: {}, 尝试下一个", idx, e);
+                crate::log_warn!("[Snowbreak] CDN #{} 下载失败: {}, 尝试下一个", idx, e);
                 continue;
             }
         }

@@ -1,6 +1,5 @@
 use crate::configs::wine_config::{ProtonVariant, WineArch, WineVersion};
 use std::path::{Path, PathBuf};
-use tracing::{info, warn};
 
 /// Scan all available Wine and Proton versions on the system
 pub fn scan_all_versions(custom_paths: &[String]) -> Vec<WineVersion> {
@@ -33,7 +32,7 @@ pub fn scan_all_versions(custom_paths: &[String]) -> Vec<WineVersion> {
             .then_with(|| b.version.cmp(&a.version))
     });
 
-    info!("Found {} Wine/Proton versions", versions.len());
+    crate::log_info!("Found {} Wine/Proton versions", versions.len());
     versions
 }
 
@@ -94,7 +93,7 @@ fn scan_system_wine() -> Vec<WineVersion> {
         if let Ok(path) = which::which(name) {
             let version = get_wine_version(&path).unwrap_or_else(|| "unknown".to_string());
             let id = format!("system-{}-{}", name, version);
-            info!("Found system wine: {} ({})", path.display(), version);
+            crate::log_info!("Found system wine: {} ({})", path.display(), version);
             versions.push(WineVersion {
                 id,
                 name: format!("System {} {}", name, version),
@@ -148,11 +147,7 @@ fn scan_steam_proton() -> Vec<WineVersion> {
             continue;
         }
 
-        let variant = if name.contains("Experimental") {
-            ProtonVariant::Experimental
-        } else {
-            ProtonVariant::Official
-        };
+        let variant = ProtonVariant::Official;
 
         let (version, timestamp) = read_proton_version(&dir);
         let id = format!(
@@ -161,7 +156,7 @@ fn scan_steam_proton() -> Vec<WineVersion> {
             version
         );
 
-        info!("Found Steam Proton: {} ({})", name, version);
+        crate::log_info!("Found Steam Proton: {} ({})", name, version);
         versions.push(WineVersion {
             id,
             name: name.clone(),
@@ -213,7 +208,7 @@ fn scan_all_compat_tools() -> Vec<WineVersion> {
                 )
             };
 
-            info!("Found {}: {} ({})", variant, name, version);
+            crate::log_info!("Found {}: {} ({})", variant, name, version);
             versions.push(WineVersion {
                 id,
                 name: name.clone(),
@@ -239,7 +234,7 @@ fn classify_proton_variant(name: &str) -> ProtonVariant {
     } else if lower.contains("tkg") {
         ProtonVariant::ProtonTKG
     } else if lower.contains("experimental") {
-        ProtonVariant::Experimental
+        ProtonVariant::Official
     } else if lower.starts_with("proton") {
         ProtonVariant::Official
     } else {
@@ -285,7 +280,7 @@ fn scan_lutris_wine() -> Vec<WineVersion> {
         let version = get_wine_version(&wine_path).unwrap_or(name.clone());
         let id = format!("lutris-{}", name.to_lowercase().replace(' ', "-"));
 
-        info!("Found Lutris Wine: {} ({})", name, version);
+        crate::log_info!("Found Lutris Wine: {} ({})", name, version);
         versions.push(WineVersion {
             id,
             name: format!("Lutris {}", name),
@@ -326,7 +321,7 @@ fn scan_ssmt4_wine_runners() -> Vec<WineVersion> {
             let (version, timestamp) = read_proton_version(&entry.path());
             let variant = classify_proton_variant(&name);
             let id = format!("ssmt4-proton-{}", name.to_lowercase().replace(' ', "-"));
-            info!("Found SSMT4 Proton runner: {} ({})", name, version);
+            crate::log_info!("Found SSMT4 Proton runner: {} ({})", name, version);
             versions.push(WineVersion {
                 id,
                 name: name.clone(),
@@ -354,7 +349,7 @@ fn scan_ssmt4_wine_runners() -> Vec<WineVersion> {
         let version = get_wine_version(&wine_path).unwrap_or(name.clone());
         let id = format!("ssmt4-wine-{}", name.to_lowercase().replace(' ', "-"));
 
-        info!("Found SSMT4 Wine runner: {} ({})", name, version);
+        crate::log_info!("Found SSMT4 Wine runner: {} ({})", name, version);
         versions.push(WineVersion {
             id,
             name: name.clone(),
@@ -393,7 +388,7 @@ fn scan_custom_path_inner(
         Err(_) => return versions,
     };
     if !visited.insert(canonical) {
-        warn!("跳过已访问的路径（符号链接环路？）: {}", path.display());
+        crate::log_warn!("跳过已访问的路径（符号链接环路？）: {}", path.display());
         return versions;
     }
 
@@ -456,7 +451,7 @@ fn scan_custom_path_inner(
             }
         }
     } else {
-        warn!(
+        crate::log_warn!(
             "Wine 扫描达到最大深度 {}，跳过: {}",
             SCAN_MAX_DEPTH,
             path.display()
@@ -495,7 +490,7 @@ pub fn find_steam_linux_runtime() -> Option<PathBuf> {
         .join("SteamLinuxRuntime_sniper");
     let entry_point = sniper.join("_v2-entry-point");
     if entry_point.exists() {
-        info!("Found SteamLinuxRuntime_sniper at {}", sniper.display());
+        crate::log_info!("Found SteamLinuxRuntime_sniper at {}", sniper.display());
         Some(sniper)
     } else {
         // Also check soldier as fallback
@@ -505,13 +500,13 @@ pub fn find_steam_linux_runtime() -> Option<PathBuf> {
             .join("SteamLinuxRuntime_soldier");
         let entry_point_soldier = soldier.join("_v2-entry-point");
         if entry_point_soldier.exists() {
-            warn!(
+            crate::log_warn!(
                 "sniper not found, falling back to soldier at {}",
                 soldier.display()
             );
             Some(soldier)
         } else {
-            warn!("No SteamLinuxRuntime found");
+            crate::log_warn!("No SteamLinuxRuntime found");
             None
         }
     }
@@ -581,7 +576,7 @@ pub async fn fetch_remote_proton_versions(
     all.extend(kron4ek.unwrap_or_default());
     all.extend(dw.unwrap_or_default());
 
-    info!("获取到 {} 个远程 Wine/Proton 版本", all.len());
+    crate::log_info!("获取到 {} 个远程 Wine/Proton 版本", all.len());
     Ok(all)
 }
 
@@ -619,11 +614,11 @@ async fn fetch_github_releases(
             }
             Ok(r) => {
                 last_err = format!("HTTP {}", r.status());
-                warn!("GitHub API {} 返回 {}，尝试下一个", api_url, r.status());
+                crate::log_warn!("GitHub API {} 返回 {}，尝试下一个", api_url, r.status());
             }
             Err(e) => {
                 last_err = format!("{}", e);
-                warn!("GitHub API {} 失败: {}，尝试下一个", api_url, e);
+                crate::log_warn!("GitHub API {} 失败: {}，尝试下一个", api_url, e);
             }
         }
     }
@@ -735,7 +730,7 @@ pub async fn download_and_install_proton(
     let mut resp_ok = None;
 
     for url in &mirrors {
-        info!("下载 {} {} 从 {}", kind, tag, url);
+        crate::log_info!("下载 {} {} 从 {}", kind, tag, url);
         match client
             .get(url)
             .header("User-Agent", "SSMT4/0.1")
@@ -748,11 +743,11 @@ pub async fn download_and_install_proton(
             }
             Ok(r) => {
                 last_err = format!("HTTP {}: {}", r.status(), url);
-                warn!("镜像 {} 返回 HTTP {}，尝试下一个", url, r.status());
+                crate::log_warn!("镜像 {} 返回 HTTP {}，尝试下一个", url, r.status());
             }
             Err(e) => {
                 last_err = format!("{}: {}", url, e);
-                warn!("镜像 {} 连接失败: {}，尝试下一个", url, e);
+                crate::log_warn!("镜像 {} 连接失败: {}，尝试下一个", url, e);
             }
         }
     }
@@ -861,11 +856,11 @@ pub async fn download_and_install_proton(
             kind, tag
         ));
     }
-    info!("{} {} 下载完整性校验通过（{} 字节）", kind, tag, downloaded);
+    crate::log_info!("{} {} 下载完整性校验通过（{} 字节）", kind, tag, downloaded);
 
     // 解压（异步子进程，不阻塞 tokio 运行时）
     emit_progress("extracting", 0, 0);
-    info!("解压 {} 到 {}", tmp_file.display(), install_dir.display());
+    crate::log_info!("解压 {} 到 {}", tmp_file.display(), install_dir.display());
     let status = if ext == "zip" {
         tokio::process::Command::new("unzip")
             .arg("-o")
@@ -888,6 +883,8 @@ pub async fn download_and_install_proton(
     };
 
     if !status.success() {
+        // 解压失败时也清理压缩包，避免残留损坏归档。
+        tokio::fs::remove_file(&tmp_file).await.ok();
         return Err(format!("解压 {} 失败", tmp_file.display()));
     }
 
@@ -895,6 +892,6 @@ pub async fn download_and_install_proton(
     tokio::fs::remove_file(&tmp_file).await.ok();
 
     emit_progress("done", total_size, total_size);
-    info!("{} {} 安装完成 → {}", kind, tag, install_dir.display());
+    crate::log_info!("{} {} 安装完成 → {}", kind, tag, install_dir.display());
     Ok(format!("{} {} 安装完成", kind, tag))
 }

@@ -1,5 +1,3 @@
-use tracing::info;
-
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum DisplayServer {
     X11,
@@ -53,9 +51,11 @@ pub fn detect_display_info() -> DisplayInfo {
         gpus,
     };
 
-    info!(
+    crate::log_info!(
         "Display info: server={:?}, vulkan={}, gamepad={}",
-        info.server, info.vulkan_available, info.gamepad_detected
+        info.server,
+        info.vulkan_available,
+        info.gamepad_detected
     );
     info
 }
@@ -193,7 +193,7 @@ pub fn enumerate_gpus() -> Vec<GpuDevice> {
         });
     }
 
-    info!("Enumerated {} GPU(s)", gpus.len());
+    crate::log_info!("Enumerated {} GPU(s)", gpus.len());
     gpus
 }
 

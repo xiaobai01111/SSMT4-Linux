@@ -119,7 +119,7 @@ pub fn setup_data_dir_symlink(custom_dir: &Path) -> Result<(), String> {
     if default_dir.is_symlink() {
         if let Ok(target) = std::fs::read_link(&default_dir) {
             if target == custom_dir {
-                tracing::info!(
+                crate::log_info!(
                     "符号链接已存在: {} -> {}",
                     default_dir.display(),
                     custom_dir.display()
@@ -137,7 +137,7 @@ pub fn setup_data_dir_symlink(custom_dir: &Path) -> Result<(), String> {
             ));
         }
         // 默认路径是真实目录，迁移内容后删除
-        tracing::info!("迁移 {} -> {}", default_dir.display(), custom_dir.display());
+        crate::log_info!("迁移 {} -> {}", default_dir.display(), custom_dir.display());
         migrate_dir_contents(&default_dir, custom_dir)?;
         std::fs::remove_dir_all(&default_dir).map_err(|e| format!("删除旧数据目录失败: {}", e))?;
     }
@@ -160,7 +160,7 @@ pub fn setup_data_dir_symlink(custom_dir: &Path) -> Result<(), String> {
         })?;
     }
 
-    tracing::info!(
+    crate::log_info!(
         "符号链接已创建: {} -> {}",
         default_dir.display(),
         custom_dir.display()
@@ -173,7 +173,7 @@ pub fn remove_data_dir_symlink() {
     let default_dir = get_default_xdg_data_dir();
     if default_dir.is_symlink() {
         std::fs::remove_file(&default_dir).ok();
-        tracing::info!("已移除符号链接: {}", default_dir.display());
+        crate::log_info!("已移除符号链接: {}", default_dir.display());
     }
 }
 

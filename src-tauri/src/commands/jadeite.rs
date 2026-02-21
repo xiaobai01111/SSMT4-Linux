@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use tracing::info;
 
 const JADEITE_API_URL: &str = "https://codeberg.org/api/v1/repos/mkrsym1/jadeite/releases/latest";
 
@@ -33,7 +32,7 @@ pub async fn install_jadeite(_app: tauri::AppHandle, game_name: String) -> Resul
     std::fs::create_dir_all(&patch_dir).map_err(|e| format!("创建 patch 目录失败: {}", e))?;
 
     // 获取最新 release 信息
-    info!("[jadeite] 正在获取最新版本...");
+    crate::log_info!("[jadeite] 正在获取最新版本...");
     let client = reqwest::Client::new();
     let resp: serde_json::Value = client
         .get(JADEITE_API_URL)
@@ -58,7 +57,7 @@ pub async fn install_jadeite(_app: tauri::AppHandle, game_name: String) -> Resul
         .and_then(|u| u.as_str())
         .ok_or("无法获取 jadeite 下载地址")?;
 
-    info!("[jadeite] 版本: {}, 下载: {}", tag, download_url);
+    crate::log_info!("[jadeite] 版本: {}, 下载: {}", tag, download_url);
 
     // 下载 zip
     let zip_path = patch_dir.join("jadeite.zip");
@@ -88,7 +87,7 @@ pub async fn install_jadeite(_app: tauri::AppHandle, game_name: String) -> Resul
         file.flush()
             .await
             .map_err(|e| format!("刷新 jadeite.zip 失败: {}", e))?;
-        info!("[jadeite] 下载完成 ({} bytes)，正在解压...", total);
+        crate::log_info!("[jadeite] 下载完成 ({} bytes)，正在解压...", total);
     }
 
     // 解压 zip
@@ -127,7 +126,7 @@ pub async fn install_jadeite(_app: tauri::AppHandle, game_name: String) -> Resul
     std::fs::write(patch_dir.join(".version"), version_str)
         .map_err(|e| format!("写入版本号失败: {}", e))?;
 
-    info!("[jadeite] 安装完成: {}", version_str);
+    crate::log_info!("[jadeite] 安装完成: {}", version_str);
 
     Ok(format!("jadeite {} 安装成功", version_str))
 }

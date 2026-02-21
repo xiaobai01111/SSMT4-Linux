@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::Mutex as AsyncMutex;
-use tracing::info;
+use tracing::instrument;
 
 /// 按任务（game_folder）管理取消令牌，避免并行任务互相干扰
 static CANCEL_TOKENS: once_cell::sync::Lazy<StdMutex<HashMap<String, Arc<AsyncMutex<bool>>>>> =
@@ -95,11 +95,13 @@ struct LauncherInstallerRemoteInfo {
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "get_launcher_info"), err)]
 pub async fn get_launcher_info(launcher_api: String) -> Result<LauncherInfo, String> {
     cdn::fetch_launcher_info(&launcher_api).await
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "get_game_state"), err)]
 pub async fn get_game_state(
     settings: State<'_, StdMutex<AppConfig>>,
     launcher_api: String,
@@ -129,7 +131,7 @@ pub async fn get_game_state(
     let launcher_info = match cdn::fetch_launcher_info(&launcher_api).await {
         Ok(info) => info,
         Err(e) => {
-            tracing::error!("fetch_launcher_info failed: {}", e);
+            crate::log_error!(event: "state.fetch_launcher_info_failed", "fetch_launcher_info failed: {}", e);
             return Ok(GameState {
                 state: LauncherState::NetworkError,
                 local_version: get_local_version_for_source(
@@ -178,6 +180,12 @@ pub async fn get_game_state(
 }
 
 #[tauri::command]
+#[instrument(
+    level = "info",
+    skip_all,
+    fields(cmd = "get_launcher_installer_state"),
+    err
+)]
 pub async fn get_launcher_installer_state(
     launcher_api: String,
     game_folder: String,
@@ -202,7 +210,7 @@ pub async fn get_launcher_installer_state(
             false,
         ),
         Err(ref err) => {
-            tracing::error!("fetch launcher installer info failed: {}", err);
+            crate::log_error!(event: "installer.fetch_remote_failed", "fetch launcher installer info failed: {}", err);
             determine_launcher_installer_state(
                 local_version.as_deref(),
                 None,
@@ -223,6 +231,12 @@ pub async fn get_launcher_installer_state(
 }
 
 #[tauri::command]
+#[instrument(
+    level = "info",
+    skip_all,
+    fields(cmd = "download_launcher_installer"),
+    err
+)]
 pub async fn download_launcher_installer(
     app: AppHandle,
     launcher_api: String,
@@ -252,6 +266,12 @@ pub async fn download_launcher_installer(
 }
 
 #[tauri::command]
+#[instrument(
+    level = "info",
+    skip_all,
+    fields(cmd = "update_launcher_installer"),
+    err
+)]
 pub async fn update_launcher_installer(
     app: AppHandle,
     launcher_api: String,
@@ -262,6 +282,7 @@ pub async fn update_launcher_installer(
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "download_game"), err)]
 pub async fn download_game(
     app: AppHandle,
     settings: State<'_, StdMutex<AppConfig>>,
@@ -293,7 +314,7 @@ pub async fn download_game(
                 cancel_token.clone(),
             )
             .await?;
-            info!("Snowbreak download completed for {}", game_folder);
+            crate::log_info!(event: "download.completed", "Snowbreak download completed for {}", game_folder);
             return Ok(());
         }
 
@@ -311,7 +332,7 @@ pub async fn download_game(
             .await?;
             write_local_version(&game_path, &game_pkg.main.major.version)?;
             write_download_source_meta(&game_path, &launcher_api, Some(biz))?;
-            info!("HoYoverse full download completed for {}", game_folder);
+            crate::log_info!(event: "download.completed", "HoYoverse full download completed for {}", game_folder);
             return Ok(());
         }
 
@@ -332,7 +353,7 @@ pub async fn download_game(
 
         write_local_version(&game_path, &launcher_info.version)?;
         write_download_source_meta(&game_path, &launcher_api, None)?;
-        info!("Full download completed for {}", game_folder);
+        crate::log_info!(event: "download.completed", "Full download completed for {}", game_folder);
         Ok(())
     }
     .await;
@@ -342,6 +363,7 @@ pub async fn download_game(
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "update_game"), err)]
 pub async fn update_game(
     app: AppHandle,
     settings: State<'_, StdMutex<AppConfig>>,
@@ -370,7 +392,7 @@ pub async fn update_game(
                 cancel_token.clone(),
             )
             .await?;
-            info!("Snowbreak update completed for {}", game_folder);
+            crate::log_info!(event: "update.completed", "Snowbreak update completed for {}", game_folder);
             return Ok(());
         }
 
@@ -391,7 +413,7 @@ pub async fn update_game(
             .await?;
             write_local_version(&game_path, &game_pkg.main.major.version)?;
             write_download_source_meta(&game_path, &launcher_api, Some(biz))?;
-            info!("HoYoverse update completed for {}", game_folder);
+            crate::log_info!(event: "update.completed", "HoYoverse update completed for {}", game_folder);
             return Ok(());
         }
 
@@ -412,7 +434,7 @@ pub async fn update_game(
 
         write_local_version(&game_path, &launcher_info.version)?;
         write_download_source_meta(&game_path, &launcher_api, None)?;
-        info!("Full comparison update completed for {}", game_folder);
+        crate::log_info!(event: "update.completed", "Full comparison update completed for {}", game_folder);
         Ok(())
     }
     .await;
@@ -422,6 +444,7 @@ pub async fn update_game(
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "update_game_patch"), err)]
 pub async fn update_game_patch(
     app: AppHandle,
     launcher_api: String,
@@ -452,11 +475,12 @@ pub async fn update_game_patch(
     result?;
     write_local_version(&game_path, &launcher_info.version)?;
     write_download_source_meta(&game_path, &launcher_api, None)?;
-    info!("Incremental patch update completed for {}", game_folder);
+    crate::log_info!(event: "update.patch_completed", "Incremental patch update completed for {}", game_folder);
     Ok(())
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "verify_game_files"), err)]
 pub async fn verify_game_files(
     app: AppHandle,
     settings: State<'_, StdMutex<AppConfig>>,
@@ -517,7 +541,7 @@ pub async fn verify_game_files(
             write_local_version(&game_path, &launcher_info.version)?;
             write_download_source_meta(&game_path, &launcher_api, biz_prefix.as_deref())?;
         } else {
-            tracing::warn!(
+            crate::log_warn!(event: "verify.partial_failed",
                 "Verification finished with {} failed files; local version will not be updated",
                 result.failed.len()
             );
@@ -532,6 +556,7 @@ pub async fn verify_game_files(
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "cancel_download"), err)]
 pub async fn cancel_download(game_folder: Option<String>) -> Result<(), String> {
     // 先从 StdMutex 中 clone 出需要的 token（不跨 await 持有 guard）
     let targets: Vec<(String, Arc<AsyncMutex<bool>>)> = {
@@ -548,12 +573,13 @@ pub async fn cancel_download(game_folder: Option<String>) -> Result<(), String> 
     // 异步设置取消标志
     for (id, token) in targets {
         *token.lock().await = true;
-        info!("Download cancellation requested for: {}", id);
+        crate::log_info!(event: "download.cancel_requested", "Download cancellation requested for: {}", id);
     }
     Ok(())
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "get_local_version"), err)]
 pub fn get_local_version(game_folder: String) -> Result<Option<String>, String> {
     Ok(get_local_version_internal(&PathBuf::from(game_folder)))
 }
@@ -698,7 +724,7 @@ fn read_non_empty_string(v: Option<&serde_json::Value>) -> Option<String> {
 }
 
 fn build_launcher_api_from_config(
-    game_preset: &str,
+    _game_preset: &str,
     config: &serde_json::Value,
 ) -> Option<serde_json::Value> {
     let root = config.as_object();
@@ -766,20 +792,17 @@ fn build_launcher_api_from_config(
         has_explicit_servers = false;
     }
 
-    let has_default_folder_override = other
-        .and_then(|m| m.get("defaultFolder"))
-        .or_else(|| root.and_then(|m| m.get("defaultFolder")))
-        .is_some();
-    let has_audio_languages_override = other
-        .and_then(|m| m.get("audioLanguages"))
-        .or_else(|| root.and_then(|m| m.get("audioLanguages")))
-        .is_some();
-    let default_folder = read_non_empty_string(
+    let default_folder_override = read_non_empty_string(
         other
             .and_then(|m| m.get("defaultFolder"))
             .or_else(|| root.and_then(|m| m.get("defaultFolder"))),
-    )
-    .unwrap_or_else(|| game_preset.to_string());
+    );
+    let audio_languages_override = other
+        .and_then(|m| m.get("audioLanguages"))
+        .or_else(|| root.and_then(|m| m.get("audioLanguages")))
+        .cloned();
+    let has_default_folder_override = default_folder_override.is_some();
+    let has_audio_languages_override = audio_languages_override.is_some();
     let download_mode = read_non_empty_string(
         other
             .and_then(|m| m.get("downloadMode"))
@@ -797,13 +820,13 @@ fn build_launcher_api_from_config(
 
     let mut result = serde_json::json!({
         "supported": true,
-        "defaultFolder": default_folder,
-        "audioLanguages": other
-            .and_then(|m| m.get("audioLanguages"))
-            .or_else(|| root.and_then(|m| m.get("audioLanguages")))
-            .cloned()
-            .unwrap_or_else(|| serde_json::json!([])),
     });
+    if let Some(default_folder) = default_folder_override {
+        result["defaultFolder"] = serde_json::Value::String(default_folder);
+    }
+    if let Some(audio_languages) = audio_languages_override {
+        result["audioLanguages"] = audio_languages;
+    }
     if let Some(api) = launcher_api {
         result["launcherApi"] = serde_json::Value::String(api);
     }
@@ -828,6 +851,7 @@ fn read_launcher_api_override_from_game_config(game_preset: &str) -> Option<serd
 
 /// 根据游戏预设返回对应的 launcher API URL（预设默认值 + 用户配置覆盖）
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "get_game_launcher_api"), err)]
 pub fn get_game_launcher_api(game_preset: String) -> Result<serde_json::Value, String> {
     use crate::configs::game_presets;
     let game_preset = crate::configs::game_identity::to_canonical_or_keep(&game_preset);
@@ -875,6 +899,7 @@ pub fn get_game_launcher_api(game_preset: String) -> Result<serde_json::Value, S
 
 /// 返回游戏默认安装目录（自动跟随软件数据目录 dataDir）
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "get_default_game_folder"), err)]
 pub fn get_default_game_folder(game_name: String) -> Result<String, String> {
     let game_name = crate::configs::game_identity::to_canonical_or_keep(&game_name);
     let game_dir = crate::utils::file_manager::get_global_games_dir().join(&game_name);
@@ -882,6 +907,12 @@ pub fn get_default_game_folder(game_name: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+#[instrument(
+    level = "info",
+    skip_all,
+    fields(cmd = "resolve_downloaded_game_executable"),
+    err
+)]
 pub fn resolve_downloaded_game_executable(
     game_name: String,
     game_folder: String,
@@ -1127,7 +1158,7 @@ async fn get_game_state_snowbreak(
     let (remote_manifest, _cdn) = match snowbreak::fetch_manifest_with_policy(source_policy).await {
         Ok(m) => m,
         Err(e) => {
-            tracing::error!("Snowbreak API 失败: {}", e);
+            crate::log_error!(event: "state.snowbreak_api_failed", "Snowbreak API 失败: {}", e);
             return Ok(GameState {
                 state: LauncherState::NetworkError,
                 local_version,
@@ -1183,7 +1214,7 @@ async fn get_game_state_hoyoverse(
     let game_pkg = match hoyoverse::fetch_game_packages(launcher_api, biz).await {
         Ok(pkg) => pkg,
         Err(e) => {
-            tracing::error!("HoYoverse API 失败: {}", e);
+            crate::log_error!(event: "state.hoyoverse_api_failed", "HoYoverse API 失败: {}", e);
             return Ok(GameState {
                 state: LauncherState::NetworkError,
                 local_version: get_local_version_for_source(
@@ -1707,6 +1738,14 @@ mod tests {
         assert!(
             override_obj.get("servers").is_none(),
             "servers should not be overridden when config only has launcherApi"
+        );
+        assert!(
+            override_obj.get("defaultFolder").is_none(),
+            "defaultFolder should not be overridden when config does not provide it"
+        );
+        assert!(
+            override_obj.get("audioLanguages").is_none(),
+            "audioLanguages should not be overridden when config does not provide it"
         );
     }
 

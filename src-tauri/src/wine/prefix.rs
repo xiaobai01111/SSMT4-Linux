@@ -1,7 +1,6 @@
 use crate::configs::wine_config::{PrefixConfig, PrefixTemplate};
 use crate::utils::file_manager;
 use std::path::{Path, PathBuf};
-use tracing::{info, warn};
 
 /// 从数据库的游戏配置中解析游戏根目录
 ///
@@ -113,7 +112,7 @@ pub fn get_prefix_dir(game_id: &str) -> PathBuf {
         // 如果旧的 prefix 存在且新位置不存在，尝试迁移
         if !preferred.exists() {
             if let Some(legacy) = resolve_best_legacy_prefix(&game_id) {
-                info!(
+                crate::log_info!(
                     "检测到旧 prefix，尝试迁移: {} -> {}",
                     legacy.display(),
                     preferred.display()
@@ -122,9 +121,9 @@ pub fn get_prefix_dir(game_id: &str) -> PathBuf {
                     let _ = std::fs::create_dir_all(parent);
                 }
                 if std::fs::rename(&legacy, &preferred).is_ok() {
-                    info!("prefix 迁移成功");
+                    crate::log_info!("prefix 迁移成功");
                 } else {
-                    warn!("prefix 迁移失败，将在游戏目录创建新 prefix");
+                    crate::log_warn!("prefix 迁移失败，将在游戏目录创建新 prefix");
                 }
             }
         }
@@ -164,7 +163,7 @@ pub fn create_prefix(game_id: &str, config: &PrefixConfig) -> Result<PathBuf, St
 
     save_prefix_config(game_id, config)?;
 
-    info!(
+    crate::log_info!(
         "Created prefix for game {} at {}",
         game_id,
         prefix_dir.display()
@@ -196,7 +195,7 @@ pub fn delete_prefix(game_id: &str) -> Result<(), String> {
         ensure_safe_prefix_delete_target(game_id, &prefix_dir)?;
         std::fs::remove_dir_all(&prefix_dir)
             .map_err(|e| format!("Failed to delete prefix {}: {}", prefix_dir.display(), e))?;
-        info!("Deleted prefix for game {}", game_id);
+        crate::log_info!("Deleted prefix for game {}", game_id);
     }
     Ok(())
 }
@@ -417,7 +416,7 @@ pub fn ensure_cjk_fonts(game_id: &str) {
                 continue;
             }
             if let Err(e) = std::os::unix::fs::symlink(entry.path(), &target) {
-                warn!(
+                crate::log_warn!(
                     "字体链接失败: {} -> {}: {}",
                     entry.path().display(),
                     target.display(),
@@ -429,7 +428,7 @@ pub fn ensure_cjk_fonts(game_id: &str) {
         }
     }
     if linked > 0 {
-        info!(
+        crate::log_info!(
             "已链接 {} 个 CJK 字体到 prefix: {}",
             linked,
             fonts_dir.display()
@@ -464,10 +463,10 @@ fn ensure_font_substitutes(pfx_dir: &Path) {
     let fonts_dir = pfx_dir.join("drive_c").join("windows").join("Fonts");
     let fallback_font = detect_available_cjk_font(&fonts_dir);
     if fallback_font.is_empty() {
-        warn!("未找到可用的 CJK 字体，跳过注册表配置");
+        crate::log_warn!("未找到可用的 CJK 字体，跳过注册表配置");
         return;
     }
-    info!("使用 CJK 字体 '{}' 配置 Wine 注册表替换", fallback_font);
+    crate::log_info!("使用 CJK 字体 '{}' 配置 Wine 注册表替换", fallback_font);
 
     // 构造注册表补丁
     let reg_patch = format!(
@@ -538,9 +537,9 @@ fn ensure_font_substitutes(pfx_dir: &Path) {
     }
 
     if let Err(e) = std::fs::write(&system_reg, &new_content) {
-        warn!("写入 Wine 注册表失败: {}", e);
+        crate::log_warn!("写入 Wine 注册表失败: {}", e);
     } else {
-        info!("已写入 CJK 字体替换到 {}", system_reg.display());
+        crate::log_info!("已写入 CJK 字体替换到 {}", system_reg.display());
     }
 }
 

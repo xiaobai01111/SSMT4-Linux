@@ -1,7 +1,6 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tracing::{info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LauncherInfo {
@@ -98,7 +97,7 @@ pub async fn fetch_launcher_info(launcher_api: &str) -> Result<LauncherInfo, Str
         })
         .unwrap_or_default();
 
-    info!("Launcher info: version={}, cdn={}", version, cdn_url);
+    crate::log_info!("Launcher info: version={}, cdn={}", version, cdn_url);
 
     Ok(LauncherInfo {
         version,
@@ -228,7 +227,7 @@ pub async fn fetch_resource_index(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    info!("Resource index: {} files", resource_list.len());
+    crate::log_info!("Resource index: {} files", resource_list.len());
     Ok(ResourceIndex {
         resource: resource_list,
     })
@@ -259,7 +258,7 @@ fn select_best_cdn(cdn_list: &[Value]) -> Result<String, String> {
 }
 
 async fn fetch_json(client: &Client, url: &str) -> Result<Value, String> {
-    info!("Fetching JSON: {}", url);
+    crate::log_info!("Fetching JSON: {}", url);
 
     // 带超时的客户端（防止无限等待）
     let retry_client = Client::builder()
@@ -277,9 +276,11 @@ async fn fetch_json(client: &Client, url: &str) -> Result<Value, String> {
             Ok(resp) => {
                 if !resp.status().is_success() {
                     last_err = format!("HTTP {}: {}", resp.status(), url);
-                    warn!(
+                    crate::log_warn!(
                         "fetch_json 第 {}/{} 次失败: {}",
-                        attempt, max_retries, last_err
+                        attempt,
+                        max_retries,
+                        last_err
                     );
                     if attempt < max_retries {
                         tokio::time::sleep(std::time::Duration::from_secs(2 * attempt as u64))
@@ -302,7 +303,7 @@ async fn fetch_json(client: &Client, url: &str) -> Result<Value, String> {
                     .map_err(|e| format!("Failed to decode response: {}", e))?;
 
                 return serde_json::from_str(&text).map_err(|e| {
-                    tracing::error!(
+                    crate::log_error!(
                         "Failed to parse JSON from {}: {} (first 200 chars: {:?})",
                         url,
                         e,
@@ -313,9 +314,12 @@ async fn fetch_json(client: &Client, url: &str) -> Result<Value, String> {
             }
             Err(e) => {
                 last_err = format!("HTTP request failed: {}", e);
-                warn!(
+                crate::log_warn!(
                     "fetch_json 第 {}/{} 次失败: {} ({})",
-                    attempt, max_retries, last_err, url
+                    attempt,
+                    max_retries,
+                    last_err,
+                    url
                 );
                 if attempt < max_retries {
                     tokio::time::sleep(std::time::Duration::from_secs(2 * attempt as u64)).await;
@@ -325,7 +329,7 @@ async fn fetch_json(client: &Client, url: &str) -> Result<Value, String> {
         }
     }
 
-    tracing::error!(
+    crate::log_error!(
         "fetch_json 全部 {} 次重试失败: {} ({})",
         max_retries,
         last_err,

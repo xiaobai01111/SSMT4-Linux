@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::Mutex;
-use tracing::{error, info, warn};
+use tracing::instrument;
 
 /// 最大并行下载数
 const MAX_CONCURRENT_DOWNLOADS: usize = 4;
@@ -26,6 +26,12 @@ const MAX_CONCURRENT_CHUNKS: usize = 8;
 // 全量下载：下载压缩包 → 解压到游戏目录
 // ============================================================
 
+#[instrument(
+    level = "info",
+    skip_all,
+    fields(flow = "hoyoverse_download_game"),
+    err
+)]
 pub async fn download_game(
     app: AppHandle,
     game_pkg: &GamePackage,
@@ -80,6 +86,7 @@ pub async fn download_game(
 // 增量更新：下载补丁 zip → 解压覆盖
 // ============================================================
 
+#[instrument(level = "info", skip_all, fields(flow = "hoyoverse_update_game"), err)]
 pub async fn update_game(
     app: AppHandle,
     game_pkg: &GamePackage,
@@ -145,6 +152,7 @@ pub async fn update_game(
 // 文件校验：使用 res_list 对比 MD5
 // ============================================================
 
+#[instrument(level = "info", skip_all, fields(flow = "hoyoverse_verify_game"), err)]
 pub async fn verify_game(
     app: AppHandle,
     game_pkg: &GamePackage,
@@ -162,7 +170,7 @@ pub async fn verify_game(
     let total_files = resource_list.len();
     let total_size: u64 = resource_list.iter().map(|r| r.file_size).sum();
 
-    info!(
+    crate::log_info!(event: "verify.started",
         "开始校验 {} 个文件, 总大小 {} 字节",
         total_files, total_size
     );
@@ -181,7 +189,7 @@ pub async fn verify_game(
         let file_path = match safe_join(game_folder, &entry.remote_name) {
             Ok(p) => p,
             Err(e) => {
-                warn!("跳过不安全的清单路径: {} ({})", entry.remote_name, e);
+                crate::log_warn!(event: "verify.unsafe_path_skipped", "跳过不安全的清单路径: {} ({})", entry.remote_name, e);
                 continue;
             }
         };
@@ -196,7 +204,7 @@ pub async fn verify_game(
         if verify.is_ok() {
             verified_ok += 1;
         } else {
-            warn!(
+            crate::log_warn!(event: "verify.hash_mismatch",
                 "{} 校验不匹配: {}",
                 entry.remote_name,
                 verify.err().unwrap_or_else(|| "unknown".to_string())
@@ -223,7 +231,7 @@ pub async fn verify_game(
         app.emit("game-verify-progress", &progress).ok();
     }
 
-    info!(
+    crate::log_info!(event: "verify.completed",
         "校验完成: 正常={}, 重新下载={}, 失败={}",
         verified_ok,
         redownloaded,
@@ -433,7 +441,7 @@ async fn download_file_to_disk(
 
     // 如果目标已存在（调用方已校验 MD5 不匹配），删除
     if dest.exists() {
-        info!("删除旧文件准备重新下载: {}", dest.display());
+        crate::log_info!("删除旧文件准备重新下载: {}", dest.display());
         tokio::fs::remove_file(dest).await.ok();
     }
 
@@ -442,7 +450,7 @@ async fn download_file_to_disk(
     if temp_path.exists() {
         if let Ok(meta) = tokio::fs::metadata(&temp_path).await {
             downloaded_bytes = meta.len();
-            info!(
+            crate::log_info!(
                 "断点续传 {} ({:.1} MB)",
                 dest.display(),
                 downloaded_bytes as f64 / 1048576.0
@@ -454,7 +462,7 @@ async fn download_file_to_disk(
 
     if downloaded_bytes == 0 && expected_size >= PARALLEL_CHUNK_THRESHOLD {
         if supports_parallel_range_download(client, url, active_streams.clone()).await {
-            info!(
+            crate::log_info!(
                 "启用分片并发下载: {} (size={:.1} MB, chunk={} MB, 并发={})",
                 dest.display(),
                 expected_size as f64 / 1048576.0,
@@ -490,7 +498,7 @@ async fn download_file_to_disk(
                     return Ok(());
                 }
                 Err(e) => {
-                    warn!("分片下载失败，回退到单连接流式下载: {}", e);
+                    crate::log_warn!("分片下载失败，回退到单连接流式下载: {}", e);
                 }
             }
         }
@@ -514,7 +522,7 @@ async fn download_file_to_disk(
             if downloaded_bytes > 0 {
                 // 回退已计入的字节
                 shared_bytes.fetch_sub(downloaded_bytes, Ordering::Relaxed);
-                warn!("服务器不支持断点续传，重新开始下载");
+                crate::log_warn!("服务器不支持断点续传，重新开始下载");
                 downloaded_bytes = 0;
             }
         }
@@ -665,7 +673,7 @@ async fn extract_7z(
         app.emit("game-install-progress", &progress).ok();
     }
 
-    info!(
+    crate::log_info!(
         "7z 解压: {} → {}",
         archive_path.display(),
         dest_folder.display()
@@ -761,7 +769,7 @@ async fn extract_7z(
         app.emit("game-install-progress", &progress).ok();
     }
 
-    info!("7z 解压完成: {}", archive_path.display());
+    crate::log_info!("7z 解压完成: {}", archive_path.display());
     Ok(())
 }
 
@@ -799,7 +807,7 @@ async fn extract_zip(
         let file =
             std::fs::File::open(&zip_path).map_err(|e| format!("打开 zip 文件失败: {}", e))?;
         let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
-        info!(
+        crate::log_info!(
             "开始解压: {} ({:.1} MB)",
             zip_path.display(),
             file_len as f64 / 1048576.0
@@ -870,7 +878,7 @@ async fn extract_zip(
             }
         }
 
-        info!("解压完成: {} 个条目", entry_count);
+        crate::log_info!("解压完成: {} 个条目", entry_count);
         Ok(())
     })
     .await
@@ -884,7 +892,7 @@ async fn apply_hdiff_patches(game_folder: &Path) -> Result<(), String> {
         return Ok(());
     }
 
-    info!("发现 {} 个 hdiff 补丁文件", hdiff_files.len());
+    crate::log_info!("发现 {} 个 hdiff 补丁文件", hdiff_files.len());
 
     // 确保 hpatchz 可用
     let hpatchz = crate::downloader::incremental::ensure_hpatchz_public().await?;
@@ -903,14 +911,14 @@ async fn apply_hdiff_patches(game_folder: &Path) -> Result<(), String> {
             .join(&original_name);
 
         if !original_path.exists() {
-            warn!("hdiff 原文件不存在: {}", original_path.display());
+            crate::log_warn!("hdiff 原文件不存在: {}", original_path.display());
             tokio::fs::remove_file(hdiff_path).await.ok();
             continue;
         }
 
         let temp_output = original_path.with_extension("patched.tmp");
 
-        info!(
+        crate::log_info!(
             "应用 hdiff: {} + {} -> {}",
             original_path.display(),
             hdiff_path.display(),
@@ -932,7 +940,7 @@ async fn apply_hdiff_patches(game_folder: &Path) -> Result<(), String> {
             tokio::fs::remove_file(hdiff_path).await.ok();
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            error!("hpatchz 失败: {}", stderr);
+            crate::log_error!("hpatchz 失败: {}", stderr);
             tokio::fs::remove_file(&temp_output).await.ok();
             tokio::fs::remove_file(hdiff_path).await.ok();
         }
@@ -977,12 +985,12 @@ async fn cleanup_deleted_files(game_folder: &Path) {
             let file_path = match safe_join_remote(game_folder, line) {
                 Ok(p) => p,
                 Err(e) => {
-                    warn!("跳过不安全的删除路径: {} ({})", line, e);
+                    crate::log_warn!("跳过不安全的删除路径: {} ({})", line, e);
                     continue;
                 }
             };
             if file_path.exists() {
-                info!("删除旧文件: {}", line);
+                crate::log_info!("删除旧文件: {}", line);
                 tokio::fs::remove_file(&file_path).await.ok();
             }
         }
@@ -1102,6 +1110,7 @@ enum PostInstall {
 }
 
 /// 统一流水线：预检 → 并行下载 → 安装主包 → 安装语言包 → 收尾
+#[instrument(level = "info", skip_all, fields(flow = "hoyoverse_execute_plan"), err)]
 async fn execute_plan(
     app: AppHandle,
     plan: DownloadPlan,
@@ -1126,15 +1135,18 @@ async fn execute_plan(
         .sum();
     let total_count = all_tasks.len();
 
-    info!(
+    crate::log_info!(
         "execute_plan: {} 个包 (主包 {}×{}), 总大小 {} 字节",
-        total_count, primary_label, primary_pkg_count, total_size
+        total_count,
+        primary_label,
+        primary_pkg_count,
+        total_size
     );
 
     // 加载下载状态（内存态 + 节流落盘）
     let mut sw = StateWriter::load(game_folder);
     if sw.state.expected_total_size != 0 && sw.state.expected_total_size != total_size {
-        info!("下载任务变更 (total_size 不同)，重置状态");
+        crate::log_info!("下载任务变更 (total_size 不同)，重置状态");
         sw.state = DownloadState::default();
     }
     sw.state.expected_total_size = total_size;
@@ -1166,7 +1178,7 @@ async fn execute_plan(
                     task.size.parse::<u64>().unwrap_or(0)
                 };
                 cached_size += file_size;
-                info!("{} ({}) 已缓存，跳过下载", task.label, task.filename);
+                crate::log_info!("{} ({}) 已缓存，跳过下载", task.label, task.filename);
                 emit_progress(
                     &app,
                     "download",
@@ -1207,7 +1219,7 @@ async fn execute_plan(
 
         // 无可用哈希时，禁止“仅大小”跳过，必须重下（避免同大小篡改绕过）
         if dest.exists() && !task_has_checksum(task) {
-            warn!(
+            crate::log_warn!(
                 "{} 缺少校验哈希，已禁用 size-only 跳过，将强制重下",
                 task.filename
             );
@@ -1231,7 +1243,7 @@ async fn execute_plan(
                     // mtime 缓存命中且哈希匹配
                     if is_old {
                         let dest = safe_join(game_folder, &task.filename)?;
-                        info!(
+                        crate::log_info!(
                             "迁移旧文件 (mtime缓存) {} → {}",
                             path.display(),
                             dest.display()
@@ -1245,7 +1257,7 @@ async fn execute_plan(
                     }
                     sw.mark_dirty();
                     cached_size += file_size;
-                    info!("{} mtime缓存命中，跳过哈希", task.filename);
+                    crate::log_info!("{} mtime缓存命中，跳过哈希", task.filename);
                     emit_progress(
                         &app,
                         "download",
@@ -1264,7 +1276,7 @@ async fn execute_plan(
         }
 
         if !still_needs_hash.is_empty() {
-            info!(
+            crate::log_info!(
                 "预检：{} 个文件需要哈希校验 ({}路并发)",
                 still_needs_hash.len(),
                 HASH_CONCURRENCY
@@ -1324,7 +1336,7 @@ async fn execute_plan(
                     // 哈希匹配
                     if is_old {
                         let dest = safe_join(game_folder, &task.filename)?;
-                        info!("迁移旧文件 {} → {}", path.display(), dest.display());
+                        crate::log_info!("迁移旧文件 {} → {}", path.display(), dest.display());
                         tokio::fs::rename(&path, &dest).await.ok();
                     }
                     if let Some(digest_token) = task_digest_token(task) {
@@ -1334,7 +1346,7 @@ async fn execute_plan(
                     }
                     sw.mark_dirty();
                     cached_size += file_size;
-                    info!("{} 哈希匹配，补录缓存", task.filename);
+                    crate::log_info!("{} 哈希匹配，补录缓存", task.filename);
                     emit_progress(
                         &app,
                         "download",
@@ -1349,9 +1361,9 @@ async fn execute_plan(
                 } else {
                     // 哈希不匹配 → 需要下载
                     if is_old {
-                        warn!("旧文件 {} 哈希不匹配，将重新下载", path.display());
+                        crate::log_warn!("旧文件 {} 哈希不匹配，将重新下载", path.display());
                     } else {
-                        warn!("{} 哈希不匹配，将重新下载", task.filename);
+                        crate::log_warn!("{} 哈希不匹配，将重新下载", task.filename);
                     }
                     to_download.push(idx);
                 }
@@ -1364,7 +1376,7 @@ async fn execute_plan(
 
     // ===== 阶段 1b: 并行下载 =====
     if !to_download.is_empty() {
-        info!(
+        crate::log_info!(
             "开始并行下载 {} 个文件 (最多 {} 并发)",
             to_download.len(),
             MAX_CONCURRENT_DOWNLOADS
@@ -1444,7 +1456,7 @@ async fn execute_plan(
                     .acquire()
                     .await
                     .map_err(|e| format!("信号量错误: {}", e))?;
-                info!("开始下载: {}", filename);
+                crate::log_info!(event: "download.file_started", "开始下载: {}", filename);
 
                 // 流错误自动重试（最多 3 次），利用断点续传从断点继续
                 const MAX_RETRIES: u32 = 3;
@@ -1462,7 +1474,7 @@ async fn execute_plan(
                         if let Ok(meta) = tokio::fs::metadata(&temp_path).await {
                             bytes.fetch_sub(meta.len(), Ordering::Relaxed);
                         }
-                        warn!(
+                        crate::log_warn!(event: "download.file_retry",
                             "{} 下载失败，第 {}/{} 次重试: {}",
                             filename, attempt, MAX_RETRIES, last_err
                         );
@@ -1486,7 +1498,7 @@ async fn execute_plan(
                     {
                         Ok(()) => {
                             if attempt > 0 {
-                                info!("{} 重试成功 (第 {} 次)", filename, attempt);
+                                crate::log_info!(event: "download.file_retry_succeeded", "{} 重试成功 (第 {} 次)", filename, attempt);
                             }
                             last_err.clear();
                             break;
@@ -1509,7 +1521,7 @@ async fn execute_plan(
                 } else {
                     compute_digest_token_for_expected(&dest, &sha256, &md5).await?
                 };
-                info!("下载完成: {}", filename);
+                crate::log_info!(event: "download.file_completed", "下载完成: {}", filename);
                 Ok::<(String, String), String>((filename, final_digest))
             });
             handles.push(handle);
@@ -1546,7 +1558,7 @@ async fn execute_plan(
         }
     }
 
-    info!("全部 {} 个包下载完成，开始安装...", total_count);
+    crate::log_info!(event: "install.phase_started", "全部 {} 个包下载完成，开始安装...", total_count);
 
     // ===== 阶段 2a: 安装主包（可能是分卷，只需从第一个 part 解压一次）=====
     if primary_pkg_count > 0 {
@@ -1554,7 +1566,7 @@ async fn execute_plan(
         if !sw.state.installed_archives.contains(first_file) {
             let first_part = safe_join(game_folder, first_file)?;
             if first_part.exists() {
-                info!("安装{} (从 {})", primary_label, first_file);
+                crate::log_info!("安装{} (从 {})", primary_label, first_file);
                 let primary_staging = create_install_staging_dir(game_folder, "primary");
                 tokio::fs::create_dir_all(&primary_staging)
                     .await
@@ -1578,7 +1590,7 @@ async fn execute_plan(
                         .await
                         {
                             tokio::fs::remove_dir_all(&primary_staging).await.ok();
-                            error!("{}安装提交失败: {}", primary_label, e);
+                            crate::log_error!(event: "install.primary_commit_failed", "{}安装提交失败: {}", primary_label, e);
                             for task in &all_tasks[..primary_pkg_count] {
                                 sw.state.checksums.remove(&task.filename);
                                 if let Ok(p) = safe_join(game_folder, &task.filename) {
@@ -1602,7 +1614,7 @@ async fn execute_plan(
                     }
                     Err(e) => {
                         tokio::fs::remove_dir_all(&primary_staging).await.ok();
-                        error!("{}安装失败: {}", primary_label, e);
+                        crate::log_error!(event: "install.primary_failed", "{}安装失败: {}", primary_label, e);
                         for task in &all_tasks[..primary_pkg_count] {
                             sw.state.checksums.remove(&task.filename);
                             if let Ok(p) = safe_join(game_folder, &task.filename) {
@@ -1617,17 +1629,17 @@ async fn execute_plan(
                     }
                 }
             } else {
-                warn!("{}首段文件不存在: {}", primary_label, first_part.display());
+                crate::log_warn!("{}首段文件不存在: {}", primary_label, first_part.display());
             }
         } else {
-            info!("{}已安装，跳过", primary_label);
+            crate::log_info!("{}已安装，跳过", primary_label);
         }
     }
 
     // ===== 阶段 2b: 安装语言包（每个单独解压）=====
     for (idx, task) in all_tasks[primary_pkg_count..].iter().enumerate() {
         if sw.state.installed_archives.contains(&task.filename) {
-            info!("{} 已安装，跳过", task.label);
+            crate::log_info!("{} 已安装，跳过", task.label);
             continue;
         }
 
@@ -1638,11 +1650,11 @@ async fn execute_plan(
 
         let archive = safe_join(game_folder, &task.filename)?;
         if !archive.exists() {
-            info!("语言包文件不存在 (可能已安装): {}", task.filename);
+            crate::log_info!("语言包文件不存在 (可能已安装): {}", task.filename);
             continue;
         }
 
-        info!("安装 {}", task.label);
+        crate::log_info!("安装 {}", task.label);
         let lang_staging = create_install_staging_dir(game_folder, &task.label);
         tokio::fs::create_dir_all(&lang_staging)
             .await
@@ -1666,7 +1678,7 @@ async fn execute_plan(
                 .await
                 {
                     tokio::fs::remove_dir_all(&lang_staging).await.ok();
-                    error!("{} 安装提交失败: {}", task.label, e);
+                    crate::log_error!(event: "install.language_commit_failed", "{} 安装提交失败: {}", task.label, e);
                     tokio::fs::remove_file(&archive).await.ok();
                     sw.state.checksums.remove(&task.filename);
                     sw.flush();
@@ -1682,7 +1694,7 @@ async fn execute_plan(
             }
             Err(e) => {
                 tokio::fs::remove_dir_all(&lang_staging).await.ok();
-                error!("{} 安装失败: {}", task.label, e);
+                crate::log_error!(event: "install.language_failed", "{} 安装失败: {}", task.label, e);
                 tokio::fs::remove_file(&archive).await.ok();
                 sw.state.checksums.remove(&task.filename);
                 sw.flush();
@@ -1700,13 +1712,13 @@ async fn execute_plan(
     match post_install {
         PostInstall::WriteVersion { version } => {
             hoyoverse::write_local_version(game_folder, &version)?;
-            info!("全量下载安装完成");
+            crate::log_info!(event: "install.full_completed", "全量下载安装完成");
         }
         PostInstall::PatchAndWriteVersion { version } => {
             apply_hdiff_patches(game_folder).await?;
             cleanup_deleted_files(game_folder).await;
             hoyoverse::write_local_version(game_folder, &version)?;
-            info!("增量更新安装完成");
+            crate::log_info!(event: "install.incremental_completed", "增量更新安装完成");
         }
     }
 

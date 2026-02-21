@@ -166,6 +166,24 @@ const parentDir = (value: string): string => {
   return normalized.slice(0, idx);
 };
 
+const resolveDefaultInstallFolder = (baseDir: string, defaultFolderPart: string): string => {
+  const baseNorm = normalizePathForCompare(baseDir);
+  const folderPart = trimFolderPart(defaultFolderPart).replace(/\\/g, '/');
+  if (!folderPart) return baseNorm;
+
+  const baseName = baseNorm.split('/').pop()?.trim();
+  if (!baseName) return `${baseNorm}/${folderPart}`;
+
+  const baseLower = baseName.toLowerCase();
+  const partLower = folderPart.toLowerCase();
+  if (partLower === baseLower) return baseNorm;
+  if (partLower.startsWith(`${baseLower}/`)) {
+    const suffix = folderPart.slice(baseName.length).replace(/^\/+/, '');
+    return suffix ? `${baseNorm}/${suffix}` : baseNorm;
+  }
+  return `${baseNorm}/${folderPart}`;
+};
+
 const findPresetCatalog = (catalog: PresetCatalogItem[], key: string): PresetCatalogItem | null => {
   const target = key.trim().toLowerCase();
   if (!target) return null;
@@ -372,7 +390,7 @@ const loadState = async () => {
     const baseDir = await getDefaultGameFolder(props.gameName);
     if (isStale()) return;
     const defaultFolderPart = trimFolderPart(knownApi.defaultFolder);
-    const defaultFolder = defaultFolderPart ? `${baseDir}/${defaultFolderPart}` : baseDir;
+    const defaultFolder = resolveDefaultInstallFolder(baseDir, defaultFolderPart);
     const defaultNorm = normalizePathForCompare(defaultFolder);
 
     let legacyDefaults = new Set<string>();

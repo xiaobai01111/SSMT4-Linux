@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
-use tracing::{error, info, warn};
+use tracing::instrument;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -85,6 +85,7 @@ struct LaunchCommandSpec {
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "start_game"), err)]
 pub async fn start_game(
     app: tauri::AppHandle,
     game_name: String,
@@ -95,6 +96,7 @@ pub async fn start_game(
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "launch_game"), err)]
 pub async fn launch_game(
     app: tauri::AppHandle,
     game_name: String,
@@ -132,6 +134,7 @@ pub async fn launch_game(
     start_game_internal(app, game_name, game_exe_path, wine_version_id, region).await
 }
 
+#[instrument(level = "info", skip_all, fields(flow = "start_game_internal"), err)]
 async fn start_game_internal(
     app: tauri::AppHandle,
     game_name: String,
@@ -144,7 +147,7 @@ async fn start_game_internal(
 
     // 检查游戏是否已在运行
     if process_monitor::is_game_running(&game_name).await {
-        warn!("游戏 {} 已在运行，拒绝重复启动", game_name);
+        crate::log_warn!(event: "launch.already_running", "游戏 {} 已在运行，拒绝重复启动", game_name);
         return Err("游戏已在运行中，请勿重复启动".to_string());
     }
 
@@ -181,7 +184,7 @@ async fn start_game_internal(
         launch_biz_prefix.as_deref(),
         Some(&launch_region),
     );
-    info!(
+    crate::log_info!(event: "launch.plan",
         "启动目标: game={}, preset={}, region={}, write_scope_region={}",
         game_name, game_preset, launch_region, write_scope_region
     );
@@ -216,7 +219,7 @@ async fn start_game_internal(
             .or_else(|| fallback_status.get("supported").and_then(|v| v.as_bool()))
             .unwrap_or(false);
         if fallback_required {
-            info!(
+            crate::log_info!(event: "protection.preset_fallback",
                 "防护判定已从 preset={} 回退到 game_name={}",
                 game_preset, game_name
             );
@@ -247,9 +250,12 @@ async fn start_game_internal(
             .get("launchEnforcement")
             .and_then(|v| v.as_str())
             .unwrap_or("n/a");
-        info!(
+        crate::log_info!(
             "Channel mode={}, current={}, expected={}, enforcement={}",
-            mode, current, expected, enforcement
+            mode,
+            current,
+            expected,
+            enforcement
         );
     }
     if !protection_required {
@@ -263,7 +269,7 @@ async fn start_game_internal(
             })
             .unwrap_or_default();
         if !blocked_domains.is_empty() {
-            warn!(
+            crate::log_warn!(
                 "检测到当前游戏已屏蔽域名（{}）。该游戏防护非必需，此设置可能导致联网异常，建议恢复防护后重试",
                 blocked_domains.join(", ")
             );
@@ -296,10 +302,10 @@ async fn start_game_internal(
 
     // Load prefix config（不存在则自动创建）
     let prefix_dir = prefix::get_prefix_dir(&game_name);
-    info!("prefix 路径: {}", prefix_dir.display());
+    crate::log_info!("prefix 路径: {}", prefix_dir.display());
     let prefix_config = match prefix::load_prefix_config(&game_name) {
         Ok(cfg) => {
-            info!(
+            crate::log_info!(
                 "已加载 prefix 配置: steam_deck_compat={}, steamos_compat={}, use_umu_run={}, custom_env={:?}, use_pressure_vessel={}",
                 cfg.proton_settings.steam_deck_compat,
                 cfg.proton_settings.steamos_compat,
@@ -310,7 +316,7 @@ async fn start_game_internal(
             cfg
         }
         Err(e) => {
-            warn!(
+            crate::log_warn!(
                 "加载 prefix 配置失败 ({}), 将创建默认配置——用户设置可能丢失!",
                 e
             );
@@ -320,7 +326,7 @@ async fn start_game_internal(
                 ..Default::default()
             };
             prefix::create_prefix(&game_name, &cfg)?;
-            info!("自动创建了 prefix: {}", prefix_dir.display());
+            crate::log_info!("自动创建了 prefix: {}", prefix_dir.display());
             cfg
         }
     };
@@ -403,12 +409,6 @@ async fn start_game_internal(
     if settings.proton_enable_wayland {
         env.insert("PROTON_ENABLE_WAYLAND".to_string(), "1".to_string());
     }
-    if settings.proton_no_d3d12 {
-        env.insert("PROTON_NO_D3D12".to_string(), "1".to_string());
-    }
-    if settings.mangohud {
-        env.insert("MANGOHUD".to_string(), "1".to_string());
-    }
     if settings.steam_deck_compat {
         env.insert("SteamDeck".to_string(), "1".to_string());
         // 兼容不同脚本/游戏对大小写的读取差异
@@ -431,16 +431,21 @@ async fn start_game_internal(
 
     // Custom env from proton_settings
     for (key, value) in &settings.custom_env {
-        info!("注入自定义环境变量: {}={}", key, value);
+        crate::log_info!("注入自定义环境变量: {}={}", key, value);
         env.insert(key.clone(), value.clone());
     }
 
+    // 显式运行时配置（覆盖 custom_env，确保 UI 设置优先）
+    apply_runtime_env_settings(settings, &mut env);
+
     if env.get("PROTON_NO_ESYNC").is_some_and(|v| v.trim() == "1") {
-        warn!("检测到 PROTON_NO_ESYNC=1：该设置可能导致部分游戏稳定性或联网异常，建议关闭后重试");
+        crate::log_warn!(
+            "检测到 PROTON_NO_ESYNC=1：该设置可能导致部分游戏稳定性或联网异常，建议关闭后重试"
+        );
     }
 
     // 打印最终的关键环境变量
-    info!("环境变量汇总: SteamDeck={}, steamdeck={}, SteamOS={}, SteamAppId={}, WINEPREFIX={}, custom_env_count={}",
+    crate::log_info!("环境变量汇总: SteamDeck={}, steamdeck={}, SteamOS={}, SteamAppId={}, WINEPREFIX={}, custom_env_count={}",
         env.get("SteamDeck").unwrap_or(&"(未设置)".to_string()),
         env.get("steamdeck").unwrap_or(&"(未设置)".to_string()),
         env.get("SteamOS").unwrap_or(&"(未设置)".to_string()),
@@ -479,20 +484,42 @@ async fn start_game_internal(
                             "VK_LOADER_DRIVERS_SELECT".to_string(),
                             "nvidia*".to_string(),
                         );
-                        // DXVK/VKD3D: 按 GPU 名称过滤，确保选对设备
-                        env.insert("DXVK_FILTER_DEVICE_NAME".to_string(), "NVIDIA".to_string());
-                        info!(
-                            "GPU 选择: NVIDIA GPU {} ({}) [Vulkan+OpenGL]",
-                            gpu.index, gpu.name
+                        if !settings.disable_gpu_filter {
+                            // DXVK/VKD3D：按设备名过滤，提升多显卡场景命中率
+                            env.insert("DXVK_FILTER_DEVICE_NAME".to_string(), gpu.name.clone());
+                            env.insert("VKD3D_FILTER_DEVICE_NAME".to_string(), gpu.name.clone());
+                        }
+                        crate::log_info!(
+                            "GPU 选择: NVIDIA GPU {} ({}) [Vulkan+OpenGL, gpu_filter={}]",
+                            gpu.index,
+                            gpu.name,
+                            if settings.disable_gpu_filter {
+                                "disabled"
+                            } else {
+                                "enabled"
+                            }
                         );
                     } else {
                         env.insert("DRI_PRIME".to_string(), gpu.index.to_string());
-                        info!("GPU 选择: DRI_PRIME={} ({})", gpu.index, gpu.name);
+                        if !settings.disable_gpu_filter {
+                            env.insert("DXVK_FILTER_DEVICE_NAME".to_string(), gpu.name.clone());
+                            env.insert("VKD3D_FILTER_DEVICE_NAME".to_string(), gpu.name.clone());
+                        }
+                        crate::log_info!(
+                            "GPU 选择: DRI_PRIME={} ({}, gpu_filter={})",
+                            gpu.index,
+                            gpu.name,
+                            if settings.disable_gpu_filter {
+                                "disabled"
+                            } else {
+                                "enabled"
+                            }
+                        );
                     }
                 } else {
                     // GPU 索引对应设备未找到，直接用 DRI_PRIME 兜底
                     env.insert("DRI_PRIME".to_string(), gpu_index.to_string());
-                    info!("GPU 选择: DRI_PRIME={} (设备未枚举到，兜底)", gpu_index);
+                    crate::log_info!("GPU 选择: DRI_PRIME={} (设备未枚举到，兜底)", gpu_index);
                 }
             }
         }
@@ -505,8 +532,18 @@ async fn start_game_internal(
             if !lang.is_empty() {
                 env.insert("LANG".to_string(), format!("{}.UTF-8", lang));
                 env.insert("LC_ALL".to_string(), format!("{}.UTF-8", lang));
-                info!("语言设置: LANG={}.UTF-8", lang);
+                crate::log_info!("语言设置: LANG={}.UTF-8", lang);
             }
+        }
+    }
+
+    if settings.disable_gpu_filter {
+        let dxvk_removed = env.remove("DXVK_FILTER_DEVICE_NAME").is_some();
+        let vkd3d_removed = env.remove("VKD3D_FILTER_DEVICE_NAME").is_some();
+        if dxvk_removed || vkd3d_removed {
+            crate::log_info!(
+                "已按设置禁用 GPU 过滤（DXVK_FILTER_DEVICE_NAME / VKD3D_FILTER_DEVICE_NAME）"
+            );
         }
     }
 
@@ -528,12 +565,12 @@ async fn start_game_internal(
     // 实际要运行的可执行文件
     // 优先级：jadeite > 游戏 exe
     let (run_exe, extra_args) = if let Some(ref jade) = jadeite_exe {
-        info!("使用 jadeite 反作弊补丁: {}", jade.display());
+        crate::log_info!("使用 jadeite 反作弊补丁: {}", jade.display());
         let win_game_path = format!("Z:{}", launch_exe.to_string_lossy().replace('/', "\\"));
         (jade.clone(), vec![win_game_path, "--".to_string()])
     } else {
         if is_hoyoverse {
-            warn!("未找到 jadeite.exe，HoYoverse 游戏可能因反作弊而无法启动");
+            crate::log_warn!("未找到 jadeite.exe，HoYoverse 游戏可能因反作弊而无法启动");
         }
         (launch_exe.clone(), vec![])
     };
@@ -544,7 +581,7 @@ async fn start_game_internal(
         .unwrap_or(false)
     {
         if settings.use_pressure_vessel {
-            warn!("当前预设要求禁用 pressure-vessel，已忽略该设置");
+            crate::log_warn!("当前预设要求禁用 pressure-vessel，已忽略该设置");
         }
         false
     } else {
@@ -591,7 +628,7 @@ async fn start_game_internal(
         .unwrap_or(false)
         && launch_profile.runtime_flags.use_pressure_vessel
     {
-        warn!("当前预设要求禁用 pressure-vessel，已覆盖 LaunchProfile 设置");
+        crate::log_warn!("当前预设要求禁用 pressure-vessel，已覆盖 LaunchProfile 设置");
         launch_profile.runtime_flags.use_pressure_vessel = false;
         if launch_profile.runner == LaunchRunner::PressureVessel {
             launch_profile.runner = LaunchRunner::Proton;
@@ -601,7 +638,9 @@ async fn start_game_internal(
     if launch_profile.runtime_flags.force_direct_proton
         && launch_profile.runner == LaunchRunner::UmuRun
     {
-        warn!("LaunchProfile 配置为 forceDirectProton，runner 已从 umu_run 回退为 proton");
+        crate::log_warn!(
+            "LaunchProfile 配置为 forceDirectProton，runner 已从 umu_run 回退为 proton"
+        );
         launch_profile.runner = if launch_profile.runtime_flags.use_pressure_vessel {
             LaunchRunner::PressureVessel
         } else {
@@ -613,7 +652,7 @@ async fn start_game_internal(
         launch_profile.runtime_flags.region = launch_region.clone();
     }
 
-    let command_spec = resolve_launch_command(
+    let mut command_spec = resolve_launch_command(
         &game_preset,
         settings,
         preset_meta,
@@ -622,9 +661,11 @@ async fn start_game_internal(
         &extra_args,
         &mut launch_profile,
     )?;
+    apply_gamepad_compat_mode(settings, &mut launch_profile.env, &command_spec.runner);
+    apply_runtime_launch_wrappers(settings, &mut command_spec);
 
     let runner_name = command_spec.runner.as_str().to_string();
-    info!(
+    crate::log_info!(
         "最终启动配置: runner={}, sandbox={}, pressureVessel={}, workingDir={}",
         runner_name,
         launch_profile.runtime_flags.sandbox_enabled,
@@ -633,7 +674,7 @@ async fn start_game_internal(
     );
 
     let mut cmd = if launch_profile.runtime_flags.sandbox_enabled && !command_spec.use_umu_runtime {
-        info!(
+        crate::log_info!(
             "Launching with bwrap sandbox (isolate_home={})",
             launch_profile.runtime_flags.sandbox_isolate_home
         );
@@ -647,7 +688,7 @@ async fn start_game_internal(
         )?
     } else {
         if launch_profile.runtime_flags.sandbox_enabled && command_spec.use_umu_runtime {
-            warn!("umu-run 已启用，跳过额外 bwrap 沙盒以避免容器嵌套冲突");
+            crate::log_warn!("umu-run 已启用，跳过额外 bwrap 沙盒以避免容器嵌套冲突");
         }
         let mut command = tokio::process::Command::new(&command_spec.program);
         command.args(&command_spec.args);
@@ -661,7 +702,7 @@ async fn start_game_internal(
         if wd.exists() {
             cmd.current_dir(wd);
         } else {
-            warn!(
+            crate::log_warn!(
                 "LaunchProfile workingDir 不存在，回退到 exe 目录: {}",
                 launch_profile.working_dir
             );
@@ -673,15 +714,19 @@ async fn start_game_internal(
         cmd.current_dir(game_dir);
     }
 
-    let mut child = cmd
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("Failed to launch game: {}", e))?;
+    let previous_power_profile = maybe_enable_auto_performance_mode(settings);
+
+    let mut child = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            restore_power_profile(previous_power_profile.as_deref());
+            return Err(format!("Failed to launch game: {}", e));
+        }
+    };
 
     let pid = child.id().unwrap_or(0);
     let launched_at = chrono::Utc::now().to_rfc3339();
-    info!("Game launched with PID {}", pid);
+    crate::log_info!(event: "launch.spawned", "Game launched with PID {}", pid);
 
     process_monitor::register_game_process(game_name.clone(), pid, game_exe_path.clone()).await;
 
@@ -724,6 +769,7 @@ async fn start_game_internal(
     let region_for_monitor = launch_profile.runtime_flags.region.clone();
     let runner_for_monitor = runner_name.clone();
     let launched_at_for_monitor = launched_at.clone();
+    let restore_profile_after_exit = previous_power_profile.clone();
     let exe_name = launch_exe
         .file_name()
         .and_then(|n| n.to_str())
@@ -741,15 +787,15 @@ async fn start_game_internal(
                 exit_code = status.code();
                 signal = exit_status_signal(&status);
                 crashed = exit_code.map(|v| v != 0).unwrap_or(false) || signal.is_some();
-                info!("Direct child process exited with status: {}", status);
+                crate::log_info!(event: "launch.child_exit", "Direct child process exited with status: {}", status);
             }
             Err(e) => {
                 crashed = true;
-                error!("Failed to wait for child process: {}", e);
+                crate::log_error!(event: "launch.wait_failed", "Failed to wait for child process: {}", e);
             }
         }
 
-        info!("检查游戏 {} 的子进程是否仍在运行...", game_name_for_monitor);
+        crate::log_info!(event: "launch.monitor_started", "检查游戏 {} 的子进程是否仍在运行...", game_name_for_monitor);
         let mut check_count = 0;
         let max_checks = 30;
 
@@ -758,24 +804,26 @@ async fn start_game_internal(
             let processes = process_monitor::find_game_processes(&exe_name).await;
 
             if processes.is_empty() {
-                info!("游戏 {} 的所有进程已退出", game_name_for_monitor);
+                crate::log_info!(event: "launch.processes_exited", "游戏 {} 的所有进程已退出", game_name_for_monitor);
                 break;
             }
 
             check_count += 1;
             if check_count >= max_checks {
-                info!("游戏 {} 进程检查超时，假定已退出", game_name_for_monitor);
+                crate::log_info!(event: "launch.monitor_timeout", "游戏 {} 进程检查超时，假定已退出", game_name_for_monitor);
                 break;
             }
 
             if check_count % 5 == 0 {
-                info!(
+                crate::log_info!(event: "launch.processes_still_running",
                     "游戏 {} 仍有 {} 个进程在运行",
                     game_name_for_monitor,
                     processes.len()
                 );
             }
         }
+
+        restore_power_profile(restore_profile_after_exit.as_deref());
 
         process_monitor::unregister_game_process(&game_name_for_monitor).await;
 
@@ -811,6 +859,374 @@ fn apply_preset_env_defaults(
     for (key, value) in &preset.env_defaults {
         if !env.contains_key(key) {
             env.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+fn apply_runtime_env_settings(
+    settings: &crate::configs::wine_config::ProtonSettings,
+    env: &mut HashMap<String, String>,
+) {
+    if settings.mangohud {
+        env.insert("MANGOHUD".to_string(), "1".to_string());
+    } else {
+        env.remove("MANGOHUD");
+    }
+
+    if settings.dxvk_enabled {
+        env.remove("PROTON_USE_WINED3D");
+    } else {
+        env.insert("PROTON_USE_WINED3D".to_string(), "1".to_string());
+    }
+
+    let selected_vkd3d_variant = settings.vkd3d_variant.trim();
+    let has_selected_vkd3d = !selected_vkd3d_variant.is_empty()
+        && !selected_vkd3d_variant.eq_ignore_ascii_case("disabled");
+    let vkd3d_enabled = (settings.vkd3d_enabled || has_selected_vkd3d) && !settings.proton_no_d3d12;
+    if vkd3d_enabled {
+        env.remove("PROTON_NO_D3D12");
+    } else {
+        env.insert("PROTON_NO_D3D12".to_string(), "1".to_string());
+    }
+
+    if settings.dxvk_async {
+        env.insert("DXVK_ASYNC".to_string(), "1".to_string());
+    } else {
+        env.remove("DXVK_ASYNC");
+    }
+
+    let hud = settings.dxvk_hud.trim();
+    if hud.is_empty() {
+        env.remove("DXVK_HUD");
+    } else {
+        env.insert("DXVK_HUD".to_string(), hud.to_string());
+    }
+
+    if settings.dxvk_frame_rate > 0 {
+        let limit = settings.dxvk_frame_rate.to_string();
+        env.insert("DXVK_FRAME_RATE".to_string(), limit.clone());
+        env.insert("VKD3D_FRAME_RATE".to_string(), limit);
+    } else {
+        env.remove("DXVK_FRAME_RATE");
+        env.remove("VKD3D_FRAME_RATE");
+    }
+
+    match settings.vsync_mode.trim().to_ascii_lowercase().as_str() {
+        "on" => {
+            env.insert("DXVK_SYNC_INTERVAL".to_string(), "1".to_string());
+            env.insert("vblank_mode".to_string(), "1".to_string());
+            env.insert("__GL_SYNC_TO_VBLANK".to_string(), "1".to_string());
+        }
+        "off" => {
+            env.insert("DXVK_SYNC_INTERVAL".to_string(), "0".to_string());
+            env.insert("vblank_mode".to_string(), "0".to_string());
+            env.insert("__GL_SYNC_TO_VBLANK".to_string(), "0".to_string());
+        }
+        _ => {
+            env.remove("DXVK_SYNC_INTERVAL");
+            env.remove("vblank_mode");
+            env.remove("__GL_SYNC_TO_VBLANK");
+        }
+    }
+
+    if settings.esync_enabled {
+        env.remove("PROTON_NO_ESYNC");
+    } else {
+        env.insert("PROTON_NO_ESYNC".to_string(), "1".to_string());
+    }
+
+    if settings.fsync_enabled {
+        env.remove("PROTON_NO_FSYNC");
+    } else {
+        env.insert("PROTON_NO_FSYNC".to_string(), "1".to_string());
+    }
+
+    if settings.fsr_enabled {
+        let fsr_strength = settings.fsr_strength.clamp(0, 5);
+        env.insert("WINE_FULLSCREEN_FSR".to_string(), "1".to_string());
+        env.insert(
+            "WINE_FULLSCREEN_FSR_STRENGTH".to_string(),
+            fsr_strength.to_string(),
+        );
+
+        let scale_percent = settings.resolution_scale_percent.clamp(50, 100);
+        if scale_percent < 100 {
+            if let Some(mode) = compute_scaled_resolution_mode(scale_percent) {
+                env.insert("WINE_FULLSCREEN_FSR_CUSTOM_MODE".to_string(), mode);
+            } else {
+                env.remove("WINE_FULLSCREEN_FSR_CUSTOM_MODE");
+                crate::log_warn!(
+                    "已启用分辨率缩放 {}%，但未能检测桌面分辨率，跳过 WINE_FULLSCREEN_FSR_CUSTOM_MODE",
+                    scale_percent
+                );
+            }
+        } else {
+            env.remove("WINE_FULLSCREEN_FSR_CUSTOM_MODE");
+        }
+    } else {
+        env.remove("WINE_FULLSCREEN_FSR");
+        env.remove("WINE_FULLSCREEN_FSR_STRENGTH");
+        env.remove("WINE_FULLSCREEN_FSR_CUSTOM_MODE");
+    }
+
+    // 保留整数缩放开关（与 FSR 可叠加）。
+    if settings.resolution_scale_percent < 100 {
+        env.insert(
+            "WINE_FULLSCREEN_INTEGER_SCALING".to_string(),
+            "1".to_string(),
+        );
+    } else {
+        env.remove("WINE_FULLSCREEN_INTEGER_SCALING");
+    }
+
+    if settings.dlss_compat_enabled {
+        env.insert("PROTON_ENABLE_NVAPI".to_string(), "1".to_string());
+        env.insert("PROTON_DISABLE_NVAPI".to_string(), "0".to_string());
+        env.insert("DXVK_ENABLE_NVAPI".to_string(), "1".to_string());
+        env.insert("DXVK_NVAPIHACK".to_string(), "0".to_string());
+    } else {
+        env.remove("PROTON_ENABLE_NVAPI");
+        env.remove("PROTON_DISABLE_NVAPI");
+        env.remove("DXVK_ENABLE_NVAPI");
+        env.remove("DXVK_NVAPIHACK");
+    }
+}
+
+fn apply_gamepad_compat_mode(
+    settings: &crate::configs::wine_config::ProtonSettings,
+    env: &mut HashMap<String, String>,
+    runner: &LaunchRunner,
+) {
+    for key in [
+        "SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD",
+        "SDL_ENABLE_STEAM_CONTROLLERS",
+        "SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS",
+    ] {
+        env.remove(key);
+    }
+
+    let requested_mode = settings.gamepad_compat_mode.trim().to_ascii_lowercase();
+
+    let effective_mode = match requested_mode.as_str() {
+        "" | "off" | "disabled" | "none" => "off",
+        "steam_input" => "steam_input",
+        "background_input" => "background_input",
+        "auto" => match runner {
+            LaunchRunner::UmuRun | LaunchRunner::Proton | LaunchRunner::PressureVessel => {
+                "steam_input"
+            }
+            LaunchRunner::Wine => "off",
+        },
+        other => {
+            crate::log_warn!(
+                event: "runtime.gamepad_compat_mode_invalid",
+                "未知手柄兼容模式 '{}'，已回退为 auto",
+                other
+            );
+            match runner {
+                LaunchRunner::UmuRun | LaunchRunner::Proton | LaunchRunner::PressureVessel => {
+                    "steam_input"
+                }
+                LaunchRunner::Wine => "off",
+            }
+        }
+    };
+
+    match effective_mode {
+        "steam_input" => {
+            env.insert(
+                "SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD".to_string(),
+                "1".to_string(),
+            );
+            env.insert("SDL_ENABLE_STEAM_CONTROLLERS".to_string(), "1".to_string());
+        }
+        "background_input" => {
+            env.insert(
+                "SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS".to_string(),
+                "1".to_string(),
+            );
+        }
+        _ => {}
+    }
+
+    crate::log_info!(
+        event: "runtime.gamepad_compat_mode_applied",
+        "手柄兼容模式: requested='{}', effective='{}', runner={}",
+        if requested_mode.is_empty() {
+            "off"
+        } else {
+            requested_mode.as_str()
+        },
+        effective_mode,
+        runner.as_str()
+    );
+}
+
+fn compute_scaled_resolution_mode(scale_percent: u32) -> Option<String> {
+    let scale_percent = scale_percent.clamp(50, 100);
+    if scale_percent >= 100 {
+        return None;
+    }
+    let (desktop_w, desktop_h) = detect_current_resolution()?;
+    let mut scaled_w = desktop_w.saturating_mul(scale_percent) / 100;
+    let mut scaled_h = desktop_h.saturating_mul(scale_percent) / 100;
+    scaled_w = scaled_w.max(640);
+    scaled_h = scaled_h.max(360);
+    if scaled_w % 2 != 0 {
+        scaled_w -= 1;
+    }
+    if scaled_h % 2 != 0 {
+        scaled_h -= 1;
+    }
+    Some(format!("{}x{}", scaled_w, scaled_h))
+}
+
+fn detect_current_resolution() -> Option<(u32, u32)> {
+    if which::which("xrandr").is_err() {
+        return None;
+    }
+    let output = std::process::Command::new("xrandr")
+        .arg("--current")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if !trimmed.contains('*') {
+            continue;
+        }
+        let mode = trimmed.split_whitespace().next()?;
+        let (w, h) = mode.split_once('x')?;
+        let width = w.parse::<u32>().ok()?;
+        let height = h.parse::<u32>().ok()?;
+        if width > 0 && height > 0 {
+            return Some((width, height));
+        }
+    }
+    None
+}
+
+fn apply_runtime_launch_wrappers(
+    settings: &crate::configs::wine_config::ProtonSettings,
+    command_spec: &mut LaunchCommandSpec,
+) {
+    if settings.gamemode_enabled {
+        if let Ok(gamemode) = which::which("gamemoderun") {
+            wrap_launch_command(command_spec, gamemode, Vec::new());
+            crate::log_info!(event: "runtime.gamemode_enabled", "已启用 GameMode 包装器");
+        } else {
+            crate::log_warn!(event: "runtime.gamemode_missing", "已启用 GameMode，但系统未找到 gamemoderun，已跳过");
+        }
+    }
+
+    if settings.cpu_limit_enabled {
+        let cpu_limit = settings.cpu_limit_percent.clamp(1, 100);
+        if let Ok(cpulimit) = which::which("cpulimit") {
+            wrap_launch_command(
+                command_spec,
+                cpulimit,
+                vec![
+                    "-f".to_string(),
+                    "-l".to_string(),
+                    cpu_limit.to_string(),
+                    "--".to_string(),
+                ],
+            );
+            crate::log_info!(event: "runtime.cpu_limit_enabled", "已启用 CPU 限制: {}%", cpu_limit);
+        } else {
+            crate::log_warn!(event: "runtime.cpu_limit_missing", "已启用 CPU 限制，但系统未找到 cpulimit，已跳过");
+        }
+    }
+}
+
+fn wrap_launch_command(
+    command_spec: &mut LaunchCommandSpec,
+    wrapper_program: PathBuf,
+    mut wrapper_prefix_args: Vec<String>,
+) {
+    let original_program = command_spec.program.to_string_lossy().to_string();
+    let original_args = std::mem::take(&mut command_spec.args);
+
+    wrapper_prefix_args.push(original_program);
+    wrapper_prefix_args.extend(original_args);
+
+    command_spec.program = wrapper_program;
+    command_spec.args = wrapper_prefix_args;
+}
+
+fn maybe_enable_auto_performance_mode(
+    settings: &crate::configs::wine_config::ProtonSettings,
+) -> Option<String> {
+    if !settings.auto_performance_mode {
+        return None;
+    }
+    if which::which("powerprofilesctl").is_err() {
+        crate::log_warn!(event: "runtime.power_profile_tool_missing", "已启用自动性能模式，但系统未找到 powerprofilesctl，已跳过");
+        return None;
+    }
+
+    let current = read_power_profile()?;
+    if current.eq_ignore_ascii_case("performance") {
+        return None;
+    }
+    if set_power_profile("performance") {
+        crate::log_info!(event: "runtime.power_profile_switched", "自动性能模式: {} -> performance", current);
+        Some(current)
+    } else {
+        crate::log_warn!(event: "runtime.power_profile_switch_failed", "自动性能模式切换失败，保持当前模式");
+        None
+    }
+}
+
+fn restore_power_profile(previous_profile: Option<&str>) {
+    let Some(previous_profile) = previous_profile else {
+        return;
+    };
+    let previous_profile = previous_profile.trim();
+    if previous_profile.is_empty() || previous_profile.eq_ignore_ascii_case("performance") {
+        return;
+    }
+    if set_power_profile(previous_profile) {
+        crate::log_info!(event: "runtime.power_profile_restored", "已恢复电源模式: {}", previous_profile);
+    } else {
+        crate::log_warn!(event: "runtime.power_profile_restore_failed", "恢复电源模式失败: {}", previous_profile);
+    }
+}
+
+fn read_power_profile() -> Option<String> {
+    let output = std::process::Command::new("powerprofilesctl")
+        .arg("get")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let profile = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if profile.is_empty() {
+        None
+    } else {
+        Some(profile)
+    }
+}
+
+fn set_power_profile(profile: &str) -> bool {
+    let output = std::process::Command::new("powerprofilesctl")
+        .arg("set")
+        .arg(profile)
+        .output();
+    match output {
+        Ok(output) if output.status.success() => true,
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            crate::log_warn!("powerprofilesctl set {} 失败: {}", profile, stderr.trim());
+            false
+        }
+        Err(e) => {
+            crate::log_warn!("执行 powerprofilesctl set {} 失败: {}", profile, e);
+            false
         }
     }
 }
@@ -892,7 +1308,7 @@ fn apply_umu_env_defaults(
         }
     }
 
-    info!(
+    crate::log_info!(
         "umu-run env: PROTONPATH={}, GAMEID={}, UMU_ID={}, STORE={}, UMU_USE_STEAM={}, SteamAppId={}, STEAM_COMPAT_APP_ID={}",
         env.get("PROTONPATH").cloned().unwrap_or_default(),
         env.get("GAMEID").cloned().unwrap_or_default(),
@@ -940,7 +1356,7 @@ fn load_global_launch_profile_patch() -> Option<LaunchProfilePatch> {
         }
         match serde_json::from_str::<LaunchProfilePatch>(trimmed) {
             Ok(patch) => return Some(patch),
-            Err(err) => warn!("解析全局 LaunchProfile 失败 ({}): {}", key, err),
+            Err(err) => crate::log_warn!("解析全局 LaunchProfile 失败 ({}): {}", key, err),
         }
     }
     None
@@ -984,7 +1400,7 @@ fn extract_launch_profile_patch(
     for candidate in candidates {
         match serde_json::from_value::<LaunchProfilePatch>(candidate.clone()) {
             Ok(patch) => return Some(patch),
-            Err(err) => warn!("解析 LaunchProfile Patch 失败: {}", err),
+            Err(err) => crate::log_warn!("解析 LaunchProfile Patch 失败: {}", err),
         }
     }
 
@@ -1121,7 +1537,7 @@ fn resolve_launch_command(
                 args.extend(merged_args.clone());
                 (umu_run, args)
             } else {
-                warn!("已启用 umu-run，但系统未找到 umu-run，回退到 Proton 启动链");
+                crate::log_warn!("已启用 umu-run，但系统未找到 umu-run，回退到 Proton 启动链");
                 runner = if launch_profile.runtime_flags.use_pressure_vessel {
                     LaunchRunner::PressureVessel
                 } else {
@@ -1144,7 +1560,9 @@ fn resolve_launch_command(
             if let Some(cmd) = build_pressure_vessel_command(&proton_path, run_exe, &merged_args) {
                 (cmd.0, cmd.1)
             } else {
-                warn!("未找到 Steam Linux Runtime，pressure-vessel runner 回退到直连 Proton");
+                crate::log_warn!(
+                    "未找到 Steam Linux Runtime，pressure-vessel runner 回退到直连 Proton"
+                );
                 runner = LaunchRunner::Proton;
                 launch_profile.runtime_flags.use_pressure_vessel = false;
                 build_direct_proton_command_spec_with_args(&proton_path, run_exe, &merged_args)
@@ -1272,7 +1690,7 @@ fn spawn_launch_log_pipe<R>(
                     .ok();
                 }
                 Err(err) => {
-                    warn!("读取 {} 输出失败: {}", stream, err);
+                    crate::log_warn!("读取 {} 输出失败: {}", stream, err);
                     break;
                 }
             }
@@ -1298,7 +1716,7 @@ fn build_proton_base_command(
     if use_pressure_vessel {
         if let Some(runtime_dir) = detector::find_steam_linux_runtime() {
             let entry_point = runtime_dir.join("_v2-entry-point");
-            info!(
+            crate::log_info!(
                 "Launching with pressure-vessel: {} -> {} -> {}",
                 entry_point.display(),
                 proton_path.display(),
@@ -1315,7 +1733,7 @@ fn build_proton_base_command(
             return (entry_point, args);
         }
 
-        warn!("SteamLinuxRuntime not found, falling back to direct proton launch");
+        crate::log_warn!("SteamLinuxRuntime not found, falling back to direct proton launch");
     }
 
     build_direct_proton_command_spec_with_args(proton_path, run_exe, extra_args)
@@ -1326,7 +1744,7 @@ fn build_direct_proton_command_spec_with_args(
     run_exe: &Path,
     extra_args: &[String],
 ) -> (PathBuf, Vec<String>) {
-    info!(
+    crate::log_info!(
         "Launching with direct proton: {} waitforexitandrun {} {:?}",
         proton_path.display(),
         run_exe.display(),
@@ -1475,7 +1893,7 @@ fn load_game_config_json(game_name: &str) -> Option<Value> {
     match serde_json::from_str::<Value>(&content) {
         Ok(value) => Some(value),
         Err(err) => {
-            warn!("解析游戏配置失败 ({}): {}", canonical, err);
+            crate::log_warn!("解析游戏配置失败 ({}): {}", canonical, err);
             None
         }
     }
@@ -1619,7 +2037,7 @@ fn resolve_preferred_launch_exe(game_preset: &str, game_exe: &Path) -> PathBuf {
                         if let Some(game_root) = client_dir.parent() {
                             let wrapper = game_root.join("Wuthering Waves.exe");
                             if wrapper.exists() {
-                                info!(
+                                crate::log_info!(
                                     "WutheringWaves 启动可执行已切换为包装器: {}",
                                     wrapper.display()
                                 );

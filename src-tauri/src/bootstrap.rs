@@ -48,7 +48,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if let Err(e) = utils::data_parameters::sync_managed_repo() {
-        tracing::warn!(
+        crate::log_warn!(
             "同步 Data-parameters 仓库失败（将使用本地已有副本或回退源）: {}",
             e
         );
@@ -59,9 +59,9 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     //    这样新用户首次启动不会产生未经确认的符号链接
 
     let data_dir = configs::app_config::get_app_data_dir();
-    tracing::info!("Config dir: {}", config_dir.display());
-    tracing::info!("Data dir: {}", data_dir.display());
-    tracing::info!("Cache dir: {}", cache_dir.display());
+    crate::log_info!("Config dir: {}", config_dir.display());
+    crate::log_info!("Data dir: {}", data_dir.display());
+    crate::log_info!("Cache dir: {}", cache_dir.display());
 
     Ok(())
 }

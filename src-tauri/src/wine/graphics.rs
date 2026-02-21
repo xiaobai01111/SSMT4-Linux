@@ -2,7 +2,6 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tracing::{info, warn};
 
 /// 缓存上次成功获取的远程版本列表（按 variant 分别缓存）
 static DXVK_VARIANT_CACHE: std::sync::OnceLock<Mutex<HashMap<String, Vec<DxvkRemoteVersion>>>> =
@@ -10,6 +9,14 @@ static DXVK_VARIANT_CACHE: std::sync::OnceLock<Mutex<HashMap<String, Vec<DxvkRem
 
 fn get_variant_cache() -> &'static Mutex<HashMap<String, Vec<DxvkRemoteVersion>>> {
     DXVK_VARIANT_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 缓存上次成功获取的 VKD3D 远程版本列表（按 variant 分别缓存）
+static VKD3D_VARIANT_CACHE: std::sync::OnceLock<Mutex<HashMap<String, Vec<Vkd3dRemoteVersion>>>> =
+    std::sync::OnceLock::new();
+
+fn get_vkd3d_variant_cache() -> &'static Mutex<HashMap<String, Vec<Vkd3dRemoteVersion>>> {
+    VKD3D_VARIANT_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -59,6 +66,65 @@ pub struct DxvkInstalledStatus {
     pub version: Option<String>,
     /// 检测到的 DXVK DLL 列表
     pub dlls_found: Vec<String>,
+    /// 64 位目录中是否存在 DXVK DLL
+    pub has_64bit: bool,
+    /// 32 位目录中是否存在 DXVK DLL
+    pub has_32bit: bool,
+    /// 是否存在 32/64 位不一致冲突
+    pub arch_conflict: bool,
+    /// 冲突详情
+    pub conflict_details: Vec<String>,
+}
+
+/// 本地已缓存的 VKD3D 版本信息
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Vkd3dLocalVersion {
+    pub version: String,
+    /// 变体标识（由 Data-parameters/vkd3d/*.json 定义）
+    pub variant: String,
+    /// 是否已解压（可直接安装）
+    pub extracted: bool,
+    /// 缓存目录路径
+    pub path: PathBuf,
+}
+
+/// 远程可用的 VKD3D 版本
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Vkd3dRemoteVersion {
+    pub version: String,
+    /// 变体标识（由 Data-parameters/vkd3d/*.json 定义）
+    pub variant: String,
+    pub tag_name: String,
+    pub download_url: String,
+    pub file_size: u64,
+    pub published_at: String,
+    /// 是否已在本地缓存
+    pub is_local: bool,
+}
+
+/// 当前 Prefix 中安装的 VKD3D 状态
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Vkd3dInstalledStatus {
+    /// 是否检测到 VKD3D DLL
+    pub installed: bool,
+    /// 安装版本（优先 marker）
+    pub version: Option<String>,
+    /// 安装变体（优先 marker）
+    pub variant: Option<String>,
+    /// 检测到的 DLL 列表（去重并集）
+    pub dlls_found: Vec<String>,
+    /// system32 检测到的 DLL
+    pub dlls_64bit: Vec<String>,
+    /// syswow64 检测到的 DLL
+    pub dlls_32bit: Vec<String>,
+    /// 64 位目录中是否存在 VKD3D DLL
+    pub has_64bit: bool,
+    /// 32 位目录中是否存在 VKD3D DLL
+    pub has_32bit: bool,
+    /// 是否存在 32/64 位不一致冲突
+    pub arch_conflict: bool,
+    /// 冲突详情
+    pub conflict_details: Vec<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -115,6 +181,60 @@ struct DxvkVariantIndexItem {
     enabled: bool,
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Vkd3dCatalogSeed {
+    #[serde(default = "default_dxvk_catalog_schema")]
+    schema_version: u32,
+    #[serde(default)]
+    variants: Vec<Vkd3dVariantSource>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Vkd3dVariantSource {
+    id: String,
+    #[serde(default)]
+    display_name: String,
+    #[serde(default)]
+    provider: String,
+    #[serde(default)]
+    repo: String,
+    #[serde(default)]
+    endpoint: String,
+    #[serde(default)]
+    asset_pattern: String,
+    #[serde(default)]
+    download_url_template: String,
+    #[serde(default)]
+    archive_name_template: String,
+    #[serde(default)]
+    include_prerelease: bool,
+    #[serde(default = "default_dxvk_variant_enabled")]
+    enabled: bool,
+    #[serde(default)]
+    note: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Vkd3dVariantIndex {
+    #[serde(default = "default_dxvk_catalog_schema")]
+    schema_version: u32,
+    #[serde(default)]
+    variants: Vec<Vkd3dVariantIndexItem>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Vkd3dVariantIndexItem {
+    id: String,
+    #[serde(default)]
+    path: String,
+    #[serde(default = "default_dxvk_variant_enabled")]
+    enabled: bool,
+}
+
 fn default_dxvk_catalog_schema() -> u32 {
     1
 }
@@ -160,6 +280,57 @@ fn default_dxvk_variants() -> Vec<DxvkVariantSource> {
     ]
 }
 
+fn default_vkd3d_variants() -> Vec<Vkd3dVariantSource> {
+    vec![
+        Vkd3dVariantSource {
+            id: "vkd3d".to_string(),
+            display_name: "VKD3D".to_string(),
+            provider: "github_releases".to_string(),
+            // 兼容回退：默认指向可直接用于 Wine Prefix 的 proton 构建。
+            repo: "HansKristian-Work/vkd3d-proton".to_string(),
+            endpoint: String::new(),
+            asset_pattern: "(?i)^vkd3d-proton-.*\\.(tar\\.zst|tar\\.gz|zip)$".to_string(),
+            download_url_template:
+                "https://github.com/HansKristian-Work/vkd3d-proton/releases/download/v{version}/{archive}"
+                    .to_string(),
+            archive_name_template: "vkd3d-proton-{version}.tar.zst".to_string(),
+            include_prerelease: false,
+            enabled: true,
+            note: "fallback".to_string(),
+        },
+        Vkd3dVariantSource {
+            id: "vkd3d-proton".to_string(),
+            display_name: "VKD3D-Proton".to_string(),
+            provider: "github_releases".to_string(),
+            repo: "HansKristian-Work/vkd3d-proton".to_string(),
+            endpoint: String::new(),
+            asset_pattern: "(?i)^vkd3d-proton-.*\\.(tar\\.zst|tar\\.gz|zip)$".to_string(),
+            download_url_template:
+                "https://github.com/HansKristian-Work/vkd3d-proton/releases/download/v{version}/{archive}"
+                    .to_string(),
+            archive_name_template: "vkd3d-proton-{version}.tar.zst".to_string(),
+            include_prerelease: false,
+            enabled: true,
+            note: "fallback".to_string(),
+        },
+        Vkd3dVariantSource {
+            id: "vkd3d-proton-ge".to_string(),
+            display_name: "VKD3D-Proton GE".to_string(),
+            provider: "github_releases".to_string(),
+            repo: "GloriousEggroll/vkd3d-proton".to_string(),
+            endpoint: String::new(),
+            asset_pattern: "(?i)^vkd3d-proton-.*\\.(tar\\.zst|tar\\.gz|zip)$".to_string(),
+            download_url_template:
+                "https://github.com/GloriousEggroll/vkd3d-proton/releases/download/v{version}/{archive}"
+                    .to_string(),
+            archive_name_template: "vkd3d-proton-{version}.tar.zst".to_string(),
+            include_prerelease: false,
+            enabled: true,
+            note: "fallback".to_string(),
+        },
+    ]
+}
+
 fn load_dxvk_variants_from_modules() -> Result<Vec<DxvkVariantSource>, String> {
     let index_raw = crate::utils::data_parameters::read_data_json("dxvk/index.json")?;
     let index = serde_json::from_str::<DxvkVariantIndex>(&index_raw)
@@ -194,8 +365,50 @@ fn load_dxvk_variants_from_modules() -> Result<Vec<DxvkVariantSource>, String> {
         return Err("dxvk/index.json 中没有可用 variants".to_string());
     }
 
-    info!(
+    crate::log_info!(
         "DXVK 模块化配置已加载: schema={}, variants={}",
+        index.schema_version,
+        result.len()
+    );
+    Ok(result)
+}
+
+fn load_vkd3d_variants_from_modules() -> Result<Vec<Vkd3dVariantSource>, String> {
+    let index_raw = crate::utils::data_parameters::read_data_json("vkd3d/index.json")?;
+    let index = serde_json::from_str::<Vkd3dVariantIndex>(&index_raw)
+        .map_err(|e| format!("解析 vkd3d/index.json 失败: {}", e))?;
+
+    let mut result = Vec::new();
+    for item in index.variants {
+        if !item.enabled {
+            continue;
+        }
+        let id = item.id.trim();
+        if id.is_empty() {
+            continue;
+        }
+        let file = if item.path.trim().is_empty() {
+            format!("{}.json", id)
+        } else {
+            item.path.trim().to_string()
+        };
+        let relative = format!("vkd3d/{}", file.trim_start_matches(['/', '\\']));
+        let raw = crate::utils::data_parameters::read_data_json(&relative)
+            .map_err(|e| format!("读取 {} 失败: {}", relative, e))?;
+        let mut variant = serde_json::from_str::<Vkd3dVariantSource>(&raw)
+            .map_err(|e| format!("解析 {} 失败: {}", relative, e))?;
+        if variant.id.trim().is_empty() {
+            variant.id = id.to_string();
+        }
+        result.push(variant);
+    }
+
+    if result.is_empty() {
+        return Err("vkd3d/index.json 中没有可用 variants".to_string());
+    }
+
+    crate::log_info!(
+        "VKD3D 模块化配置已加载: schema={}, variants={}",
         index.schema_version,
         result.len()
     );
@@ -209,20 +422,20 @@ fn load_dxvk_variants() -> &'static Vec<DxvkVariantSource> {
         match load_dxvk_variants_from_modules() {
             Ok(variants) => return variants,
             Err(e) => {
-                warn!("读取模块化 DXVK 配置失败，回退 catalog: {}", e);
+                crate::log_warn!("读取模块化 DXVK 配置失败，回退 catalog: {}", e);
             }
         }
 
         let json = match crate::utils::data_parameters::read_catalog_json("dxvk_catalog.json") {
             Ok(content) => content,
             Err(e) => {
-                warn!("读取 DXVK catalog 失败，回退内置默认值: {}", e);
+                crate::log_warn!("读取 DXVK catalog 失败，回退内置默认值: {}", e);
                 return default_dxvk_variants();
             }
         };
         match serde_json::from_str::<DxvkCatalogSeed>(&json) {
             Ok(seed) => {
-                info!(
+                crate::log_info!(
                     "DXVK catalog 已加载: schema={}, variants={}",
                     seed.schema_version,
                     seed.variants.len()
@@ -234,8 +447,47 @@ fn load_dxvk_variants() -> &'static Vec<DxvkVariantSource> {
                 }
             }
             Err(e) => {
-                warn!("解析 DXVK catalog 失败，回退内置默认值: {}", e);
+                crate::log_warn!("解析 DXVK catalog 失败，回退内置默认值: {}", e);
                 default_dxvk_variants()
+            }
+        }
+    })
+}
+
+static VKD3D_VARIANTS: std::sync::OnceLock<Vec<Vkd3dVariantSource>> = std::sync::OnceLock::new();
+
+fn load_vkd3d_variants() -> &'static Vec<Vkd3dVariantSource> {
+    VKD3D_VARIANTS.get_or_init(|| {
+        match load_vkd3d_variants_from_modules() {
+            Ok(variants) => return variants,
+            Err(e) => {
+                crate::log_warn!("读取模块化 VKD3D 配置失败，回退 catalog: {}", e);
+            }
+        }
+
+        let json = match crate::utils::data_parameters::read_catalog_json("vkd3d_catalog.json") {
+            Ok(content) => content,
+            Err(e) => {
+                crate::log_warn!("读取 VKD3D catalog 失败，回退内置默认值: {}", e);
+                return default_vkd3d_variants();
+            }
+        };
+        match serde_json::from_str::<Vkd3dCatalogSeed>(&json) {
+            Ok(seed) => {
+                crate::log_info!(
+                    "VKD3D catalog 已加载: schema={}, variants={}",
+                    seed.schema_version,
+                    seed.variants.len()
+                );
+                if seed.variants.is_empty() {
+                    default_vkd3d_variants()
+                } else {
+                    seed.variants
+                }
+            }
+            Err(e) => {
+                crate::log_warn!("解析 VKD3D catalog 失败，回退内置默认值: {}", e);
+                default_vkd3d_variants()
             }
         }
     })
@@ -247,6 +499,17 @@ fn find_dxvk_variant(variant: &str) -> Option<DxvkVariantSource> {
         return None;
     }
     load_dxvk_variants()
+        .iter()
+        .find(|item| item.enabled && item.id.eq_ignore_ascii_case(key))
+        .cloned()
+}
+
+fn find_vkd3d_variant(variant: &str) -> Option<Vkd3dVariantSource> {
+    let key = variant.trim();
+    if key.is_empty() {
+        return None;
+    }
+    load_vkd3d_variants()
         .iter()
         .find(|item| item.enabled && item.id.eq_ignore_ascii_case(key))
         .cloned()
@@ -273,6 +536,27 @@ fn set_cached_variant_versions(variant: &str, versions: Vec<DxvkRemoteVersion>) 
         return;
     }
     if let Ok(mut cache) = get_variant_cache().lock() {
+        cache.insert(key, versions);
+    }
+}
+
+fn get_cached_vkd3d_variant_versions(variant: &str) -> Vec<Vkd3dRemoteVersion> {
+    let key = variant_cache_key(variant);
+    if key.is_empty() {
+        return Vec::new();
+    }
+    match get_vkd3d_variant_cache().lock() {
+        Ok(cache) => cache.get(&key).cloned().unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn set_cached_vkd3d_variant_versions(variant: &str, versions: Vec<Vkd3dRemoteVersion>) {
+    let key = variant_cache_key(variant);
+    if key.is_empty() {
+        return;
+    }
+    if let Ok(mut cache) = get_vkd3d_variant_cache().lock() {
         cache.insert(key, versions);
     }
 }
@@ -496,45 +780,78 @@ pub fn detect_installed_dxvk(prefix_path: &Path) -> DxvkInstalledStatus {
     let syswow64 = prefix_path.join("drive_c").join("windows").join("syswow64");
     let dxvk_dlls = ["d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll"];
     let mut found_dlls = Vec::new();
+    let mut dlls_64bit = Vec::new();
+    let mut dlls_32bit = Vec::new();
     let marker_version = read_dxvk_version_marker(prefix_path);
 
     for dll in &dxvk_dlls {
-        let mut matched = false;
-        let candidates = [system32.join(dll), syswow64.join(dll)];
-        for dll_path in &candidates {
-            if !dll_path.exists() {
-                continue;
-            }
-            if looks_like_dxvk_dll(dll_path) {
-                matched = true;
-                break;
-            }
+        let x64_path = system32.join(dll);
+        if x64_path.exists() && looks_like_dxvk_dll(&x64_path) {
+            dlls_64bit.push((*dll).to_string());
         }
-        if matched {
+
+        let x86_path = syswow64.join(dll);
+        if x86_path.exists() && looks_like_dxvk_dll(&x86_path) {
+            dlls_32bit.push((*dll).to_string());
+        }
+
+        if dlls_64bit.iter().any(|v| v == dll) || dlls_32bit.iter().any(|v| v == dll) {
             found_dlls.push(dll.to_string());
         }
     }
 
     // 兼容历史安装：即便 DLL 检测失败，只要存在版本标记也视为已安装
     let installed = !found_dlls.is_empty() || marker_version.is_some();
+    let has_64bit = !dlls_64bit.is_empty();
+    let has_32bit = !dlls_32bit.is_empty();
+    let mut conflict_details = Vec::new();
+    if has_64bit != has_32bit {
+        conflict_details.push(format!(
+            "DXVK 架构不完整：64 位 DLL={}，32 位 DLL={}",
+            dlls_64bit.join(", "),
+            dlls_32bit.join(", ")
+        ));
+    }
+    if has_64bit && has_32bit {
+        let mut only_64: Vec<String> = dlls_64bit
+            .iter()
+            .filter(|dll| !dlls_32bit.contains(*dll))
+            .cloned()
+            .collect();
+        let mut only_32: Vec<String> = dlls_32bit
+            .iter()
+            .filter(|dll| !dlls_64bit.contains(*dll))
+            .cloned()
+            .collect();
+        only_64.sort();
+        only_32.sort();
+        if !only_64.is_empty() || !only_32.is_empty() {
+            conflict_details.push(format!(
+                "DXVK 32/64 位 DLL 不一致：仅 64 位 [{}]，仅 32 位 [{}]",
+                only_64.join(", "),
+                only_32.join(", ")
+            ));
+        }
+    }
+    let arch_conflict = !conflict_details.is_empty();
 
     // 多级版本检测：标记文件 → 二进制搜索 → 文件大小比对
     let version = if installed {
         let v = marker_version.clone();
         if v.is_some() {
-            info!("[DXVK] 版本来源: 标记文件 → {:?}", v);
+            crate::log_info!("[DXVK] 版本来源: 标记文件 → {:?}", v);
             v
         } else {
             let v = extract_dxvk_version_from_dirs(&[system32.clone(), syswow64.clone()]);
             if v.is_some() {
-                info!("[DXVK] 版本来源: DLL 二进制搜索 → {:?}", v);
+                crate::log_info!("[DXVK] 版本来源: DLL 二进制搜索 → {:?}", v);
                 v
             } else {
                 let v = match_dxvk_version_by_size(&[system32, syswow64]);
                 if v.is_some() {
-                    info!("[DXVK] 版本来源: 文件大小比对 → {:?}", v);
+                    crate::log_info!("[DXVK] 版本来源: 文件大小比对 → {:?}", v);
                 } else {
-                    warn!(
+                    crate::log_warn!(
                         "[DXVK] 三层版本检测均失败（标记文件/二进制搜索/大小比对）prefix={}",
                         prefix_path.display()
                     );
@@ -550,6 +867,10 @@ pub fn detect_installed_dxvk(prefix_path: &Path) -> DxvkInstalledStatus {
         installed,
         version,
         dlls_found: found_dlls,
+        has_64bit,
+        has_32bit,
+        arch_conflict,
+        conflict_details,
     }
 }
 
@@ -902,12 +1223,14 @@ pub async fn fetch_dxvk_releases(
             source.display_name.clone()
         };
         if !source.note.trim().is_empty() {
-            info!(
+            crate::log_info!(
                 "DXVK source loaded: {} ({}) - {}",
-                display_name, source.provider, source.note
+                display_name,
+                source.provider,
+                source.note
             );
         } else {
-            info!("DXVK source loaded: {} ({})", display_name, source.provider);
+            crate::log_info!("DXVK source loaded: {} ({})", display_name, source.provider);
         }
 
         let fetch_result = match provider.as_str() {
@@ -929,7 +1252,7 @@ pub async fn fetch_dxvk_releases(
                 all.extend(v);
             }
             Err(e) => {
-                warn!("获取 {} 版本失败: {}，尝试使用缓存", display_name, e);
+                crate::log_warn!("获取 {} 版本失败: {}，尝试使用缓存", display_name, e);
                 let cached = get_cached_variant_versions(&source.id);
                 if !cached.is_empty() {
                     all.extend(cached);
@@ -942,9 +1265,339 @@ pub async fn fetch_dxvk_releases(
     }
 
     if !warnings.is_empty() {
-        warn!("DXVK 版本获取警告: {:?}", warnings);
+        crate::log_warn!("DXVK 版本获取警告: {:?}", warnings);
     }
-    info!("获取到 {} 个 DXVK 远程版本", all.len());
+    crate::log_info!("获取到 {} 个 DXVK 远程版本", all.len());
+    Ok(all)
+}
+
+fn detect_local_vkd3d_variant_version(
+    name: &str,
+    is_dir: bool,
+    variants: &[Vkd3dVariantSource],
+) -> Option<(String, String)> {
+    let mut best_match: Option<(usize, String, String)> = None;
+
+    for source in variants {
+        if !source.enabled || source.id.trim().is_empty() {
+            continue;
+        }
+        let template = source.archive_name_template.trim();
+        if template.is_empty() {
+            continue;
+        }
+
+        let mut candidates: Vec<(String, &str)> = Vec::new();
+        if is_dir {
+            if let Some(version) = extract_version_by_template(name, template) {
+                candidates.push((version, template));
+            }
+            let stripped_template = strip_archive_suffix(template);
+            if stripped_template != template {
+                if let Some(version) = extract_version_by_template(name, stripped_template) {
+                    candidates.push((version, stripped_template));
+                }
+            }
+        } else {
+            if let Some(version) = extract_version_by_template(name, template) {
+                candidates.push((version, template));
+            }
+            let stripped_name = strip_archive_suffix(name);
+            let stripped_template = strip_archive_suffix(template);
+            if let Some(version) = extract_version_by_template(stripped_name, stripped_template) {
+                candidates.push((version, stripped_template));
+            }
+        }
+
+        for (version, matched_template) in candidates {
+            if !version.trim().is_empty() {
+                let specificity = matched_template.replace("{version}", "").len();
+                let should_replace = match best_match.as_ref() {
+                    Some((score, _, _)) => specificity > *score,
+                    None => true,
+                };
+                if should_replace {
+                    best_match = Some((specificity, source.id.clone(), version));
+                }
+            }
+        }
+    }
+
+    if let Some((_, variant, version)) = best_match {
+        return Some((variant, version));
+    }
+
+    let normalized = strip_archive_suffix(name);
+    if let Some(version) = normalized.strip_prefix("vkd3d-proton-") {
+        if !version.trim().is_empty() {
+            return Some(("vkd3d-proton".to_string(), version.to_string()));
+        }
+    }
+    None
+}
+
+/// 扫描本地缓存的 VKD3D 版本（tools/vkd3d/ 目录）
+pub fn scan_local_vkd3d_versions() -> Vec<Vkd3dLocalVersion> {
+    let cache_dir = crate::utils::file_manager::get_tools_dir().join("vkd3d");
+    if !cache_dir.exists() {
+        return Vec::new();
+    }
+
+    let variants = load_vkd3d_variants();
+    let mut by_key: HashMap<(String, String), Vkd3dLocalVersion> = HashMap::new();
+
+    let mut upsert = |variant: String, version: String, extracted: bool, path: PathBuf| match by_key
+        .get_mut(&(variant.clone(), version.clone()))
+    {
+        Some(existing) => {
+            if extracted && !existing.extracted {
+                existing.extracted = true;
+                existing.path = path;
+            }
+        }
+        None => {
+            by_key.insert(
+                (variant.clone(), version.clone()),
+                Vkd3dLocalVersion {
+                    version,
+                    variant,
+                    extracted,
+                    path,
+                },
+            );
+        }
+    };
+
+    if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            let is_dir = path.is_dir();
+            let is_file = path.is_file();
+            if !is_dir && !is_file {
+                continue;
+            }
+
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            if name.trim().is_empty() {
+                continue;
+            }
+
+            if is_file && !is_supported_archive_name(&name) {
+                continue;
+            }
+
+            let Some((variant, version)) =
+                detect_local_vkd3d_variant_version(&name, is_dir, variants)
+            else {
+                continue;
+            };
+
+            let extracted = if is_dir {
+                path.join("x64").exists()
+                    || path.join("x86").exists()
+                    || path.join("x32").exists()
+                    || path.join("i386").exists()
+            } else {
+                false
+            };
+
+            upsert(variant, version, extracted, path);
+        }
+    }
+
+    let mut versions: Vec<Vkd3dLocalVersion> = by_key.into_values().collect();
+    versions.sort_by(|a, b| {
+        b.version
+            .cmp(&a.version)
+            .then_with(|| a.variant.cmp(&b.variant))
+    });
+    versions
+}
+
+fn extract_vkd3d_version_from_asset(name: &str, source: &Vkd3dVariantSource) -> Option<String> {
+    if let Some(v) = extract_version_by_template(name, &source.archive_name_template) {
+        return Some(v);
+    }
+
+    let stem = strip_archive_suffix(name);
+    stem.strip_prefix("vkd3d-proton-").map(|s| s.to_string())
+}
+
+async fn fetch_vkd3d_from_repo(
+    source: &Vkd3dVariantSource,
+    max_count: usize,
+    local_versions: &[Vkd3dLocalVersion],
+    github_token: Option<&str>,
+) -> Result<Vec<Vkd3dRemoteVersion>, String> {
+    let endpoint = source.endpoint.trim();
+    let repo = source.repo.trim();
+    if repo.is_empty() && endpoint.is_empty() {
+        return Err(format!("VKD3D source '{}' 缺少 repo", source.id));
+    }
+
+    let url = if endpoint.is_empty() {
+        format!(
+            "https://api.github.com/repos/{}/releases?per_page={}",
+            repo, max_count
+        )
+    } else {
+        render_source_template(endpoint, "", "", max_count)
+    };
+
+    let client = reqwest::Client::new();
+    let mut req = client
+        .get(&url)
+        .header("User-Agent", "SSMT4/0.1")
+        .header("Accept", "application/vnd.github.v3+json");
+    if let Some(token) = github_token.map(|v| v.trim()).filter(|v| !v.is_empty()) {
+        req = req.bearer_auth(token);
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("请求 {} 失败: {}", repo, e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("{} API 返回 HTTP {}", repo, resp.status()));
+    }
+
+    let releases: Vec<serde_json::Value> = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析 {} 响应失败: {}", repo, e))?;
+
+    let mut result = Vec::new();
+    for release in &releases {
+        let prerelease = release
+            .get("prerelease")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if prerelease && !source.include_prerelease {
+            continue;
+        }
+
+        let tag_name = release
+            .get("tag_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let published_at = release
+            .get("published_at")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        if let Some(assets) = release.get("assets").and_then(|v| v.as_array()) {
+            for asset in assets {
+                let name = asset.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                if !matches_asset_pattern(name, &source.asset_pattern) {
+                    continue;
+                }
+
+                let download_url = asset
+                    .get("browser_download_url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let file_size = asset.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+
+                let version = extract_vkd3d_version_from_asset(name, source)
+                    .unwrap_or_else(|| tag_name.strip_prefix('v').unwrap_or(&tag_name).to_string());
+                let is_local = local_versions
+                    .iter()
+                    .any(|v| v.version == version && v.variant == source.id);
+
+                result.push(Vkd3dRemoteVersion {
+                    version,
+                    variant: source.id.clone(),
+                    tag_name: tag_name.clone(),
+                    download_url,
+                    file_size,
+                    published_at: published_at.clone(),
+                    is_local,
+                });
+                break;
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+pub async fn fetch_vkd3d_releases(
+    max_count: usize,
+    github_token: Option<&str>,
+) -> Result<Vec<Vkd3dRemoteVersion>, String> {
+    let local_versions = scan_local_vkd3d_versions();
+
+    let mut all = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    let variants: Vec<Vkd3dVariantSource> = load_vkd3d_variants()
+        .iter()
+        .filter(|v| v.enabled && !v.id.trim().is_empty())
+        .cloned()
+        .collect();
+
+    for source in variants {
+        let provider = source.provider.trim().to_ascii_lowercase();
+        let display_name = if source.display_name.trim().is_empty() {
+            source.id.clone()
+        } else {
+            source.display_name.clone()
+        };
+        if !source.note.trim().is_empty() {
+            crate::log_info!(
+                "VKD3D source loaded: {} ({}) - {}",
+                display_name,
+                source.provider,
+                source.note
+            );
+        } else {
+            crate::log_info!(
+                "VKD3D source loaded: {} ({})",
+                display_name,
+                source.provider
+            );
+        }
+
+        let fetch_result = match provider.as_str() {
+            "github_releases" => {
+                fetch_vkd3d_from_repo(&source, max_count, &local_versions, github_token).await
+            }
+            other => Err(format!(
+                "VKD3D source '{}' 使用了不支持的 provider: {}",
+                source.id, other
+            )),
+        };
+
+        match fetch_result {
+            Ok(v) => {
+                set_cached_vkd3d_variant_versions(&source.id, v.clone());
+                all.extend(v);
+            }
+            Err(e) => {
+                crate::log_warn!("获取 {} 版本失败: {}，尝试使用缓存", display_name, e);
+                let cached = get_cached_vkd3d_variant_versions(&source.id);
+                if !cached.is_empty() {
+                    all.extend(cached);
+                    warnings.push(format!("{}: {} (使用缓存)", display_name, e));
+                    continue;
+                }
+                warnings.push(format!("{}: {}", display_name, e));
+            }
+        }
+    }
+
+    if !warnings.is_empty() {
+        crate::log_warn!("VKD3D 版本获取警告: {:?}", warnings);
+    }
+    crate::log_info!("获取到 {} 个 VKD3D 远程版本", all.len());
     Ok(all)
 }
 
@@ -960,9 +1613,10 @@ pub fn check_vulkan() -> VulkanInfo {
             let driver = extract_field(&stdout, "driverName");
             let device = extract_field(&stdout, "deviceName");
 
-            info!(
+            crate::log_info!(
                 "Vulkan available: version={:?}, driver={:?}",
-                version, driver
+                version,
+                driver
             );
             VulkanInfo {
                 available: true,
@@ -972,7 +1626,7 @@ pub fn check_vulkan() -> VulkanInfo {
             }
         }
         _ => {
-            warn!("Vulkan not available or vulkaninfo not found");
+            crate::log_warn!("Vulkan not available or vulkaninfo not found");
             VulkanInfo {
                 available: false,
                 version: None,
@@ -1084,9 +1738,11 @@ pub async fn download_dxvk_only(dxvk_version: &str, variant: &str) -> Result<Str
 
     if !archive_path.exists() {
         let url = dxvk_download_url(dxvk_version, variant, &archive_name);
-        info!(
+        crate::log_info!(
             "Downloading DXVK {} ({}) from {}",
-            dxvk_version, variant, url
+            dxvk_version,
+            variant,
+            url
         );
         download_tool(&url, &archive_path).await?;
     }
@@ -1096,7 +1752,7 @@ pub async fn download_dxvk_only(dxvk_version: &str, variant: &str) -> Result<Str
     }
 
     let label = dxvk_variant_display_name(variant);
-    info!(
+    crate::log_info!(
         "{} {} 已缓存到 {}",
         label,
         dxvk_version,
@@ -1120,9 +1776,11 @@ pub async fn install_dxvk(
     // Download if not cached
     if !archive_path.exists() {
         let url = dxvk_download_url(dxvk_version, variant, &archive_name);
-        info!(
+        crate::log_info!(
             "Downloading DXVK {} ({}) from {}",
-            dxvk_version, variant, url
+            dxvk_version,
+            variant,
+            url
         );
         download_tool(&url, &archive_path).await?;
     }
@@ -1186,7 +1844,7 @@ pub async fn install_dxvk(
     write_dxvk_version_marker(prefix_path, dxvk_version);
     let label = dxvk_variant_display_name(variant);
 
-    info!(
+    crate::log_info!(
         "Installed {} {} to {} ({} DLLs copied)",
         label,
         dxvk_version,
@@ -1219,29 +1877,219 @@ pub fn uninstall_dxvk(prefix_path: &Path) -> Result<String, String> {
     // 删除版本标记文件
     remove_dxvk_version_marker(prefix_path);
 
-    info!("Uninstalled DXVK from {}", prefix_path.display());
+    crate::log_info!("Uninstalled DXVK from {}", prefix_path.display());
     Ok("DXVK uninstalled".to_string())
 }
 
-pub async fn install_vkd3d(prefix_path: &Path, vkd3d_version: &str) -> Result<String, String> {
+fn vkd3d_variant_display_name(variant: &str) -> String {
+    if let Some(source) = find_vkd3d_variant(variant) {
+        if !source.display_name.trim().is_empty() {
+            return source.display_name;
+        }
+        if !source.id.trim().is_empty() {
+            return source.id;
+        }
+    }
+    match variant.trim().to_ascii_lowercase().as_str() {
+        "vkd3d" => "VKD3D".to_string(),
+        "vkd3d-proton-ge" => "VKD3D-Proton GE".to_string(),
+        _ => "VKD3D-Proton".to_string(),
+    }
+}
+
+fn vkd3d_names(version: &str, variant: &str) -> (String, String) {
+    let archive_name = find_vkd3d_variant(variant)
+        .map(|source| {
+            let template = source.archive_name_template.trim();
+            if template.is_empty() {
+                String::new()
+            } else {
+                render_source_template(template, version, "", 0)
+            }
+        })
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| format!("vkd3d-proton-{}.tar.zst", version));
+
+    let extract_dir_name = archive_name
+        .strip_suffix(".tar.gz")
+        .or_else(|| archive_name.strip_suffix(".tar.xz"))
+        .or_else(|| archive_name.strip_suffix(".tar.zst"))
+        .or_else(|| archive_name.strip_suffix(".zip"))
+        .unwrap_or(&archive_name)
+        .to_string();
+
+    (archive_name, extract_dir_name)
+}
+
+fn vkd3d_download_url(version: &str, variant: &str, archive_name: &str) -> String {
+    if let Some(source) = find_vkd3d_variant(variant) {
+        let template = source.download_url_template.trim();
+        if !template.is_empty() {
+            return render_source_template(template, version, archive_name, 0);
+        }
+
+        if source.provider.eq_ignore_ascii_case("github_releases") && !source.repo.trim().is_empty()
+        {
+            return format!(
+                "https://github.com/{}/releases/download/v{}/{}",
+                source.repo.trim(),
+                version,
+                archive_name
+            );
+        }
+    }
+
+    format!(
+        "https://github.com/HansKristian-Work/vkd3d-proton/releases/download/v{}/{}",
+        version, archive_name
+    )
+}
+
+fn vkd3d_version_marker_path(prefix_path: &Path) -> PathBuf {
+    prefix_path.join(".vkd3d-version")
+}
+
+fn vkd3d_variant_marker_path(prefix_path: &Path) -> PathBuf {
+    prefix_path.join(".vkd3d-variant")
+}
+
+fn read_vkd3d_version_marker(prefix_path: &Path) -> Option<String> {
+    std::fs::read_to_string(vkd3d_version_marker_path(prefix_path))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn read_vkd3d_variant_marker(prefix_path: &Path) -> Option<String> {
+    std::fs::read_to_string(vkd3d_variant_marker_path(prefix_path))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn write_vkd3d_markers(prefix_path: &Path, version: &str, variant: &str) {
+    let _ = std::fs::write(vkd3d_version_marker_path(prefix_path), version);
+    let _ = std::fs::write(vkd3d_variant_marker_path(prefix_path), variant);
+}
+
+fn remove_vkd3d_markers(prefix_path: &Path) {
+    let _ = std::fs::remove_file(vkd3d_version_marker_path(prefix_path));
+    let _ = std::fs::remove_file(vkd3d_variant_marker_path(prefix_path));
+}
+
+async fn extract_vkd3d_archive(archive_path: &Path, cache_dir: &Path) -> Result<(), String> {
+    let archive_name = archive_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    if archive_name.ends_with(".tar.zst") {
+        return extract_tar_zst(archive_path, cache_dir).await;
+    }
+    if archive_name.ends_with(".tar.gz") {
+        return extract_tar_gz(archive_path, cache_dir);
+    }
+    if archive_name.ends_with(".tar.xz") {
+        let status = tokio::process::Command::new("tar")
+            .arg("-xf")
+            .arg(archive_path)
+            .arg("-C")
+            .arg(cache_dir)
+            .status()
+            .await
+            .map_err(|e| format!("Failed to run tar for xz extraction: {}", e))?;
+        if status.success() {
+            return Ok(());
+        }
+        return Err(format!(
+            "Failed to extract xz archive {} with tar",
+            archive_path.display()
+        ));
+    }
+    if archive_name.ends_with(".zip") {
+        let status = tokio::process::Command::new("unzip")
+            .arg("-o")
+            .arg(archive_path)
+            .arg("-d")
+            .arg(cache_dir)
+            .status()
+            .await
+            .map_err(|e| format!("Failed to run unzip: {}", e))?;
+        if status.success() {
+            return Ok(());
+        }
+        return Err(format!(
+            "Failed to extract zip archive {} with unzip",
+            archive_path.display()
+        ));
+    }
+
+    Err(format!(
+        "Unsupported VKD3D archive format: {}",
+        archive_path.display()
+    ))
+}
+
+/// 仅下载并解压 VKD3D 到本地缓存（不安装到任何 Prefix）
+pub async fn download_vkd3d_only(vkd3d_version: &str, variant: &str) -> Result<String, String> {
     let cache_dir = crate::utils::file_manager::get_tools_dir().join("vkd3d");
     crate::utils::file_manager::ensure_dir(&cache_dir)?;
 
-    let archive_name = format!("vkd3d-proton-{}.tar.zst", vkd3d_version);
+    let (archive_name, extract_dir_name) = vkd3d_names(vkd3d_version, variant);
     let archive_path = cache_dir.join(&archive_name);
-    let extract_dir = cache_dir.join(format!("vkd3d-proton-{}", vkd3d_version));
+    let extract_dir = cache_dir.join(&extract_dir_name);
 
     if !archive_path.exists() {
-        let url = format!(
-            "https://github.com/HansKristian-Work/vkd3d-proton/releases/download/v{}/{}",
-            vkd3d_version, archive_name
+        let url = vkd3d_download_url(vkd3d_version, variant, &archive_name);
+        crate::log_info!(
+            "Downloading VKD3D {} ({}) from {}",
+            vkd3d_version,
+            variant,
+            url
         );
-        info!("Downloading VKD3D-Proton {} from {}", vkd3d_version, url);
         download_tool(&url, &archive_path).await?;
     }
 
     if !extract_dir.exists() {
-        extract_tar_zst(&archive_path, &cache_dir).await?;
+        extract_vkd3d_archive(&archive_path, &cache_dir).await?;
+    }
+
+    let label = vkd3d_variant_display_name(variant);
+    crate::log_info!(
+        "{} {} 已缓存到 {}",
+        label,
+        vkd3d_version,
+        extract_dir.display()
+    );
+    Ok(format!("{} {} 下载完成", label, vkd3d_version))
+}
+
+pub async fn install_vkd3d(
+    prefix_path: &Path,
+    vkd3d_version: &str,
+    variant: &str,
+) -> Result<String, String> {
+    let cache_dir = crate::utils::file_manager::get_tools_dir().join("vkd3d");
+    crate::utils::file_manager::ensure_dir(&cache_dir)?;
+
+    let (archive_name, extract_dir_name) = vkd3d_names(vkd3d_version, variant);
+    let archive_path = cache_dir.join(&archive_name);
+    let extract_dir = cache_dir.join(&extract_dir_name);
+
+    if !archive_path.exists() {
+        let url = vkd3d_download_url(vkd3d_version, variant, &archive_name);
+        crate::log_info!(
+            "Downloading VKD3D {} ({}) from {}",
+            vkd3d_version,
+            variant,
+            url
+        );
+        download_tool(&url, &archive_path).await?;
+    }
+
+    if !extract_dir.exists() {
+        extract_vkd3d_archive(&archive_path, &cache_dir).await?;
     }
 
     let system32 = prefix_path.join("drive_c").join("windows").join("system32");
@@ -1270,7 +2118,7 @@ pub async fn install_vkd3d(prefix_path: &Path, vkd3d_version: &str) -> Result<St
     if let Some(x86_dir) = x86_dir {
         copied += copy_vkd3d_dlls(&x86_dir, &syswow64)?;
     } else {
-        warn!("VKD3D archive has no x86/x32 directory, only 64-bit DLLs were installed");
+        crate::log_warn!("VKD3D archive has no x86/x32 directory, only 64-bit DLLs were installed");
     }
 
     if copied == 0 {
@@ -1280,13 +2128,115 @@ pub async fn install_vkd3d(prefix_path: &Path, vkd3d_version: &str) -> Result<St
         ));
     }
 
-    info!(
-        "Installed VKD3D-Proton {} to {} ({} DLLs copied)",
+    write_vkd3d_markers(prefix_path, vkd3d_version, variant);
+    let label = vkd3d_variant_display_name(variant);
+
+    crate::log_info!(
+        "Installed {} {} to {} ({} DLLs copied)",
+        label,
         vkd3d_version,
         prefix_path.display(),
         copied
     );
-    Ok(format!("VKD3D-Proton {} installed", vkd3d_version))
+    Ok(format!(
+        "{} {} 安装完成（{} 个 DLL）",
+        label, vkd3d_version, copied
+    ))
+}
+
+pub fn uninstall_vkd3d(prefix_path: &Path) -> Result<String, String> {
+    let system32 = prefix_path.join("drive_c").join("windows").join("system32");
+    let syswow64 = prefix_path.join("drive_c").join("windows").join("syswow64");
+    let dlls = ["d3d12.dll", "d3d12core.dll", "dxil.dll"];
+
+    for dll in &dlls {
+        let path = system32.join(dll);
+        if path.exists() {
+            std::fs::remove_file(&path).ok();
+        }
+        let path = syswow64.join(dll);
+        if path.exists() {
+            std::fs::remove_file(&path).ok();
+        }
+    }
+
+    remove_vkd3d_markers(prefix_path);
+    crate::log_info!("Uninstalled VKD3D from {}", prefix_path.display());
+    Ok("VKD3D uninstalled".to_string())
+}
+
+pub fn detect_installed_vkd3d(prefix_path: &Path) -> Vkd3dInstalledStatus {
+    let system32 = prefix_path.join("drive_c").join("windows").join("system32");
+    let syswow64 = prefix_path.join("drive_c").join("windows").join("syswow64");
+    let vkd3d_dlls = ["d3d12.dll", "d3d12core.dll", "dxil.dll"];
+
+    let mut dlls_64bit = Vec::new();
+    let mut dlls_32bit = Vec::new();
+
+    for dll in &vkd3d_dlls {
+        if system32.join(dll).exists() {
+            dlls_64bit.push((*dll).to_string());
+        }
+        if syswow64.join(dll).exists() {
+            dlls_32bit.push((*dll).to_string());
+        }
+    }
+
+    let mut all = dlls_64bit.clone();
+    for dll in &dlls_32bit {
+        if !all.contains(dll) {
+            all.push(dll.clone());
+        }
+    }
+    all.sort();
+
+    let version = read_vkd3d_version_marker(prefix_path);
+    let variant = read_vkd3d_variant_marker(prefix_path);
+    let installed = !all.is_empty() || version.is_some() || variant.is_some();
+
+    let has_64bit = !dlls_64bit.is_empty();
+    let has_32bit = !dlls_32bit.is_empty();
+    let mut conflict_details = Vec::new();
+    if has_64bit != has_32bit {
+        conflict_details.push(format!(
+            "VKD3D 架构不完整：64 位 DLL={}，32 位 DLL={}",
+            dlls_64bit.join(", "),
+            dlls_32bit.join(", ")
+        ));
+    } else if has_64bit && has_32bit {
+        let mut only_64: Vec<String> = dlls_64bit
+            .iter()
+            .filter(|dll| !dlls_32bit.contains(*dll))
+            .cloned()
+            .collect();
+        let mut only_32: Vec<String> = dlls_32bit
+            .iter()
+            .filter(|dll| !dlls_64bit.contains(*dll))
+            .cloned()
+            .collect();
+        only_64.sort();
+        only_32.sort();
+        if !only_64.is_empty() || !only_32.is_empty() {
+            conflict_details.push(format!(
+                "VKD3D 32/64 位 DLL 不一致：仅 64 位 [{}]，仅 32 位 [{}]",
+                only_64.join(", "),
+                only_32.join(", ")
+            ));
+        }
+    }
+
+    Vkd3dInstalledStatus {
+        installed,
+        version,
+        variant,
+        dlls_found: all,
+        dlls_64bit,
+        dlls_32bit,
+        has_64bit,
+        has_32bit,
+        arch_conflict: !conflict_details.is_empty(),
+        conflict_details,
+    }
 }
 
 fn find_arch_dir(root: &Path, names: &[&str]) -> Option<PathBuf> {
@@ -1396,9 +2346,10 @@ async fn download_tool(url: &str, dest: &Path) -> Result<(), String> {
         ));
     }
 
-    // 归档格式魔数校验（tar.gz/tar.xz/zip）
+    // 归档格式魔数校验（tar.gz/tar.xz/tar.zst/zip）
     let valid_archive = (header_filled >= 2 && header_buf[..2] == [0x1F, 0x8B])        // gzip
         || (header_filled >= 6 && header_buf[..6] == [0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00]) // xz
+        || (header_filled >= 4 && header_buf[..4] == [0x28, 0xB5, 0x2F, 0xFD]) // zstd
         || (header_filled >= 4 && header_buf[..4] == [0x50, 0x4B, 0x03, 0x04]); // zip
     if !valid_archive {
         tokio::fs::remove_file(dest).await.ok();

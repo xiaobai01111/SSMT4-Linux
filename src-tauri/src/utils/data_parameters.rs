@@ -170,7 +170,7 @@ pub fn sync_managed_repo() -> Result<(), String> {
     let git_dir = repo_dir.join(".git");
     if git_dir.exists() {
         if let Err(e) = pull_repo(&repo_dir) {
-            tracing::warn!("Data-parameters pull 失败，尝试修复工作区: {}", e);
+            crate::log_warn!("Data-parameters pull 失败，尝试修复工作区: {}", e);
         }
 
         if validate_repo_files(&repo_dir).is_ok() {
@@ -178,20 +178,20 @@ pub fn sync_managed_repo() -> Result<(), String> {
         }
 
         if let Err(e) = restore_worktree(&repo_dir) {
-            tracing::warn!("修复 Data-parameters 工作区失败: {}", e);
+            crate::log_warn!("修复 Data-parameters 工作区失败: {}", e);
         }
         if validate_repo_files(&repo_dir).is_ok() {
             return Ok(());
         }
 
-        tracing::warn!("Data-parameters 仓库仍不完整，准备重新克隆");
+        crate::log_warn!("Data-parameters 仓库仍不完整，准备重新克隆");
         backup_broken_repo(&repo_dir)?;
         clone_repo(&repo_dir)?;
         return validate_repo_files(&repo_dir);
     }
 
     if repo_dir.exists() {
-        tracing::warn!(
+        crate::log_warn!(
             "Data-parameters 路径已存在但不是 git 仓库，尝试重建: {}",
             repo_dir.display()
         );

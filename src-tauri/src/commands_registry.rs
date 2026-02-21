@@ -46,6 +46,15 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         // Game launcher (pressure-vessel + Wine/Proton)
         commands::game_launcher::start_game,
         commands::game_launcher::launch_game,
+        // Gamepad
+        commands::gamepad::list_gamepads,
+        commands::gamepad::get_gamepad_selection,
+        commands::gamepad::set_gamepad_selection,
+        commands::gamepad::get_gamepad_diagnostics,
+        commands::gamepad::check_gamepad_prefix_overrides,
+        commands::gamepad::repair_gamepad_prefix_overrides,
+        commands::gamepad::start_gamepad_monitor,
+        commands::gamepad::stop_gamepad_monitor,
         // Wine manager
         commands::wine_manager::scan_wine_versions,
         commands::wine_manager::get_game_wine_config,
@@ -56,6 +65,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         commands::wine_manager::install_dxvk,
         commands::wine_manager::uninstall_dxvk,
         commands::wine_manager::install_vkd3d,
+        commands::wine_manager::uninstall_vkd3d,
         commands::wine_manager::check_vulkan,
         commands::wine_manager::install_runtime,
         commands::wine_manager::list_available_runtimes,
@@ -77,6 +87,11 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         commands::wine_manager::detect_dxvk_status,
         commands::wine_manager::fetch_dxvk_versions,
         commands::wine_manager::download_dxvk,
+        // VKD3D 版本管理
+        commands::wine_manager::scan_local_vkd3d,
+        commands::wine_manager::detect_vkd3d_status,
+        commands::wine_manager::fetch_vkd3d_versions,
+        commands::wine_manager::download_vkd3d,
         // 遥测防护
         commands::telemetry::check_telemetry_status,
         commands::telemetry::check_game_protection_status,

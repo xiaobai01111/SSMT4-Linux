@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tracing::{info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -151,7 +150,7 @@ fn default_true() -> bool {
 static PRESETS: once_cell::sync::Lazy<HashMap<String, GamePreset>> =
     once_cell::sync::Lazy::new(|| {
         let map = load_presets_from_db();
-        info!("游戏预设注册表已加载(数据库): {} 个预设", map.len());
+        crate::log_info!("游戏预设注册表已加载(数据库): {} 个预设", map.len());
         map
     });
 
@@ -310,13 +309,13 @@ fn load_presets_from_db() -> HashMap<String, GamePreset> {
                 map.insert(normalized.id.clone(), normalized);
             }
             Err(e) => {
-                warn!("解析数据库预设失败: {}", e);
+                crate::log_warn!("解析数据库预设失败: {}", e);
             }
         }
     }
 
     if map.is_empty() {
-        warn!("数据库中未找到任何游戏预设，请检查 game_presets 表数据");
+        crate::log_warn!("数据库中未找到任何游戏预设，请检查 game_presets 表数据");
     }
 
     map

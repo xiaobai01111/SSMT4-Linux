@@ -150,7 +150,6 @@ export interface GameKeyMigrationResult {
 
 export type ProtonVariant =
   | 'official'
-  | 'experimental'
   | 'geproton'
   | 'dwproton'
   | 'protontkg'
@@ -178,7 +177,26 @@ export interface ProtonSettings {
   proton_media_use_gst: boolean;
   proton_enable_wayland: boolean;
   proton_no_d3d12: boolean;
+  dxvk_enabled: boolean;
+  vkd3d_enabled: boolean;
+  /** VKD3D 变体（builtin / disabled / vkd3d / vkd3d-proton / vkd3d-proton-ge） */
+  vkd3d_variant: string;
+  /** VKD3D 版本（空字符串表示未指定） */
+  vkd3d_version: string;
   mangohud: boolean;
+  fsr_enabled: boolean;
+  fsr_strength: number;
+  dlss_compat_enabled: boolean;
+  /** VSync 模式：auto / on / off */
+  vsync_mode: string;
+  esync_enabled: boolean;
+  fsync_enabled: boolean;
+  /** 分辨率缩放百分比（50-100） */
+  resolution_scale_percent: number;
+  gamemode_enabled: boolean;
+  auto_performance_mode: boolean;
+  cpu_limit_enabled: boolean;
+  cpu_limit_percent: number;
   steam_deck_compat: boolean;
   steamos_compat: boolean;
   sandbox_enabled: boolean;
@@ -191,6 +209,8 @@ export interface ProtonSettings {
   dxvk_frame_rate: number;
   /** 禁用 GPU 自动过滤（DXVK_FILTER_DEVICE_NAME） */
   disable_gpu_filter: boolean;
+  /** 手柄兼容模式：off / auto / steam_input / background_input */
+  gamepad_compat_mode: string;
   custom_env: Record<string, string>;
 }
 
@@ -249,6 +269,40 @@ export interface DxvkInstalledStatus {
   installed: boolean;
   version: string | null;
   dlls_found: string[];
+  has_64bit: boolean;
+  has_32bit: boolean;
+  arch_conflict: boolean;
+  conflict_details: string[];
+}
+
+export interface Vkd3dLocalVersion {
+  version: string;
+  variant: string;
+  extracted: boolean;
+  path: string;
+}
+
+export interface Vkd3dRemoteVersion {
+  version: string;
+  variant: string;
+  tag_name: string;
+  download_url: string;
+  file_size: number;
+  published_at: string;
+  is_local: boolean;
+}
+
+export interface Vkd3dInstalledStatus {
+  installed: boolean;
+  version: string | null;
+  variant: string | null;
+  dlls_found: string[];
+  dlls_64bit: string[];
+  dlls_32bit: string[];
+  has_64bit: boolean;
+  has_32bit: boolean;
+  arch_conflict: boolean;
+  conflict_details: string[];
 }
 
 export interface RemoteWineVersion {
@@ -367,6 +421,61 @@ export interface DisplayInfo {
   ime_configured: boolean;
   gamepad_detected: boolean;
   gpus: GpuDevice[];
+}
+
+export interface GamepadInfo {
+  runtimeId: string;
+  stableId: string;
+  name: string;
+  vendorId: number | null;
+  productId: number | null;
+  isConnected: boolean;
+  power: string;
+  mappingSource: string;
+  buttonCount: number;
+  axisCount: number;
+  xinputLike: boolean;
+  isDefault: boolean;
+  playerIndex: number | null;
+}
+
+export interface GamepadSelection {
+  defaultStableId: string | null;
+  defaultPlayerIndex: number | null;
+}
+
+export interface GamepadMonitorEvent {
+  eventType: string;
+  runtimeId: string;
+  stableId: string;
+  name: string;
+  connected: boolean;
+  button: string | null;
+  axis: string | null;
+  value: number | null;
+  timestamp: string;
+}
+
+export interface GamepadDiagnostics {
+  distro: string | null;
+  kernel: string | null;
+  sessionType: string | null;
+  desktop: string | null;
+  waylandDisplay: string | null;
+  x11Display: string | null;
+  gamepads: GamepadInfo[];
+  selection: GamepadSelection;
+  notes: string[];
+}
+
+export interface GamepadPrefixOverrideStatus {
+  gameId: string;
+  prefixPath: string;
+  userRegExists: boolean;
+  xinputOverrides: string[];
+  dinputOverrides: string[];
+  hidOverrides: string[];
+  riskyOverrides: string[];
 }
 
 // ============================================================
@@ -696,8 +805,28 @@ export async function downloadDxvk(version: string, variant: string): Promise<st
   return invoke<string>('download_dxvk', { version, variant });
 }
 
-export async function installVkd3d(gameId: string, version: string): Promise<string> {
-  return invoke<string>('install_vkd3d', { gameId, version });
+export async function scanLocalVkd3d(): Promise<Vkd3dLocalVersion[]> {
+  return invoke<Vkd3dLocalVersion[]>('scan_local_vkd3d');
+}
+
+export async function detectVkd3dStatus(gameId: string): Promise<Vkd3dInstalledStatus> {
+  return invoke<Vkd3dInstalledStatus>('detect_vkd3d_status', { gameId });
+}
+
+export async function fetchVkd3dVersions(): Promise<Vkd3dRemoteVersion[]> {
+  return invoke<Vkd3dRemoteVersion[]>('fetch_vkd3d_versions');
+}
+
+export async function downloadVkd3d(version: string, variant: string): Promise<string> {
+  return invoke<string>('download_vkd3d', { version, variant });
+}
+
+export async function installVkd3d(gameId: string, version: string, variant: string): Promise<string> {
+  return invoke<string>('install_vkd3d', { gameId, version, variant });
+}
+
+export async function uninstallVkd3d(gameId: string): Promise<string> {
+  return invoke<string>('uninstall_vkd3d', { gameId });
 }
 
 export async function checkVulkan(): Promise<VulkanInfo> {
@@ -718,6 +847,44 @@ export async function getInstalledRuntimes(gameId: string): Promise<string[]> {
 
 export async function getDisplayInfo(): Promise<DisplayInfo> {
   return invoke<DisplayInfo>('get_display_info');
+}
+
+export async function listGamepads(): Promise<GamepadInfo[]> {
+  return invoke<GamepadInfo[]>('list_gamepads');
+}
+
+export async function getGamepadSelection(): Promise<GamepadSelection> {
+  return invoke<GamepadSelection>('get_gamepad_selection');
+}
+
+export async function setGamepadSelection(
+  defaultStableId?: string | null,
+  defaultPlayerIndex?: number | null,
+): Promise<void> {
+  return invoke('set_gamepad_selection', {
+    defaultStableId: defaultStableId ?? null,
+    defaultPlayerIndex: defaultPlayerIndex ?? null,
+  });
+}
+
+export async function getGamepadDiagnostics(): Promise<GamepadDiagnostics> {
+  return invoke<GamepadDiagnostics>('get_gamepad_diagnostics');
+}
+
+export async function checkGamepadPrefixOverrides(gameId: string): Promise<GamepadPrefixOverrideStatus> {
+  return invoke<GamepadPrefixOverrideStatus>('check_gamepad_prefix_overrides', { gameId });
+}
+
+export async function repairGamepadPrefixOverrides(gameId: string): Promise<GamepadPrefixOverrideStatus> {
+  return invoke<GamepadPrefixOverrideStatus>('repair_gamepad_prefix_overrides', { gameId });
+}
+
+export async function startGamepadMonitor(): Promise<void> {
+  return invoke('start_gamepad_monitor');
+}
+
+export async function stopGamepadMonitor(): Promise<void> {
+  return invoke('stop_gamepad_monitor');
 }
 
 export async function getRecentLogs(lines?: number): Promise<string[]> {

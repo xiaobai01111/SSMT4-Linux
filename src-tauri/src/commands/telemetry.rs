@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use tracing::{error, info, warn};
+use tracing::instrument;
 
 use crate::configs::database as db;
 use crate::configs::game_presets;
@@ -120,6 +120,20 @@ fn normalize_game_root(game_preset: &str, game_path: Option<&str>) -> Option<Pat
         if let Some(inferred) = infer_game_root_with_default_folder(&candidate, default_folder) {
             candidate = inferred;
         }
+    }
+
+    // 兼容旧错误路径：.../<Game>/<Game>，收敛为上级目录。
+    while let (Some(name), Some(parent)) = (
+        candidate.file_name().and_then(|n| n.to_str()),
+        candidate.parent(),
+    ) {
+        let Some(parent_name) = parent.file_name().and_then(|n| n.to_str()) else {
+            break;
+        };
+        if !name.eq_ignore_ascii_case(parent_name) {
+            break;
+        }
+        candidate = parent.to_path_buf();
     }
 
     Some(candidate)
@@ -497,7 +511,7 @@ fn set_channel_mode_internal(
             db::set_setting(&backup_key, &current.to_string());
         }
         write_channel_value(&config_path, channel_key, target)?;
-        info!(
+        crate::log_info!(event: "channel.mode_applied",
             "[防护] {} {}: {} -> {} ({}, mode={})",
             game_preset,
             channel_key,
@@ -507,7 +521,7 @@ fn set_channel_mode_internal(
             mode
         );
     } else {
-        info!(
+        crate::log_info!(event: "channel.mode_already_target",
             "[防护] {} {} 已是目标值 {} ({}, mode={})",
             game_preset,
             channel_key,
@@ -523,6 +537,12 @@ fn set_channel_mode_internal(
 }
 
 #[tauri::command]
+#[instrument(
+    level = "info",
+    skip_all,
+    fields(cmd = "get_channel_protection_status"),
+    err
+)]
 pub fn get_channel_protection_status(
     game_preset: String,
     game_path: Option<String>,
@@ -539,6 +559,12 @@ pub fn get_channel_protection_status(
 }
 
 #[tauri::command]
+#[instrument(
+    level = "info",
+    skip_all,
+    fields(cmd = "set_channel_protection_mode"),
+    err
+)]
 pub fn set_channel_protection_mode(
     game_preset: String,
     mode: String,
@@ -556,6 +582,12 @@ pub fn set_channel_protection_mode(
     }))
 }
 
+#[instrument(
+    level = "info",
+    skip_all,
+    fields(cmd = "check_game_protection_status_internal"),
+    err
+)]
 pub fn check_game_protection_status_internal(
     game_preset: &str,
     game_path: Option<&str>,
@@ -652,6 +684,12 @@ pub fn check_game_protection_status_internal(
 }
 
 #[tauri::command]
+#[instrument(
+    level = "info",
+    skip_all,
+    fields(cmd = "check_game_protection_status"),
+    err
+)]
 pub fn check_game_protection_status(
     game_preset: String,
     game_path: Option<String>,
@@ -661,6 +699,7 @@ pub fn check_game_protection_status(
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "check_telemetry_status"), err)]
 pub fn check_telemetry_status(
     game_preset: String,
     game_path: Option<String>,
@@ -689,6 +728,7 @@ pub fn check_telemetry_status(
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "disable_telemetry"), err)]
 pub async fn disable_telemetry(
     game_preset: String,
     game_path: Option<String>,
@@ -744,7 +784,11 @@ pub async fn disable_telemetry(
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                error!("[遥测] 写入 /etc/hosts 失败: {}", stderr);
+                crate::utils::trace_event::error(
+                    "telemetry",
+                    "hosts_write_failed",
+                    format!("[遥测] 写入 /etc/hosts 失败: {}", stderr),
+                );
                 return Err(format!(
                     "写入 /etc/hosts 失败（需要管理员权限）: {}",
                     stderr
@@ -783,6 +827,7 @@ pub async fn disable_telemetry(
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "restore_telemetry"), err)]
 pub async fn restore_telemetry(
     game_preset: String,
     game_path: Option<String>,
@@ -865,7 +910,11 @@ pub async fn restore_telemetry(
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let _ = std::fs::remove_file(tmp_path);
-                error!("[遥测] 恢复 /etc/hosts 失败: {}", stderr);
+                crate::utils::trace_event::error(
+                    "telemetry",
+                    "hosts_restore_failed",
+                    format!("[遥测] 恢复 /etc/hosts 失败: {}", stderr),
+                );
                 return Err(format!(
                     "恢复 /etc/hosts 失败（需要管理员权限）: {}",
                     stderr
@@ -903,6 +952,7 @@ pub async fn restore_telemetry(
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "remove_telemetry_files"), err)]
 pub fn remove_telemetry_files(
     game_preset: String,
     game_path: String,
@@ -916,20 +966,38 @@ pub fn remove_telemetry_files(
         }));
     }
 
-    let game_dir = PathBuf::from(&game_path);
+    let game_root = resolve_game_root(&game_preset, Some(&game_path)).ok_or_else(|| {
+        format!(
+            "无法识别游戏目录: {}。请传入游戏根目录或游戏可执行文件路径",
+            game_path
+        )
+    })?;
+    if !game_root.exists() {
+        return Err(format!("游戏目录不存在: {}", game_root.display()));
+    }
+    if !game_root.is_dir() {
+        return Err(format!("游戏目录无效（不是目录）: {}", game_root.display()));
+    }
+
     let mut removed: Vec<String> = Vec::new();
     let mut not_found: Vec<String> = Vec::new();
+    let mut failed: Vec<serde_json::Value> = Vec::new();
 
     for dll_path in &dlls {
-        let full_path = game_dir.join(dll_path);
+        let full_path = game_root.join(dll_path);
         if full_path.exists() {
             match std::fs::remove_file(&full_path) {
                 Ok(_) => {
-                    info!("[遥测] 已删除: {}", full_path.display());
+                    crate::log_info!(event: "telemetry.file_removed", "[遥测] 已删除: {}", full_path.display());
                     removed.push(dll_path.to_string());
                 }
                 Err(e) => {
-                    warn!("[遥测] 删除失败 {}: {}", full_path.display(), e);
+                    crate::log_warn!(event: "telemetry.file_remove_failed", "[遥测] 删除失败 {}: {}", full_path.display(), e);
+                    failed.push(serde_json::json!({
+                        "relativePath": dll_path,
+                        "fullPath": full_path.to_string_lossy().to_string(),
+                        "error": e.to_string(),
+                    }));
                 }
             }
         } else {
@@ -939,12 +1007,19 @@ pub fn remove_telemetry_files(
 
     Ok(serde_json::json!({
         "supported": true,
+        "gameRoot": game_root.to_string_lossy().to_string(),
+        "totalFiles": dlls.len(),
+        "removedCount": removed.len(),
+        "notFoundCount": not_found.len(),
+        "failedCount": failed.len(),
         "removed": removed,
-        "notFound": not_found
+        "notFound": not_found,
+        "failed": failed,
     }))
 }
 
 #[tauri::command]
+#[instrument(level = "info", skip_all, fields(cmd = "apply_game_protection"), err)]
 pub async fn apply_game_protection(
     game_preset: String,
     game_path: String,
@@ -957,7 +1032,8 @@ pub async fn apply_game_protection(
     let telemetry_result = disable_telemetry(game_preset.clone(), Some(game_path.clone())).await?;
     results.insert("telemetry".to_string(), telemetry_result);
 
-    let dll_result = remove_telemetry_files(game_preset.clone(), game_path)?;
+    let dll_result =
+        remove_telemetry_files(game_preset.clone(), game_root.to_string_lossy().to_string())?;
     results.insert("telemetryFiles".to_string(), dll_result);
 
     if let Some(channel_cfg) = get_channel_protection_config(&game_preset) {
@@ -975,7 +1051,7 @@ pub async fn apply_game_protection(
         );
     }
 
-    info!("[防护] 游戏 {} 安全防护已应用", game_preset);
+    crate::log_info!(event: "protection.applied", "[防护] 游戏 {} 安全防护已应用", game_preset);
 
     Ok(serde_json::json!({
         "success": true,
@@ -985,6 +1061,12 @@ pub async fn apply_game_protection(
 }
 
 #[tauri::command]
+#[instrument(
+    level = "info",
+    skip_all,
+    fields(cmd = "get_game_protection_info"),
+    err
+)]
 pub fn get_game_protection_info(game_preset: String) -> Result<serde_json::Value, String> {
     let game_preset = canonical_preset(&game_preset);
     let servers = get_telemetry_servers(&game_preset);
@@ -1125,5 +1207,17 @@ mod tests {
         let candidate = PathBuf::from("/home/user/Games/StarRail");
         let inferred = infer_game_root_with_default_folder(&candidate, "Wuthering Waves Game");
         assert_eq!(inferred, None);
+    }
+
+    #[test]
+    fn normalize_game_root_collapses_duplicate_tail_segment() {
+        let normalized = normalize_game_root(
+            "HonkaiStarRail",
+            Some("/home/user/Games/HonkaiStarRail/HonkaiStarRail"),
+        );
+        assert_eq!(
+            normalized,
+            Some(PathBuf::from("/home/user/Games/HonkaiStarRail"))
+        );
     }
 }

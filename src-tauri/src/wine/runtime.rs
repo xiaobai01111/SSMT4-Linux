@@ -1,5 +1,4 @@
 use std::path::Path;
-use tracing::{info, warn};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RuntimeComponent {
@@ -135,7 +134,7 @@ pub async fn install_runtime(
         return Err("winetricks is not installed. Please install winetricks first (e.g. 'sudo apt install winetricks' or 'sudo pacman -S winetricks').".to_string());
     }
 
-    info!(
+    crate::log_info!(
         "Installing runtime component '{}' to prefix {}",
         component,
         prefix_path.display()
@@ -154,10 +153,10 @@ pub async fn install_runtime(
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     if output.status.success() {
-        info!("Successfully installed {}", component);
+        crate::log_info!("Successfully installed {}", component);
         Ok(format!("Installed {}", component))
     } else {
-        warn!("winetricks failed for {}: {}", component, stderr);
+        crate::log_warn!("winetricks failed for {}: {}", component, stderr);
         Err(format!(
             "Failed to install {}: {}{}",
             component, stdout, stderr

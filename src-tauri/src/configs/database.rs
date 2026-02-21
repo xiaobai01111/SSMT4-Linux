@@ -12,7 +12,7 @@ static DB: once_cell::sync::Lazy<Mutex<Connection>> = once_cell::sync::Lazy::new
     let conn = Connection::open(&db_path)
         .unwrap_or_else(|e| panic!("无法打开数据库 {}: {}", db_path.display(), e));
     init_tables(&conn);
-    tracing::info!("SQLite 数据库已打开: {}", db_path.display());
+    crate::log_info!("SQLite 数据库已打开: {}", db_path.display());
     Mutex::new(conn)
 });
 
@@ -314,7 +314,7 @@ fn load_proton_catalog_seed() -> Result<ProtonCatalogSeed, String> {
 
         match modular_result {
             Ok(seed) => {
-                tracing::info!(
+                crate::log_info!(
                     "已加载模块化 Proton 配置: families={}, sources={}",
                     seed.families.len(),
                     seed.sources.len()
@@ -322,7 +322,7 @@ fn load_proton_catalog_seed() -> Result<ProtonCatalogSeed, String> {
                 return Ok(seed);
             }
             Err(e) => {
-                tracing::warn!("读取模块化 Proton 配置失败，回退 catalog: {}", e);
+                crate::log_warn!("读取模块化 Proton 配置失败，回退 catalog: {}", e);
             }
         }
     }
@@ -337,7 +337,7 @@ fn ensure_game_catalog_seed(conn: &Connection) {
     {
         Ok(content) => content,
         Err(e) => {
-            tracing::error!("读取游戏目录种子失败: {}", e);
+            crate::log_error!("读取游戏目录种子失败: {}", e);
             return;
         }
     };
@@ -345,7 +345,7 @@ fn ensure_game_catalog_seed(conn: &Connection) {
     let seed = match serde_json::from_str::<SeedCatalog>(&seed_json) {
         Ok(v) => v,
         Err(e) => {
-            tracing::error!("解析游戏目录种子失败: {}", e);
+            crate::log_error!("解析游戏目录种子失败: {}", e);
             return;
         }
     };
@@ -359,7 +359,7 @@ fn ensure_game_catalog_seed(conn: &Connection) {
             "INSERT OR IGNORE INTO game_identities (canonical_key, display_name_en) VALUES (?1, ?2)",
             params![canonical_key, identity.display_name_en.trim()],
         ) {
-            tracing::warn!(
+            crate::log_warn!(
                 "写入 game_identities 失败: key={}, err={}",
                 identity.canonical_key,
                 e
@@ -371,7 +371,7 @@ fn ensure_game_catalog_seed(conn: &Connection) {
             "DELETE FROM game_key_aliases WHERE lower(canonical_key) = lower(?1)",
             params![identity.canonical_key.trim()],
         ) {
-            tracing::warn!(
+            crate::log_warn!(
                 "清理 game_key_aliases 失败: canonical={}, err={}",
                 identity.canonical_key,
                 e
@@ -387,7 +387,7 @@ fn ensure_game_catalog_seed(conn: &Connection) {
                 "INSERT OR IGNORE INTO game_key_aliases (alias_key, canonical_key) VALUES (?1, ?2)",
                 params![alias, identity.canonical_key.trim()],
             ) {
-                tracing::warn!(
+                crate::log_warn!(
                     "写入 game_key_aliases 失败: alias={}, canonical={}, err={}",
                     alias,
                     identity.canonical_key,
@@ -431,7 +431,7 @@ fn ensure_game_catalog_seed(conn: &Connection) {
                         "UPDATE game_presets SET preset_json = ?2, updated_at = datetime('now') WHERE id = ?1",
                         params![id, merged_json],
                     ) {
-                        tracing::warn!("更新 game_presets 失败: id={}, err={}", id, e);
+                        crate::log_warn!("更新 game_presets 失败: id={}, err={}", id, e);
                     }
                 }
             }
@@ -443,7 +443,7 @@ fn ensure_game_catalog_seed(conn: &Connection) {
                 "INSERT OR IGNORE INTO game_presets (id, preset_json, updated_at) VALUES (?1, ?2, datetime('now'))",
                 params![id, json],
             ) {
-                tracing::warn!("写入 game_presets 失败: id={}, err={}", id, e);
+                crate::log_warn!("写入 game_presets 失败: id={}, err={}", id, e);
             }
         }
     }
@@ -475,7 +475,7 @@ fn ensure_proton_catalog_seed(conn: &Connection) {
     let seed = match load_proton_catalog_seed() {
         Ok(v) => v,
         Err(e) => {
-            tracing::error!("读取 Proton 目录种子失败: {}", e);
+            crate::log_error!("读取 Proton 目录种子失败: {}", e);
             return;
         }
     };
@@ -532,6 +532,16 @@ fn ensure_proton_catalog_seed(conn: &Connection) {
             ],
         );
     }
+
+    // 兼容清理：Proton Experimental 已下线，移除旧数据库中的残留家族与来源。
+    let _ = conn.execute(
+        "DELETE FROM proton_sources WHERE family_key = 'experimental'",
+        [],
+    );
+    let _ = conn.execute(
+        "DELETE FROM proton_families WHERE family_key = 'experimental'",
+        [],
+    );
 
     // 兼容修正：旧默认 DW 源已失效（GitHub API 404），避免每次刷新都产生失败日志。
     let _ = conn.execute(
@@ -654,6 +664,21 @@ fn ensure_proton_catalog_seed(conn: &Connection) {
            AND asset_index = -1",
         [],
     );
+    // 兼容修正：official 家族统一切换到 ValveSoftware/Proton release 源
+    let _ = conn.execute(
+        "UPDATE proton_sources
+         SET repo = 'ValveSoftware/Proton',
+             endpoint = '',
+             asset_index = -1,
+             asset_pattern = '(?i)\\.(tar\\.(gz|xz)|zip)$',
+             tag_pattern = '.*',
+             note = 'Official Proton source from ValveSoftware/Proton releases',
+             updated_at = datetime('now')
+         WHERE family_key = 'official'
+           AND provider = 'github_releases'
+           AND repo = 'Open-Wine-Components/umu-proton'",
+        [],
+    );
 }
 
 fn merge_missing_json_fields(target: &mut serde_json::Value, defaults: &serde_json::Value) -> bool {
@@ -690,6 +715,7 @@ fn sync_managed_preset_fields(
 
     let mut changed = false;
     for key in [
+        "defaultFolder",
         "legacyIds",
         "downloadMode",
         "downloadServers",
@@ -794,7 +820,7 @@ pub fn get_setting(key: &str) -> Option<String> {
 
 pub fn set_setting(key: &str, value: &str) {
     if let Err(e) = set_settings_batch(&[(key.to_string(), value.to_string())]) {
-        tracing::error!("写入 settings 失败: key={}, err={}", key, e);
+        crate::log_error!("写入 settings 失败: key={}, err={}", key, e);
     }
 }
 
@@ -861,7 +887,7 @@ pub fn set_game_config(game_name: &str, config_json: &str) {
         params![&canonical, config_json],
     )
     .unwrap_or_else(|e| {
-        tracing::error!("写入 game_configs 失败: game={}, err={}", canonical, e);
+        crate::log_error!("写入 game_configs 失败: game={}, err={}", canonical, e);
         0
     });
 }
@@ -875,7 +901,7 @@ pub fn delete_game_config(game_name: &str) {
             params![key],
         )
         .unwrap_or_else(|e| {
-            tracing::error!("删除 game_configs 失败: game={}, err={}", game_name, e);
+            crate::log_error!("删除 game_configs 失败: game={}, err={}", game_name, e);
             0
         });
     }
@@ -923,7 +949,7 @@ pub fn set_game_config_v2(game_name: &str, schema_version: u32, config_json: &st
         params![&canonical, schema_version, config_json],
     )
     .unwrap_or_else(|e| {
-        tracing::error!(
+        crate::log_error!(
             "写入 game_configs_v2 失败: game={}, version={}, err={}",
             canonical,
             schema_version,
@@ -942,7 +968,7 @@ pub fn delete_game_config_v2(game_name: &str) {
             params![key],
         )
         .unwrap_or_else(|e| {
-            tracing::error!("删除 game_configs_v2 失败: game={}, err={}", game_name, e);
+            crate::log_error!("删除 game_configs_v2 失败: game={}, err={}", game_name, e);
             0
         });
     }
@@ -965,7 +991,7 @@ pub fn set_game_config_exact(game_name: &str, config_json: &str) {
         params![game_name, config_json],
     )
     .unwrap_or_else(|e| {
-        tracing::error!("写入 game_configs 失败: game={}, err={}", game_name, e);
+        crate::log_error!("写入 game_configs 失败: game={}, err={}", game_name, e);
         0
     });
 }
@@ -996,7 +1022,7 @@ pub fn set_game_config_v2_exact(game_name: &str, schema_version: u32, config_jso
         params![game_name, schema_version, config_json],
     )
     .unwrap_or_else(|e| {
-        tracing::error!(
+        crate::log_error!(
             "写入 game_configs_v2 失败: game={}, version={}, err={}",
             game_name,
             schema_version,
@@ -1041,7 +1067,7 @@ pub fn set_migration_meta(key: &str, value: &str) {
         params![key, value],
     )
     .unwrap_or_else(|e| {
-        tracing::error!("写入 migration_meta 失败: key={}, err={}", key, e);
+        crate::log_error!("写入 migration_meta 失败: key={}, err={}", key, e);
         0
     });
 }
@@ -1053,7 +1079,7 @@ pub fn set_game_key_alias(alias_key: &str, canonical_key: &str) {
         params![alias_key, canonical_key],
     )
     .unwrap_or_else(|e| {
-        tracing::error!(
+        crate::log_error!(
             "写入 game_key_aliases 失败: alias={}, canonical={}, err={}",
             alias_key,
             canonical_key,
@@ -1376,7 +1402,7 @@ pub fn set_cached_md5(file_path: &str, file_size: i64, mtime_sec: i64, md5: &str
         params![file_path, file_size, mtime_sec, md5],
     )
     .unwrap_or_else(|e| {
-        tracing::error!("写入 hash_cache 失败: path={}, err={}", file_path, e);
+        crate::log_error!("写入 hash_cache 失败: path={}, err={}", file_path, e);
         0
     });
 }

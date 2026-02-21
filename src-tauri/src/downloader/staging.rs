@@ -1,6 +1,5 @@
 use crate::utils::file_manager::safe_join_remote;
 use std::path::{Path, PathBuf};
-use tracing::{error, info, warn};
 
 /// 将 staging 目录中的文件树合并到目标目录。
 ///
@@ -72,7 +71,7 @@ pub async fn merge_staging_tree_atomically(
         }
 
         if let Err(err) = move_file_or_copy(&staged_path, &dest).await {
-            error!(
+            crate::log_error!(
                 "staging 合并失败，开始回滚: {} -> {}, err={}",
                 staged_path.display(),
                 dest.display(),
@@ -87,7 +86,7 @@ pub async fn merge_staging_tree_atomically(
     }
 
     tokio::fs::remove_dir_all(&rollback_root).await.ok();
-    info!(
+    crate::log_info!(
         "staging 合并完成: {} files -> {}",
         moved_into_target.len(),
         target_root.display()
@@ -181,7 +180,7 @@ async fn rollback_target_changes(moved_into_target: &[PathBuf], backups: &[(Path
             continue;
         }
         if let Err(err) = move_file_or_copy(backup, dest).await {
-            warn!(
+            crate::log_warn!(
                 "回滚恢复失败 {} -> {}: {}",
                 backup.display(),
                 dest.display(),

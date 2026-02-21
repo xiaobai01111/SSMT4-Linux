@@ -3,8 +3,10 @@ import { computed, reactive, ref, watch } from 'vue';
 import { appSettings } from '../store'
 import {
   downloadDxvk,
+  downloadVkd3d,
   downloadProton,
   fetchDxvkVersions,
+  fetchVkd3dVersions,
   fetchRemoteProtonGrouped,
   getResourceVersionInfo,
   getVersionCheckInfo,
@@ -14,6 +16,7 @@ import {
   pullResourceUpdates,
   saveProtonCatalog,
   scanLocalDxvk,
+  scanLocalVkd3d,
   scanLocalProtonGrouped,
   showMessage,
   type DxvkLocalVersion,
@@ -24,6 +27,8 @@ import {
   type ProtonFamilyRemoteGroup,
   type ProtonRemoteVersionItem,
   type ProtonSource,
+  type Vkd3dLocalVersion,
+  type Vkd3dRemoteVersion,
   type VersionCheckInfo,
 } from '../api';
 import { useI18n } from 'vue-i18n';
@@ -584,6 +589,157 @@ const doDownloadDxvk = async () => {
 
 const dxvkLocalCount = computed(() => dxvkLocalVersions.value.length);
 
+// ============================================================
+// VKD3D 管理
+// ============================================================
+const vkd3dLocalVersions = ref<Vkd3dLocalVersion[]>([]);
+const vkd3dRemoteVersions = ref<Vkd3dRemoteVersion[]>([]);
+const vkd3dSelectedKey = ref(''); // "version|variant" 格式
+const isVkd3dFetching = ref(false);
+const isVkd3dDownloading = ref(false);
+const vkd3dLoaded = ref(false);
+
+interface Vkd3dVersionItem {
+  version: string;
+  variant: string;
+  key: string;
+  isLocal: boolean;
+  isRemote: boolean;
+  fileSize: number;
+  publishedAt: string;
+}
+
+const vkd3dVersionList = computed<Vkd3dVersionItem[]>(() => {
+  const map = new Map<string, Vkd3dVersionItem>();
+
+  for (const rv of vkd3dRemoteVersions.value) {
+    const key = `${rv.version}|${rv.variant}`;
+    map.set(key, {
+      version: rv.version,
+      variant: rv.variant,
+      key,
+      isLocal: rv.is_local,
+      isRemote: true,
+      fileSize: rv.file_size,
+      publishedAt: rv.published_at,
+    });
+  }
+
+  for (const lv of vkd3dLocalVersions.value) {
+    const key = `${lv.version}|${lv.variant}`;
+    if (!map.has(key)) {
+      map.set(key, {
+        version: lv.version,
+        variant: lv.variant,
+        key,
+        isLocal: true,
+        isRemote: false,
+        fileSize: 0,
+        publishedAt: '',
+      });
+    }
+  }
+
+  return Array.from(map.values()).sort((a, b) => {
+    const cmp = b.version.localeCompare(a.version);
+    return cmp !== 0 ? cmp : a.variant.localeCompare(b.variant);
+  });
+});
+
+const selectedVkd3dItem = computed(() =>
+  vkd3dVersionList.value.find(v => v.key === vkd3dSelectedKey.value)
+);
+
+const vkd3dVariantLabel = (variant: string) => {
+  const labels: Record<string, string> = {
+    vkd3d: 'VKD3D',
+    'vkd3d-proton': 'VKD3D-Proton',
+    'vkd3d-proton-ge': 'VKD3D-Proton GE',
+  };
+  return labels[variant] || `VKD3D-${variant}`;
+};
+
+const vkd3dVariantShortLabel = (variant: string) => {
+  const labels: Record<string, string> = {
+    vkd3d: 'VKD3D',
+    'vkd3d-proton': 'Proton',
+    'vkd3d-proton-ge': 'GE',
+  };
+  return labels[variant] || variant;
+};
+
+const vkd3dGroupedList = computed(() => {
+  const groups = new Map<string, Vkd3dVersionItem[]>();
+  for (const item of vkd3dVersionList.value) {
+    const list = groups.get(item.variant) || [];
+    list.push(item);
+    groups.set(item.variant, list);
+  }
+  return Array.from(groups.entries())
+    .sort((a, b) => {
+      if (a[0] === 'vkd3d-proton') return -1;
+      if (b[0] === 'vkd3d-proton') return 1;
+      return a[0].localeCompare(b[0]);
+    })
+    .map(([variant, items]) => ({
+      variant,
+      label: vkd3dVariantLabel(variant),
+      items,
+    }));
+});
+
+const refreshVkd3dLocal = async () => {
+  try {
+    vkd3dLocalVersions.value = await scanLocalVkd3d();
+  } catch (e) {
+    console.warn('[vkd3d] 扫描本地版本失败:', e);
+  }
+};
+
+const vkd3dFetchWarning = ref('');
+
+const refreshVkd3dRemote = async () => {
+  if (isVkd3dFetching.value) return;
+  vkd3dFetchWarning.value = '';
+  try {
+    isVkd3dFetching.value = true;
+    vkd3dRemoteVersions.value = await fetchVkd3dVersions();
+    if (!vkd3dSelectedKey.value && vkd3dRemoteVersions.value.length > 0) {
+      const first = vkd3dRemoteVersions.value[0];
+      vkd3dSelectedKey.value = `${first.version}|${first.variant}`;
+    }
+    if (vkd3dRemoteVersions.value.length === 0) {
+      vkd3dFetchWarning.value = '未获取到远程版本，请稍后重试。';
+    }
+  } catch (e) {
+    await showMessage(`获取 VKD3D 版本列表失败: ${e}`, { title: '错误', kind: 'error' });
+  } finally {
+    isVkd3dFetching.value = false;
+  }
+};
+
+const doDownloadVkd3d = async () => {
+  const item = selectedVkd3dItem.value;
+  if (isVkd3dDownloading.value || !item) return;
+  try {
+    isVkd3dDownloading.value = true;
+    const label = vkd3dVariantLabel(item.variant);
+    showDlDialog(`下载 ${label}`, `正在下载 ${label} ${item.version}，请稍候...`);
+    const result = await downloadVkd3d(item.version, item.variant);
+    dlDialogStatus.value = 'success';
+    dlDialogMessage.value = result;
+    await refreshVkd3dLocal();
+    vkd3dRemoteVersions.value = await fetchVkd3dVersions();
+  } catch (e) {
+    dlDialogStatus.value = 'error';
+    dlDialogMessage.value = `下载失败: ${e}`;
+  } finally {
+    isVkd3dDownloading.value = false;
+  }
+};
+
+const vkd3dLocalCount = computed(() => vkd3dLocalVersions.value.length);
+
 const selectCacheDir = async () => {
   const selected = await openFileDialog({
     directory: true,
@@ -628,6 +784,11 @@ watch(
       await refreshDxvkRemote();
       dxvkLoaded.value = true;
     }
+    if (menu === 'vkd3d' && !vkd3dLoaded.value) {
+      await refreshVkd3dLocal();
+      await refreshVkd3dRemote();
+      vkd3dLoaded.value = true;
+    }
   },
   { immediate: true }
 );
@@ -669,6 +830,10 @@ watch(
         <el-menu-item index="dxvk">
           <el-icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20h20"/><path d="M5 20V8l7-5 7 5v12"/><path d="M9 20v-4h6v4"/><path d="M9 12h6"/><path d="M9 16h6"/></svg></el-icon>
           <span>{{ tr('settings.dxvk_manage_title', 'DXVK 管理') }}</span>
+        </el-menu-item>
+        <el-menu-item index="vkd3d">
+          <el-icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l9 4.5v11L12 22l-9-4.5v-11L12 2z"/><path d="M12 22V12"/><path d="M21 6.5l-9 5.5-9-5.5"/></svg></el-icon>
+          <span>VKD3D 管理</span>
         </el-menu-item>
       </el-menu>
     </div>
@@ -1133,6 +1298,113 @@ watch(
                     : selectedDxvkItem?.isLocal
                       ? tr('settings.dxvk_already_cached', '已缓存')
                       : tr('settings.dxvk_download', '下载')
+                }}
+              </el-button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- VKD3D 管理 -->
+      <div v-show="activeMenu === 'vkd3d'" class="settings-panel dxvk-panel">
+        <div class="panel-title">VKD3D 管理</div>
+
+        <div class="section-block">
+          <div class="section-header">
+            <div>
+              <div class="section-title">VKD3D (D3D12 → Vulkan)</div>
+              <div class="section-hint">
+                在此下载和管理 VKD3D 版本，用于 D3D12 游戏兼容层。
+              </div>
+            </div>
+            <div class="toolbar-actions">
+              <el-button size="small" @click="refreshVkd3dLocal">
+                刷新本地
+              </el-button>
+              <el-button size="small" @click="refreshVkd3dRemote" :loading="isVkd3dFetching">
+                {{ isVkd3dFetching ? '获取中...' : '获取可用版本' }}
+              </el-button>
+            </div>
+          </div>
+
+          <!-- 本地已缓存版本 -->
+          <div class="dxvk-section">
+            <div class="editor-subtitle" style="margin-top: 14px;">
+              本地已缓存
+              <span class="dxvk-count">({{ vkd3dLocalCount }} 个版本)</span>
+            </div>
+            <div v-if="vkd3dLocalVersions.length === 0" class="row-sub" style="margin-top: 8px;">
+              暂无本地缓存版本，请先获取可用版本并下载。
+            </div>
+            <div v-else class="dxvk-local-list">
+              <div v-for="lv in vkd3dLocalVersions" :key="`${lv.version}|${lv.variant}`" class="dxvk-local-item">
+                <div class="dxvk-local-ver">{{ lv.version }}</div>
+                <el-tag :type="lv.variant === 'vkd3d-proton' ? 'info' : 'warning'" size="small">
+                  {{ vkd3dVariantShortLabel(lv.variant) }}
+                </el-tag>
+                <el-tag v-if="lv.extracted" type="success" size="small">已解压</el-tag>
+                <el-tag v-else type="info" size="small">仅存档</el-tag>
+                <div class="dxvk-local-path">{{ lv.path }}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 版本选择 + 下载 -->
+          <div class="dxvk-section" style="margin-top: 16px;">
+            <div class="editor-subtitle">下载 VKD3D 版本</div>
+            <div v-if="vkd3dFetchWarning" class="dxvk-fetch-warning" style="margin-bottom: 8px;">
+              ⚠ {{ vkd3dFetchWarning }}
+            </div>
+            <div class="dxvk-download-row">
+              <el-select
+                v-model="vkd3dSelectedKey"
+                placeholder="选择版本..."
+                class="dxvk-version-select"
+                filterable
+              >
+                <el-option-group
+                  v-for="group in vkd3dGroupedList"
+                  :key="group.variant"
+                  :label="group.label"
+                >
+                  <el-option
+                    v-for="v in group.items"
+                    :key="v.key"
+                    :label="`${v.version}${v.isLocal ? ' [本地]' : ''}${v.fileSize > 0 ? ` (${formatBytes(v.fileSize)})` : ''}`"
+                    :value="v.key"
+                  >
+                    <div class="remote-option-row">
+                      <span>
+                        <el-tag
+                          :type="v.variant === 'vkd3d-proton' ? 'info' : 'warning'"
+                          size="small"
+                          style="margin-right: 6px;"
+                        >
+                          {{ vkd3dVariantShortLabel(v.variant) }}
+                        </el-tag>
+                        {{ v.version }}
+                        <el-tag v-if="v.isLocal" type="success" size="small" style="margin-left: 6px;">已缓存</el-tag>
+                      </span>
+                      <span class="remote-option-meta">
+                        {{ v.fileSize > 0 ? formatBytes(v.fileSize) : '' }}
+                        {{ v.publishedAt ? `· ${formatDate(v.publishedAt)}` : '' }}
+                      </span>
+                    </div>
+                  </el-option>
+                </el-option-group>
+              </el-select>
+              <el-button
+                type="primary"
+                :disabled="!selectedVkd3dItem || isVkd3dDownloading || selectedVkd3dItem?.isLocal"
+                :loading="isVkd3dDownloading"
+                @click="doDownloadVkd3d"
+              >
+                {{
+                  isVkd3dDownloading
+                    ? '下载中...'
+                    : selectedVkd3dItem?.isLocal
+                      ? '已缓存'
+                      : '下载'
                 }}
               </el-button>
             </div>
