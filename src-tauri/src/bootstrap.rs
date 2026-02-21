@@ -1,10 +1,15 @@
 use crate::configs;
 use crate::utils;
+use tauri::Manager;
 
 /// 应用启动初始化：数据目录、符号链接、固定目录创建
 ///
 /// 关键目录创建失败会直接终止启动（返回 Err），避免进入半初始化状态。
-pub fn setup(_app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        utils::data_parameters::set_resource_dir(resource_dir);
+    }
+
     // 1. 从 SQLite 读取 dataDir（优先），回退到 settings.json 兼容旧数据
     let config_dir_boot = configs::app_config::get_app_config_dir();
     utils::file_manager::ensure_dir(&config_dir_boot)
@@ -40,6 +45,13 @@ pub fn setup(_app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     for dir in [&config_dir, &cache_dir, &prefixes_dir] {
         utils::file_manager::ensure_dir(dir)
             .map_err(|e| format!("创建关键目录失败 {}: {}", dir.display(), e))?;
+    }
+
+    if let Err(e) = utils::data_parameters::sync_managed_repo() {
+        tracing::warn!(
+            "同步 Data-parameters 仓库失败（将使用本地已有副本或回退源）: {}",
+            e
+        );
     }
 
     // 3. 符号链接和 Games 目录不在启动时创建

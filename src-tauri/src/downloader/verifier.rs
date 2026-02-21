@@ -244,7 +244,8 @@ pub async fn verify_game_files(
                     file_md5.as_str(),
                     file_size,
                 )
-                .await {
+                .await
+                {
                     true => {
                         redownloaded_c.fetch_add(1, Ordering::Relaxed);
                     }
@@ -330,7 +331,8 @@ pub async fn verify_game_files(
                 file_md5.as_str(),
                 file_size,
             )
-            .await {
+            .await
+            {
                 true => {
                     redownloaded_c.fetch_add(1, Ordering::Relaxed);
                 }

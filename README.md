@@ -19,7 +19,7 @@ Super Simple Linux Game Tools 4th
 
 SSMT4 Linux 是一个基于 `Tauri + Vue 3 + Rust` 的 Linux 游戏工具箱，目标是统一管理游戏下载、启动、Wine/Proton、DXVK 与游戏配置。
 
-当前项目内置/预置支持的游戏配置包括：
+当前默认支持的游戏配置包括：
 
 - `GenshinImpact`
 - `HonkaiStarRail`
@@ -44,11 +44,17 @@ SSMT4 Linux 是一个基于 `Tauri + Vue 3 + Rust` 的 Linux 游戏工具箱，�
 - 启动与兼容层：`src-tauri/src/commands/game_launcher.rs`、`src-tauri/src/wine/`
 - 设置与数据库：`src-tauri/src/commands/settings.rs`、`src-tauri/src/configs/database.rs`
 
-关键资源目录：
+关键数据来源：
 
-- 游戏资源：`src-tauri/resources/Games/`
-- 启动种子数据：`src-tauri/resources/bootstrap/`
+- 数据参数独立仓库：<https://github.com/xiaobai01111/Data-parameters>
+- 运行时本地目录：`<dataDir>/Data-parameters`（启动时自动 `git clone/pull`）
+- 数据结构：
+  - `catalogs/`：游戏/API/Proton/DXVK 的 JSON 种子
+  - `games/`：游戏模板 `Config.json` 与图标
+  - `proton/`：GE、DW 等分组配置
 - 版本信息：根目录 `version`、`version-log`
+
+说明：主项目运行时优先读取外部 `Data-parameters` 仓库，不再依赖内置 `resources/bootstrap` 与 `resources/Games` 作为主数据源。
 
 ## 安装方式
 

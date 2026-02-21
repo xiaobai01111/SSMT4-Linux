@@ -12,6 +12,8 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         commands::settings::load_settings,
         commands::settings::save_settings,
         commands::settings::get_version_check_info,
+        commands::settings::get_resource_version_info,
+        commands::settings::pull_resource_updates,
         // Process
         commands::process::run_resource_executable,
         // Game scanner

@@ -164,8 +164,11 @@ export function switchToGame(game: GameInfo) {
 }
 
 // Initial load
-loadSettings();
-loadGames();
+async function initStore() {
+  await loadSettings();
+  await loadGames();
+}
+initStore();
 
 // Initialize global download event listeners
 import { initDlListeners } from './downloadStore';

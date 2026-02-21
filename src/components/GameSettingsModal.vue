@@ -326,6 +326,37 @@ const dxvkInstalledStatus = ref<DxvkInstalledStatus | null>(null);
 const dxvkSelectedKey = ref('');  // "version|variant" 格式
 const isDxvkBusy = ref(false);
 
+const dxvkVariantLabel = (variant: string) => {
+  const labels: Record<string, string> = {
+    dxvk: 'DXVK (官方)',
+    gplasync: 'DXVK-GPLAsync',
+    async: 'DXVK-Async',
+    sarek: 'DXVK-Sarek',
+    sarekasync: 'DXVK-Sarek-Async',
+  };
+  return labels[variant] || `DXVK-${variant}`;
+};
+
+const dxvkGroupedLocalVersions = computed(() => {
+  const groups = new Map<string, DxvkLocalVersion[]>();
+  for (const item of dxvkLocalVersions.value) {
+    const list = groups.get(item.variant) || [];
+    list.push(item);
+    groups.set(item.variant, list);
+  }
+  return Array.from(groups.entries())
+    .sort((a, b) => {
+      if (a[0] === 'dxvk') return -1;
+      if (b[0] === 'dxvk') return 1;
+      return a[0].localeCompare(b[0]);
+    })
+    .map(([variant, items]) => ({
+      variant,
+      label: dxvkVariantLabel(variant),
+      items,
+    }));
+});
+
 const loadDxvkState = async () => {
   if (!props.gameName) return;
   try {
@@ -356,7 +387,7 @@ const doInstallDxvk = async () => {
   if (!version || !variant) return;
   try {
     isDxvkBusy.value = true;
-    const label = variant === 'gplasync' ? 'DXVK-GPLAsync' : 'DXVK';
+    const label = dxvkVariantLabel(variant);
     notify?.info(label, `正在应用 ${label} ${version}...`);
     const result = await installDxvk(props.gameName, version, variant);
     notify?.success(`${label} 应用完成`, result);
@@ -1057,13 +1088,16 @@ defineExpose({
                     <div style="flex:1">
                       <select v-model="dxvkSelectedKey" class="custom-input" style="width:100%">
                         <option value="" disabled>选择本地已缓存的 DXVK 版本...</option>
-                        <optgroup v-if="dxvkLocalVersions.some(v => v.variant === 'dxvk')" label="DXVK (官方)">
-                          <option v-for="lv in dxvkLocalVersions.filter(v => v.variant === 'dxvk')" :key="`${lv.version}|dxvk`" :value="`${lv.version}|dxvk`">
-                            {{ lv.version }}
-                          </option>
-                        </optgroup>
-                        <optgroup v-if="dxvkLocalVersions.some(v => v.variant === 'gplasync')" label="DXVK-GPLAsync">
-                          <option v-for="lv in dxvkLocalVersions.filter(v => v.variant === 'gplasync')" :key="`${lv.version}|gplasync`" :value="`${lv.version}|gplasync`">
+                        <optgroup
+                          v-for="group in dxvkGroupedLocalVersions"
+                          :key="group.variant"
+                          :label="group.label"
+                        >
+                          <option
+                            v-for="lv in group.items"
+                            :key="`${lv.version}|${lv.variant}`"
+                            :value="`${lv.version}|${lv.variant}`"
+                          >
                             {{ lv.version }}
                           </option>
                         </optgroup>

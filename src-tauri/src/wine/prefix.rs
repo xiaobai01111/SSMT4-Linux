@@ -109,11 +109,15 @@ pub fn get_prefix_dir(game_id: &str) -> PathBuf {
     // 如果找到游戏根目录，总是使用游戏目录下的 prefix/
     if let Some(game_root) = resolve_game_root_from_db(&game_id) {
         let preferred = game_root.join("prefix");
-        
+
         // 如果旧的 prefix 存在且新位置不存在，尝试迁移
         if !preferred.exists() {
             if let Some(legacy) = resolve_best_legacy_prefix(&game_id) {
-                info!("检测到旧 prefix，尝试迁移: {} -> {}", legacy.display(), preferred.display());
+                info!(
+                    "检测到旧 prefix，尝试迁移: {} -> {}",
+                    legacy.display(),
+                    preferred.display()
+                );
                 if let Some(parent) = preferred.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
@@ -124,7 +128,7 @@ pub fn get_prefix_dir(game_id: &str) -> PathBuf {
                 }
             }
         }
-        
+
         return preferred;
     }
     // 只有在无法解析游戏根目录时才回退到 ~/.config
@@ -198,13 +202,8 @@ pub fn delete_prefix(game_id: &str) -> Result<(), String> {
 }
 
 fn ensure_safe_prefix_delete_target(game_id: &str, prefix_dir: &Path) -> Result<(), String> {
-    let canonical_prefix = std::fs::canonicalize(prefix_dir).map_err(|e| {
-        format!(
-            "无法解析待删除 prefix 路径 {}: {}",
-            prefix_dir.display(),
-            e
-        )
-    })?;
+    let canonical_prefix = std::fs::canonicalize(prefix_dir)
+        .map_err(|e| format!("无法解析待删除 prefix 路径 {}: {}", prefix_dir.display(), e))?;
 
     let prefix_name = canonical_prefix
         .file_name()
@@ -224,8 +223,8 @@ fn ensure_safe_prefix_delete_target(game_id: &str, prefix_dir: &Path) -> Result<
 
     let legacy_root_raw = file_manager::get_prefixes_dir();
     let legacy_root = std::fs::canonicalize(&legacy_root_raw).unwrap_or(legacy_root_raw);
-    let canonical_game = crate::configs::game_identity::to_canonical_or_keep(game_id)
-        .to_ascii_lowercase();
+    let canonical_game =
+        crate::configs::game_identity::to_canonical_or_keep(game_id).to_ascii_lowercase();
     if canonical_prefix.starts_with(&legacy_root)
         && (prefix_name == canonical_game || is_prefix_name)
     {

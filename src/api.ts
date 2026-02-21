@@ -443,6 +443,14 @@ export async function getVersionCheckInfo(): Promise<VersionCheckInfo> {
   return invoke<VersionCheckInfo>('get_version_check_info');
 }
 
+export async function getResourceVersionInfo(): Promise<VersionCheckInfo> {
+  return invoke<VersionCheckInfo>('get_resource_version_info');
+}
+
+export async function pullResourceUpdates(): Promise<string> {
+  return invoke<string>('pull_resource_updates');
+}
+
 // ============================================================
 // Common Commands
 // ============================================================

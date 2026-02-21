@@ -55,9 +55,6 @@ mod tests {
 
     #[test]
     fn keeps_unknown_keys() {
-        assert_eq!(
-            to_canonical_or_keep("CustomGame"),
-            "CustomGame".to_string()
-        );
+        assert_eq!(to_canonical_or_keep("CustomGame"), "CustomGame".to_string());
     }
 }

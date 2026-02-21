@@ -6,10 +6,12 @@ import {
   downloadProton,
   fetchDxvkVersions,
   fetchRemoteProtonGrouped,
+  getResourceVersionInfo,
   getVersionCheckInfo,
   getProtonCatalog,
   openFileDialog,
   openLogWindow,
+  pullResourceUpdates,
   saveProtonCatalog,
   scanLocalDxvk,
   scanLocalProtonGrouped,
@@ -32,6 +34,10 @@ const activeMenu = ref('basic')
 const versionInfo = ref<VersionCheckInfo | null>(null);
 const isVersionChecking = ref(false);
 const versionCheckLoaded = ref(false);
+const resourceInfo = ref<VersionCheckInfo | null>(null);
+const isResourceChecking = ref(false);
+const isResourcePulling = ref(false);
+const resourceCheckLoaded = ref(false);
 
 const protonCatalog = ref<ProtonCatalog>({ families: [], sources: [] });
 const localGroups = ref<ProtonFamilyLocalGroup[]>([]);
@@ -68,6 +74,33 @@ const checkVersionInfo = async () => {
     await showMessage(`版本检查失败: ${e}`, { title: '错误', kind: 'error' });
   } finally {
     isVersionChecking.value = false;
+  }
+};
+
+const checkResourceInfo = async () => {
+  if (isResourceChecking.value) return;
+  try {
+    isResourceChecking.value = true;
+    resourceInfo.value = await getResourceVersionInfo();
+    resourceCheckLoaded.value = true;
+  } catch (e) {
+    await showMessage(`资源检查失败: ${e}`, { title: '错误', kind: 'error' });
+  } finally {
+    isResourceChecking.value = false;
+  }
+};
+
+const pullResources = async () => {
+  if (isResourcePulling.value) return;
+  try {
+    isResourcePulling.value = true;
+    const msg = await pullResourceUpdates();
+    await checkResourceInfo();
+    await showMessage(msg, { title: '资源更新', kind: 'info' });
+  } catch (e) {
+    await showMessage(`拉取资源失败: ${e}`, { title: '错误', kind: 'error' });
+  } finally {
+    isResourcePulling.value = false;
   }
 };
 
@@ -457,16 +490,47 @@ const selectedDxvkItem = computed(() =>
   dxvkVersionList.value.find(v => v.key === dxvkSelectedKey.value)
 );
 
-const dxvkGroupedList = computed(() => [
-  {
-    label: 'DXVK (官方)',
-    items: dxvkVersionList.value.filter(v => v.variant === 'dxvk'),
-  },
-  {
-    label: 'DXVK-GPLAsync',
-    items: dxvkVersionList.value.filter(v => v.variant === 'gplasync'),
-  },
-].filter(g => g.items.length > 0));
+const dxvkVariantLabel = (variant: string) => {
+  const labels: Record<string, string> = {
+    dxvk: 'DXVK (官方)',
+    gplasync: 'DXVK-GPLAsync',
+    async: 'DXVK-Async',
+    sarek: 'DXVK-Sarek',
+    sarekasync: 'DXVK-Sarek-Async',
+  };
+  return labels[variant] || `DXVK-${variant}`;
+};
+
+const dxvkVariantShortLabel = (variant: string) => {
+  const labels: Record<string, string> = {
+    dxvk: 'Official',
+    gplasync: 'GPLAsync',
+    async: 'Async',
+    sarek: 'Sarek',
+    sarekasync: 'Sarek-Async',
+  };
+  return labels[variant] || variant;
+};
+
+const dxvkGroupedList = computed(() => {
+  const groups = new Map<string, DxvkVersionItem[]>();
+  for (const item of dxvkVersionList.value) {
+    const list = groups.get(item.variant) || [];
+    list.push(item);
+    groups.set(item.variant, list);
+  }
+  return Array.from(groups.entries())
+    .sort((a, b) => {
+      if (a[0] === 'dxvk') return -1;
+      if (b[0] === 'dxvk') return 1;
+      return a[0].localeCompare(b[0]);
+    })
+    .map(([variant, items]) => ({
+      variant,
+      label: dxvkVariantLabel(variant),
+      items,
+    }));
+});
 
 const refreshDxvkLocal = async () => {
   try {
@@ -488,14 +552,8 @@ const refreshDxvkRemote = async () => {
       const first = dxvkRemoteVersions.value[0];
       dxvkSelectedKey.value = `${first.version}|${first.variant}`;
     }
-    // 检查是否有缺失的 variant
-    const hasDxvk = dxvkRemoteVersions.value.some(v => v.variant === 'dxvk');
-    const hasGpl = dxvkRemoteVersions.value.some(v => v.variant === 'gplasync');
-    const missing: string[] = [];
-    if (!hasDxvk) missing.push('官方 DXVK (GitHub API 限流)');
-    if (!hasGpl) missing.push('DXVK-GPLAsync');
-    if (missing.length > 0) {
-      dxvkFetchWarning.value = `部分版本获取失败: ${missing.join('、')}，请稍后重试。`;
+    if (dxvkRemoteVersions.value.length === 0) {
+      dxvkFetchWarning.value = '未获取到远程版本，请稍后重试。';
     }
   } catch (e) {
     await showMessage(`获取 DXVK 版本列表失败: ${e}`, { title: '错误', kind: 'error' });
@@ -509,7 +567,7 @@ const doDownloadDxvk = async () => {
   if (isDxvkDownloading.value || !item) return;
   try {
     isDxvkDownloading.value = true;
-    const label = item.variant === 'gplasync' ? 'DXVK-GPLAsync' : 'DXVK';
+    const label = dxvkVariantLabel(item.variant);
     showDlDialog(`下载 ${label}`, `正在下载 ${label} ${item.version}，请稍候...`);
     const result = await downloadDxvk(item.version, item.variant);
     dlDialogStatus.value = 'success';
@@ -556,6 +614,9 @@ watch(
     if (menu === 'version' && !versionCheckLoaded.value) {
       await checkVersionInfo();
     }
+    if (menu === 'resource' && !resourceCheckLoaded.value) {
+      await checkResourceInfo();
+    }
     if (menu === 'proton' && !protonLoaded.value) {
       await loadCatalog();
       await refreshLocalGrouped();
@@ -596,6 +657,10 @@ watch(
         <el-menu-item index="version">
           <el-icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6v6l4 2"/><circle cx="12" cy="12" r="9"/></svg></el-icon>
           <span>{{ tr('settings.version_check_title', '版本检查') }}</span>
+        </el-menu-item>
+        <el-menu-item index="resource">
+          <el-icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14a8 8 0 0 1 8-8h8"/><path d="M20 10V6h-4"/><path d="M20 10a8 8 0 0 1-8 8H4"/><path d="M4 14v4h4"/></svg></el-icon>
+          <span>资源更新</span>
         </el-menu-item>
         <el-menu-item index="proton">
           <el-icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 16V8a2 2 0 0 0-1-1.73l-6-3.46a2 2 0 0 0-2 0L5 6.27A2 2 0 0 0 4 8v8a2 2 0 0 0 1 1.73l6 3.46a2 2 0 0 0 2 0l6-3.46A2 2 0 0 0 20 16z"></path><polyline points="7.5 4.21 12 6.81 16.5 4.21"></polyline><polyline points="7.5 19.79 7.5 14.6 3 12"></polyline><polyline points="21 12 16.5 14.6 16.5 19.79"></polyline><polyline points="12 22.08 12 16.9 7.5 14.3"></polyline><polyline points="12 16.9 16.5 14.3"></polyline><polyline points="12 6.81 12 12"></polyline></svg></el-icon>
@@ -736,6 +801,58 @@ watch(
 
           <div v-else class="row-sub">
             {{ tr('settings.version_not_loaded', '尚未获取版本信息，请点击“检查更新”。') }}
+          </div>
+        </div>
+      </div>
+
+      <!-- 资源检查 -->
+      <div v-show="activeMenu === 'resource'" class="settings-panel version-panel">
+        <div class="panel-title">资源更新</div>
+
+        <div class="section-block">
+          <div class="section-header">
+            <div>
+              <div class="section-title">Data-parameters 资源版本</div>
+              <div class="section-hint">
+                从 https://github.com/xiaobai01111/Data-parameters 的 version 文件检查，并可一键拉取更新。
+              </div>
+            </div>
+            <div class="toolbar-actions">
+              <el-button size="small" @click="checkResourceInfo" :loading="isResourceChecking">
+                {{ isResourceChecking ? '检查中...' : '检查资源版本' }}
+              </el-button>
+              <el-button type="primary" size="small" @click="pullResources" :loading="isResourcePulling">
+                {{ isResourcePulling ? '拉取中...' : '拉取资源更新' }}
+              </el-button>
+            </div>
+          </div>
+
+          <div v-if="resourceInfo" class="version-grid">
+            <div class="version-row">
+              <div class="version-label">本地资源版本</div>
+              <div class="version-value">{{ resourceInfo.currentVersion }}</div>
+            </div>
+            <div class="version-row">
+              <div class="version-label">远程资源版本</div>
+              <div class="version-value">{{ resourceInfo.latestVersion }}</div>
+            </div>
+            <div class="version-row">
+              <div class="version-label">更新状态</div>
+              <div class="version-value">
+                <el-tag v-if="resourceInfo.hasUpdate" type="warning">有可用资源更新</el-tag>
+                <el-tag v-else type="success">资源已是最新</el-tag>
+              </div>
+            </div>
+            <div class="version-row version-log-row">
+              <div class="version-label">检查信息</div>
+              <div class="version-value">
+                <pre class="version-log-content">{{ resourceInfo.updateLog || '暂无检查信息' }}</pre>
+              </div>
+            </div>
+          </div>
+
+          <div v-else class="row-sub">
+            尚未获取资源版本信息，请点击“检查资源版本”。
           </div>
         </div>
       </div>
@@ -950,7 +1067,9 @@ watch(
             <div v-else class="dxvk-local-list">
               <div v-for="lv in dxvkLocalVersions" :key="`${lv.version}|${lv.variant}`" class="dxvk-local-item">
                 <div class="dxvk-local-ver">{{ lv.version }}</div>
-                <el-tag v-if="lv.variant === 'gplasync'" type="warning" size="small">GPLAsync</el-tag>
+                <el-tag :type="lv.variant === 'dxvk' ? 'info' : 'warning'" size="small">
+                  {{ dxvkVariantShortLabel(lv.variant) }}
+                </el-tag>
                 <el-tag v-if="lv.extracted" type="success" size="small">{{ tr('settings.dxvk_extracted', '已解压') }}</el-tag>
                 <el-tag v-else type="info" size="small">{{ tr('settings.dxvk_archive_only', '仅存档') }}</el-tag>
                 <div class="dxvk-local-path">{{ lv.path }}</div>
@@ -973,17 +1092,24 @@ watch(
               >
                 <el-option-group
                   v-for="group in dxvkGroupedList"
-                  :key="group.label"
+                  :key="group.variant"
                   :label="group.label"
                 >
                   <el-option
                     v-for="v in group.items"
                     :key="v.key"
-                    :label="`${v.variant === 'gplasync' ? '[GPLAsync] ' : ''}${v.version}${v.isLocal ? ' [本地]' : ''}${v.fileSize > 0 ? ` (${formatBytes(v.fileSize)})` : ''}`"
+                    :label="`${v.version}${v.isLocal ? ' [本地]' : ''}${v.fileSize > 0 ? ` (${formatBytes(v.fileSize)})` : ''}`"
                     :value="v.key"
                   >
                     <div class="remote-option-row">
                       <span>
+                        <el-tag
+                          :type="v.variant === 'dxvk' ? 'info' : 'warning'"
+                          size="small"
+                          style="margin-right: 6px;"
+                        >
+                          {{ dxvkVariantShortLabel(v.variant) }}
+                        </el-tag>
                         {{ v.version }}
                         <el-tag v-if="v.isLocal" type="success" size="small" style="margin-left: 6px;">{{ tr('settings.dxvk_cached', '已缓存') }}</el-tag>
                       </span>

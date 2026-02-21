@@ -58,11 +58,21 @@ pub struct VersionCheckInfo {
     pub update_log: String,
 }
 
+const DATA_PARAMETERS_REPO_URL: &str = "https://github.com/xiaobai01111/Data-parameters";
+const DATA_PARAMETERS_VERSION_URL: &str =
+    "https://raw.githubusercontent.com/xiaobai01111/Data-parameters/main/version";
+
 fn read_trimmed_file(path: &Path) -> Option<String> {
     std::fs::read_to_string(path)
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+fn read_data_parameters_local_version() -> Option<(String, String)> {
+    let path = crate::utils::data_parameters::resolve_data_path("version")?;
+    let version = read_trimmed_file(&path)?;
+    Some((version, path.to_string_lossy().to_string()))
 }
 
 fn read_raw_file(path: &Path) -> Option<String> {
@@ -95,12 +105,35 @@ fn resolve_version_file_paths(app: &tauri::AppHandle) -> Vec<PathBuf> {
     bases
 }
 
+async fn fetch_remote_data_parameters_version() -> Result<String, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(DATA_PARAMETERS_VERSION_URL)
+        .header("User-Agent", "SSMT4/0.1")
+        .send()
+        .await
+        .map_err(|e| format!("请求远程资源版本失败: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("远程资源版本接口返回 HTTP {}", resp.status()));
+    }
+
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("读取远程资源版本内容失败: {}", e))?;
+    let version = text.trim().to_string();
+    if version.is_empty() {
+        return Err("远程资源版本内容为空".to_string());
+    }
+    Ok(version)
+}
+
 #[tauri::command]
 pub fn get_version_check_info(app: tauri::AppHandle) -> Result<VersionCheckInfo, String> {
     let current_version = env!("CARGO_PKG_VERSION").to_string();
     let mut latest_version = String::new();
     let mut update_log = String::new();
-
     for base in resolve_version_file_paths(&app) {
         if latest_version.is_empty() {
             let candidate = base.join("version");
@@ -131,6 +164,49 @@ pub fn get_version_check_info(app: tauri::AppHandle) -> Result<VersionCheckInfo,
         has_update,
         update_log,
     })
+}
+
+#[tauri::command]
+pub async fn get_resource_version_info() -> Result<VersionCheckInfo, String> {
+    let mut notes = vec![format!("资源仓库: {}", DATA_PARAMETERS_REPO_URL)];
+    let (current_version, local_path_note) = match read_data_parameters_local_version() {
+        Some((version, path)) => (version, Some(path)),
+        None => ("unknown".to_string(), None),
+    };
+
+    if let Some(path) = local_path_note {
+        notes.push(format!("本地版本文件: {}", path));
+    } else {
+        notes.push("本地版本文件: 未找到 Data-parameters/version".to_string());
+    }
+
+    let latest_version = match fetch_remote_data_parameters_version().await {
+        Ok(v) => v,
+        Err(e) => {
+            notes.push(format!("远程检查失败: {}", e));
+            current_version.clone()
+        }
+    };
+
+    let has_update = current_version != "unknown"
+        && latest_version != "unknown"
+        && latest_version != current_version;
+
+    Ok(VersionCheckInfo {
+        current_version,
+        latest_version,
+        has_update,
+        update_log: notes.join("\n"),
+    })
+}
+
+#[tauri::command]
+pub fn pull_resource_updates() -> Result<String, String> {
+    crate::utils::data_parameters::sync_managed_repo()?;
+    let version = read_data_parameters_local_version()
+        .map(|(v, _)| v)
+        .unwrap_or_else(|| "unknown".to_string());
+    Ok(format!("资源更新完成，本地版本: {}", version))
 }
 
 /// 从旧 settings.json 迁移到 SQLite（首次升级时执行一次）

@@ -82,10 +82,7 @@ pub async fn verify_file_integrity(
     }
 
     if let Some(expected) = normalize_expected(expected_sha256) {
-        let actual = sha256_file(path)
-            .await?
-            .trim()
-            .to_ascii_lowercase();
+        let actual = sha256_file(path).await?.trim().to_ascii_lowercase();
         if actual != expected {
             return Err(format!(
                 "SHA256 mismatch for {} (expected: {}, got: {})",
@@ -98,10 +95,7 @@ pub async fn verify_file_integrity(
     }
 
     if let Some(expected) = normalize_expected(expected_md5) {
-        let actual = md5_file(path)
-            .await?
-            .trim()
-            .to_ascii_lowercase();
+        let actual = md5_file(path).await?.trim().to_ascii_lowercase();
         if actual != expected {
             return Err(format!(
                 "MD5 mismatch for {} (expected: {}, got: {})",

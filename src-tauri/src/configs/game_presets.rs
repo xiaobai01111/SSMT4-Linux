@@ -349,12 +349,7 @@ mod tests {
         let preset = map
             .get("WutheringWaves")
             .expect("WutheringWaves preset should exist");
-        assert!(
-            !preset
-                .legacy_ids
-                .iter()
-                .any(|alias| alias.ends_with("MI"))
-        );
+        assert!(!preset.legacy_ids.iter().any(|alias| alias.ends_with("MI")));
     }
 
     #[test]
@@ -416,10 +411,8 @@ mod tests {
         }];
         normalize_download_servers(&mut servers);
         assert_eq!(servers.len(), 1);
-        assert!(
-            servers[0]
-                .launcher_api
-                .contains("/launcher/get_latest_launcher?appcode=abYeZZ16BPluCFyT")
-        );
+        assert!(servers[0]
+            .launcher_api
+            .contains("/launcher/get_latest_launcher?appcode=abYeZZ16BPluCFyT"));
     }
 }

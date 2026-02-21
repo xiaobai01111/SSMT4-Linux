@@ -4,10 +4,10 @@ use crate::wine::{detector, prefix};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
-use std::process::Stdio;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tracing::{error, info, warn};
@@ -91,14 +91,7 @@ pub async fn start_game(
     game_exe_path: String,
     wine_version_id: String,
 ) -> Result<String, String> {
-    start_game_internal(
-        app,
-        game_name,
-        game_exe_path,
-        wine_version_id,
-        None,
-    )
-    .await
+    start_game_internal(app, game_name, game_exe_path, wine_version_id, None).await
 }
 
 #[tauri::command]
@@ -108,10 +101,10 @@ pub async fn launch_game(
     region: Option<String>,
 ) -> Result<String, String> {
     let game_name = crate::configs::game_identity::to_canonical_or_keep(&game_name);
-    let content = db::get_game_config(&game_name)
-        .ok_or_else(|| format!("未找到游戏配置: {}", game_name))?;
-    let config_data: Value = serde_json::from_str(&content)
-        .map_err(|e| format!("解析游戏配置失败: {}", e))?;
+    let content =
+        db::get_game_config(&game_name).ok_or_else(|| format!("未找到游戏配置: {}", game_name))?;
+    let config_data: Value =
+        serde_json::from_str(&content).map_err(|e| format!("解析游戏配置失败: {}", e))?;
 
     let game_exe_path = read_non_empty_string(
         config_data
@@ -136,14 +129,7 @@ pub async fn launch_game(
         return Err("未配置 Wine/Proton 版本".to_string());
     }
 
-    start_game_internal(
-        app,
-        game_name,
-        game_exe_path,
-        wine_version_id,
-        region,
-    )
-    .await
+    start_game_internal(app, game_name, game_exe_path, wine_version_id, region).await
 }
 
 async fn start_game_internal(
@@ -155,16 +141,16 @@ async fn start_game_internal(
 ) -> Result<String, String> {
     let game_name = crate::configs::game_identity::to_canonical_or_keep(&game_name);
     let _launch_guard = process_monitor::acquire_launch_guard(&game_name)?;
-    
+
     // 检查游戏是否已在运行
     if process_monitor::is_game_running(&game_name).await {
         warn!("游戏 {} 已在运行，拒绝重复启动", game_name);
         return Err("游戏已在运行中，请勿重复启动".to_string());
     }
-    
+
     // 清理已结束的进程记录
     process_monitor::cleanup_stale_processes().await;
-    
+
     let game_exe = PathBuf::from(&game_exe_path);
     if !game_exe.exists() {
         return Err(format!("Game executable not found: {}", game_exe_path));
@@ -185,8 +171,11 @@ async fn start_game_internal(
         preset_meta,
         launch_launcher_api.as_deref(),
     );
-    let launch_region =
-        resolve_launch_region(game_config_data.as_ref(), preset_meta, region_override.as_deref());
+    let launch_region = resolve_launch_region(
+        game_config_data.as_ref(),
+        preset_meta,
+        region_override.as_deref(),
+    );
     let write_scope_region = process_monitor::derive_region_scope(
         launch_launcher_api.as_deref(),
         launch_biz_prefix.as_deref(),
@@ -609,7 +598,8 @@ async fn start_game_internal(
         }
     }
 
-    if launch_profile.runtime_flags.force_direct_proton && launch_profile.runner == LaunchRunner::UmuRun
+    if launch_profile.runtime_flags.force_direct_proton
+        && launch_profile.runner == LaunchRunner::UmuRun
     {
         warn!("LaunchProfile 配置为 forceDirectProton，runner 已从 umu_run 回退为 proton");
         launch_profile.runner = if launch_profile.runtime_flags.use_pressure_vessel {
@@ -642,8 +632,7 @@ async fn start_game_internal(
         launch_profile.working_dir
     );
 
-    let mut cmd = if launch_profile.runtime_flags.sandbox_enabled && !command_spec.use_umu_runtime
-    {
+    let mut cmd = if launch_profile.runtime_flags.sandbox_enabled && !command_spec.use_umu_runtime {
         info!(
             "Launching with bwrap sandbox (isolate_home={})",
             launch_profile.runtime_flags.sandbox_isolate_home
@@ -957,12 +946,16 @@ fn load_global_launch_profile_patch() -> Option<LaunchProfilePatch> {
     None
 }
 
-fn extract_launch_profile_patch(config: &Value, region: Option<&str>) -> Option<LaunchProfilePatch> {
+fn extract_launch_profile_patch(
+    config: &Value,
+    region: Option<&str>,
+) -> Option<LaunchProfilePatch> {
     let mut candidates = Vec::new();
 
     match region.and_then(normalize_non_empty) {
         Some(region_key) => {
-            if let Some(v) = lookup_region_profile(config.pointer("/other/launchProfiles"), &region_key)
+            if let Some(v) =
+                lookup_region_profile(config.pointer("/other/launchProfiles"), &region_key)
             {
                 candidates.push(v);
             }
@@ -977,7 +970,8 @@ fn extract_launch_profile_patch(config: &Value, region: Option<&str>) -> Option<
             if let Some(v) = config.pointer("/launchProfile") {
                 candidates.push(v);
             }
-            if let Some(v) = lookup_region_profile(config.pointer("/other/launchProfiles"), "default")
+            if let Some(v) =
+                lookup_region_profile(config.pointer("/other/launchProfiles"), "default")
             {
                 candidates.push(v);
             }
@@ -1026,11 +1020,7 @@ fn lookup_region_profile<'a>(profiles: Option<&'a Value>, region: &str) -> Optio
 }
 
 fn apply_launch_profile_patch(profile: &mut LaunchProfile, patch: LaunchProfilePatch) {
-    if let Some(runner) = patch
-        .runner
-        .as_deref()
-        .and_then(parse_launch_runner)
-    {
+    if let Some(runner) = patch.runner.as_deref().and_then(parse_launch_runner) {
         profile.runner = runner;
     }
 
@@ -1104,7 +1094,8 @@ fn resolve_launch_command(
     let mut merged_args = extra_args.to_vec();
     merged_args.extend_from_slice(&launch_profile.args);
 
-    if launch_profile.runtime_flags.force_direct_proton && launch_profile.runner == LaunchRunner::UmuRun
+    if launch_profile.runtime_flags.force_direct_proton
+        && launch_profile.runner == LaunchRunner::UmuRun
     {
         launch_profile.runner = if launch_profile.runtime_flags.use_pressure_vessel {
             LaunchRunner::PressureVessel
@@ -1475,8 +1466,7 @@ fn is_tos_risk_acknowledged() -> bool {
 }
 
 fn read_non_empty_string(v: Option<&Value>) -> Option<String> {
-    v.and_then(|x| x.as_str())
-        .and_then(normalize_non_empty)
+    v.and_then(|x| x.as_str()).and_then(normalize_non_empty)
 }
 
 fn load_game_config_json(game_name: &str) -> Option<Value> {

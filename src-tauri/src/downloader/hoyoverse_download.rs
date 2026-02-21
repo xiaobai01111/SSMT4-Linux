@@ -317,7 +317,10 @@ async fn download_file_to_disk_chunked(
         let end = (start + PARALLEL_CHUNK_SIZE - 1).min(expected_size - 1);
 
         let handle = tokio::spawn(async move {
-            let _permit = sem.acquire().await.map_err(|e| format!("信号量错误: {}", e))?;
+            let _permit = sem
+                .acquire()
+                .await
+                .map_err(|e| format!("信号量错误: {}", e))?;
             if *cancel.lock().await {
                 return Err("Download cancelled".to_string());
             }
@@ -1287,7 +1290,11 @@ async fn execute_plan(
                     )
                     .await?;
                     Ok::<(usize, PathBuf, u64, bool, String), String>((
-                        idx, path, file_size, is_old, digest_token,
+                        idx,
+                        path,
+                        file_size,
+                        is_old,
+                        digest_token,
                     ))
                 });
                 hash_handles.push(handle);
@@ -1782,9 +1789,11 @@ fn create_install_staging_dir(game_folder: &Path, tag: &str) -> PathBuf {
             }
         })
         .collect();
-    game_folder
-        .join(".ssmt4_staging")
-        .join(format!("{}-{}", if tag.is_empty() { "install" } else { &tag }, ts))
+    game_folder.join(".ssmt4_staging").join(format!(
+        "{}-{}",
+        if tag.is_empty() { "install" } else { &tag },
+        ts
+    ))
 }
 
 fn normalize_digest(input: &str) -> Option<String> {

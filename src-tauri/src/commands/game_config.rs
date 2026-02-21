@@ -1074,25 +1074,10 @@ fn get_user_games_dir() -> Result<PathBuf, String> {
 }
 
 fn get_resource_games_dirs(app: &tauri::AppHandle) -> Result<Vec<PathBuf>, String> {
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .map_err(|e| format!("Failed to get resource dir: {}", e))?;
-
-    let mut candidates = Vec::new();
-    let prod = resource_dir.join("resources").join("Games");
-    if prod.exists() {
-        candidates.push(prod);
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        crate::utils::data_parameters::set_resource_dir(resource_dir);
     }
-
-    let dev = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("resources")
-        .join("Games");
-    if dev.exists() {
-        candidates.push(dev);
-    }
-
-    Ok(candidates)
+    Ok(crate::utils::data_parameters::resolve_games_dirs())
 }
 
 fn find_game_dir_by_logic_name(games_dir: &std::path::Path, game_name: &str) -> Option<PathBuf> {

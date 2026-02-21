@@ -16,6 +16,13 @@ pub struct GameInfo {
     pub show_sidebar: bool,
 }
 
+fn is_readable_file(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .map(|m| m.is_file())
+        .unwrap_or(false)
+        && std::fs::File::open(path).is_ok()
+}
+
 fn get_default_display_name(game_key: &str) -> String {
     crate::configs::game_identity::display_name_en_for_key(game_key)
         .unwrap_or_else(|| game_key.to_string())
@@ -27,8 +34,8 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
     let hidden_games = load_hidden_games(&user_games_dir);
 
     let mut scan_dirs = vec![user_games_dir.clone()];
-    if let Some(resource_games_dir) = get_resource_games_dir(&app)? {
-        if resource_games_dir != user_games_dir {
+    for resource_games_dir in get_resource_games_dirs(&app)? {
+        if resource_games_dir != user_games_dir && !scan_dirs.contains(&resource_games_dir) {
             scan_dirs.push(resource_games_dir);
         }
     }
@@ -104,11 +111,11 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
         // Icon: 用户目录优先，资源目录回退
         let icon_path = {
             let user_icon = game_path.join("Icon.png");
-            if user_icon.exists() {
+            if is_readable_file(&user_icon) {
                 user_icon
             } else if let Some(rp) = resource_path {
                 let res_icon = rp.join("Icon.png");
-                if res_icon.exists() {
+                if is_readable_file(&res_icon) {
                     res_icon
                 } else {
                     user_icon
@@ -121,11 +128,11 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
         // Config: 用户目录优先，资源目录回退
         let config_path = {
             let user_cfg = game_path.join("Config.json");
-            if user_cfg.exists() {
+            if is_readable_file(&user_cfg) {
                 user_cfg
             } else if let Some(rp) = resource_path {
                 let res_cfg = rp.join("Config.json");
-                if res_cfg.exists() {
+                if is_readable_file(&res_cfg) {
                     res_cfg
                 } else {
                     user_cfg
@@ -187,7 +194,7 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
         games.push(GameInfo {
             name: game_id.clone(),
             display_name,
-            icon_path: if icon_path.exists() {
+            icon_path: if is_readable_file(&icon_path) {
                 icon_path.to_string_lossy().to_string()
             } else {
                 String::new()
@@ -218,7 +225,7 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
 fn find_background_image(game_dir: &Path) -> Option<String> {
     for ext in &["png", "jpg", "jpeg", "webp"] {
         let path = game_dir.join(format!("Background.{}", ext));
-        if path.exists() {
+        if is_readable_file(&path) {
             return Some(path.to_string_lossy().to_string());
         }
     }
@@ -228,7 +235,7 @@ fn find_background_image(game_dir: &Path) -> Option<String> {
 fn find_background_video(game_dir: &Path) -> Option<String> {
     for ext in &["mp4", "webm"] {
         let path = game_dir.join(format!("Background.{}", ext));
-        if path.exists() {
+        if is_readable_file(&path) {
             return Some(path.to_string_lossy().to_string());
         }
     }
@@ -273,25 +280,11 @@ fn get_user_games_dir() -> Result<PathBuf, String> {
     Ok(games_dir)
 }
 
-fn get_resource_games_dir(app: &tauri::AppHandle) -> Result<Option<PathBuf>, String> {
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .map_err(|e| format!("Failed to get resource dir: {}", e))?;
-    let prod_path = resource_dir.join("resources").join("Games");
-    if prod_path.exists() {
-        return Ok(Some(prod_path));
+fn get_resource_games_dirs(app: &tauri::AppHandle) -> Result<Vec<PathBuf>, String> {
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        crate::utils::data_parameters::set_resource_dir(resource_dir);
     }
-
-    // 开发模式回退
-    let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("resources")
-        .join("Games");
-    if dev_path.exists() {
-        return Ok(Some(dev_path));
-    }
-
-    Ok(None)
+    Ok(crate::utils::data_parameters::resolve_games_dirs())
 }
 
 // ============================================================
@@ -354,7 +347,7 @@ pub fn list_game_templates(app: tauri::AppHandle) -> Result<Vec<GameTemplateInfo
         }
 
         let icon_path = entry.path().join("Icon.png");
-        let has_icon = icon_path.exists();
+        let has_icon = is_readable_file(&icon_path);
 
         // 读取 Config.json 获取 gameId 和 displayName
         let config_data: Option<serde_json::Value> = std::fs::read_to_string(&config_path)

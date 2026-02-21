@@ -1,16 +1,15 @@
+use regex::Regex;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tracing::{info, warn};
 
 /// 缓存上次成功获取的远程版本列表（按 variant 分别缓存）
-static DXVK_CACHE: std::sync::OnceLock<Mutex<Vec<DxvkRemoteVersion>>> = std::sync::OnceLock::new();
-static GPLASYNC_CACHE: std::sync::OnceLock<Mutex<Vec<DxvkRemoteVersion>>> = std::sync::OnceLock::new();
+static DXVK_VARIANT_CACHE: std::sync::OnceLock<Mutex<HashMap<String, Vec<DxvkRemoteVersion>>>> =
+    std::sync::OnceLock::new();
 
-fn get_dxvk_cache() -> &'static Mutex<Vec<DxvkRemoteVersion>> {
-    DXVK_CACHE.get_or_init(|| Mutex::new(Vec::new()))
-}
-fn get_gplasync_cache() -> &'static Mutex<Vec<DxvkRemoteVersion>> {
-    GPLASYNC_CACHE.get_or_init(|| Mutex::new(Vec::new()))
+fn get_variant_cache() -> &'static Mutex<HashMap<String, Vec<DxvkRemoteVersion>>> {
+    DXVK_VARIANT_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -29,7 +28,7 @@ pub struct VulkanInfo {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DxvkLocalVersion {
     pub version: String,
-    /// 变体: "dxvk" 或 "gplasync"
+    /// 变体标识（由 Data-parameters/dxvk/*.json 定义）
     pub variant: String,
     /// 是否已解压（可直接安装）
     pub extracted: bool,
@@ -41,7 +40,7 @@ pub struct DxvkLocalVersion {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DxvkRemoteVersion {
     pub version: String,
-    /// 变体: "dxvk" 或 "gplasync"
+    /// 变体标识（由 Data-parameters/dxvk/*.json 定义）
     pub variant: String,
     pub tag_name: String,
     pub download_url: String,
@@ -62,6 +61,356 @@ pub struct DxvkInstalledStatus {
     pub dlls_found: Vec<String>,
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DxvkCatalogSeed {
+    #[serde(default = "default_dxvk_catalog_schema")]
+    schema_version: u32,
+    #[serde(default)]
+    variants: Vec<DxvkVariantSource>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DxvkVariantSource {
+    id: String,
+    #[serde(default)]
+    display_name: String,
+    #[serde(default)]
+    provider: String,
+    #[serde(default)]
+    repo: String,
+    #[serde(default)]
+    endpoint: String,
+    #[serde(default)]
+    asset_pattern: String,
+    #[serde(default)]
+    download_url_template: String,
+    #[serde(default)]
+    archive_name_template: String,
+    #[serde(default)]
+    include_prerelease: bool,
+    #[serde(default = "default_dxvk_variant_enabled")]
+    enabled: bool,
+    #[serde(default)]
+    note: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DxvkVariantIndex {
+    #[serde(default = "default_dxvk_catalog_schema")]
+    schema_version: u32,
+    #[serde(default)]
+    variants: Vec<DxvkVariantIndexItem>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DxvkVariantIndexItem {
+    id: String,
+    #[serde(default)]
+    path: String,
+    #[serde(default = "default_dxvk_variant_enabled")]
+    enabled: bool,
+}
+
+fn default_dxvk_catalog_schema() -> u32 {
+    1
+}
+
+fn default_dxvk_variant_enabled() -> bool {
+    true
+}
+
+fn default_dxvk_variants() -> Vec<DxvkVariantSource> {
+    vec![
+        DxvkVariantSource {
+            id: "dxvk".to_string(),
+            display_name: "DXVK".to_string(),
+            provider: "github_releases".to_string(),
+            repo: "doitsujin/dxvk".to_string(),
+            endpoint: String::new(),
+            asset_pattern: "(?i)^dxvk-.*\\.tar\\.gz$".to_string(),
+            download_url_template:
+                "https://github.com/doitsujin/dxvk/releases/download/v{version}/{archive}"
+                    .to_string(),
+            archive_name_template: "dxvk-{version}.tar.gz".to_string(),
+            include_prerelease: false,
+            enabled: true,
+            note: "fallback".to_string(),
+        },
+        DxvkVariantSource {
+            id: "gplasync".to_string(),
+            display_name: "DXVK-GPLAsync".to_string(),
+            provider: "gitlab_tree".to_string(),
+            repo: "Ph42oN/dxvk-gplasync".to_string(),
+            endpoint:
+                "https://gitlab.com/api/v4/projects/Ph42oN%2Fdxvk-gplasync/repository/tree?path=releases&per_page={limit}"
+                    .to_string(),
+            asset_pattern: "(?i)^dxvk-gplasync-.*\\.tar\\.gz$".to_string(),
+            download_url_template:
+                "https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/{archive}"
+                    .to_string(),
+            archive_name_template: "dxvk-gplasync-v{version}.tar.gz".to_string(),
+            include_prerelease: false,
+            enabled: true,
+            note: "fallback".to_string(),
+        },
+    ]
+}
+
+fn load_dxvk_variants_from_modules() -> Result<Vec<DxvkVariantSource>, String> {
+    let index_raw = crate::utils::data_parameters::read_data_json("dxvk/index.json")?;
+    let index = serde_json::from_str::<DxvkVariantIndex>(&index_raw)
+        .map_err(|e| format!("解析 dxvk/index.json 失败: {}", e))?;
+
+    let mut result = Vec::new();
+    for item in index.variants {
+        if !item.enabled {
+            continue;
+        }
+        let id = item.id.trim();
+        if id.is_empty() {
+            continue;
+        }
+        let file = if item.path.trim().is_empty() {
+            format!("{}.json", id)
+        } else {
+            item.path.trim().to_string()
+        };
+        let relative = format!("dxvk/{}", file.trim_start_matches(['/', '\\']));
+        let raw = crate::utils::data_parameters::read_data_json(&relative)
+            .map_err(|e| format!("读取 {} 失败: {}", relative, e))?;
+        let mut variant = serde_json::from_str::<DxvkVariantSource>(&raw)
+            .map_err(|e| format!("解析 {} 失败: {}", relative, e))?;
+        if variant.id.trim().is_empty() {
+            variant.id = id.to_string();
+        }
+        result.push(variant);
+    }
+
+    if result.is_empty() {
+        return Err("dxvk/index.json 中没有可用 variants".to_string());
+    }
+
+    info!(
+        "DXVK 模块化配置已加载: schema={}, variants={}",
+        index.schema_version,
+        result.len()
+    );
+    Ok(result)
+}
+
+static DXVK_VARIANTS: std::sync::OnceLock<Vec<DxvkVariantSource>> = std::sync::OnceLock::new();
+
+fn load_dxvk_variants() -> &'static Vec<DxvkVariantSource> {
+    DXVK_VARIANTS.get_or_init(|| {
+        match load_dxvk_variants_from_modules() {
+            Ok(variants) => return variants,
+            Err(e) => {
+                warn!("读取模块化 DXVK 配置失败，回退 catalog: {}", e);
+            }
+        }
+
+        let json = match crate::utils::data_parameters::read_catalog_json("dxvk_catalog.json") {
+            Ok(content) => content,
+            Err(e) => {
+                warn!("读取 DXVK catalog 失败，回退内置默认值: {}", e);
+                return default_dxvk_variants();
+            }
+        };
+        match serde_json::from_str::<DxvkCatalogSeed>(&json) {
+            Ok(seed) => {
+                info!(
+                    "DXVK catalog 已加载: schema={}, variants={}",
+                    seed.schema_version,
+                    seed.variants.len()
+                );
+                if seed.variants.is_empty() {
+                    default_dxvk_variants()
+                } else {
+                    seed.variants
+                }
+            }
+            Err(e) => {
+                warn!("解析 DXVK catalog 失败，回退内置默认值: {}", e);
+                default_dxvk_variants()
+            }
+        }
+    })
+}
+
+fn find_dxvk_variant(variant: &str) -> Option<DxvkVariantSource> {
+    let key = variant.trim();
+    if key.is_empty() {
+        return None;
+    }
+    load_dxvk_variants()
+        .iter()
+        .find(|item| item.enabled && item.id.eq_ignore_ascii_case(key))
+        .cloned()
+}
+
+fn variant_cache_key(variant: &str) -> String {
+    variant.trim().to_ascii_lowercase()
+}
+
+fn get_cached_variant_versions(variant: &str) -> Vec<DxvkRemoteVersion> {
+    let key = variant_cache_key(variant);
+    if key.is_empty() {
+        return Vec::new();
+    }
+    match get_variant_cache().lock() {
+        Ok(cache) => cache.get(&key).cloned().unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn set_cached_variant_versions(variant: &str, versions: Vec<DxvkRemoteVersion>) {
+    let key = variant_cache_key(variant);
+    if key.is_empty() {
+        return;
+    }
+    if let Ok(mut cache) = get_variant_cache().lock() {
+        cache.insert(key, versions);
+    }
+}
+
+fn render_source_template(template: &str, version: &str, archive: &str, limit: usize) -> String {
+    template
+        .replace("{version}", version)
+        .replace("{archive}", archive)
+        .replace("{limit}", &limit.to_string())
+}
+
+fn matches_asset_pattern(name: &str, pattern: &str) -> bool {
+    let p = pattern.trim();
+    if p.is_empty() {
+        return name.ends_with(".tar.gz") && name.contains("dxvk");
+    }
+    if let Ok(re) = Regex::new(p) {
+        return re.is_match(name);
+    }
+    name.contains(p)
+}
+
+fn extract_version_by_template(name: &str, archive_name_template: &str) -> Option<String> {
+    let template = archive_name_template.trim();
+    if template.is_empty() || !template.contains("{version}") {
+        return None;
+    }
+    let mut parts = template.split("{version}");
+    let prefix = parts.next().unwrap_or_default();
+    let suffix = parts.next().unwrap_or_default();
+    if parts.next().is_some() {
+        return None;
+    }
+    if !name.starts_with(prefix) || !name.ends_with(suffix) {
+        return None;
+    }
+    let start = prefix.len();
+    let end = name.len().saturating_sub(suffix.len());
+    if end <= start {
+        return None;
+    }
+    let version = &name[start..end];
+    if version.trim().is_empty() {
+        None
+    } else {
+        Some(version.to_string())
+    }
+}
+
+fn strip_archive_suffix(value: &str) -> &str {
+    for suffix in [".tar.gz", ".tar.xz", ".tar.zst", ".zip"] {
+        if let Some(stripped) = value.strip_suffix(suffix) {
+            return stripped;
+        }
+    }
+    value
+}
+
+fn is_supported_archive_name(name: &str) -> bool {
+    [".tar.gz", ".tar.xz", ".tar.zst", ".zip"]
+        .iter()
+        .any(|suffix| name.ends_with(suffix))
+}
+
+fn detect_local_variant_version(
+    name: &str,
+    is_dir: bool,
+    variants: &[DxvkVariantSource],
+) -> Option<(String, String)> {
+    let mut best_match: Option<(usize, String, String)> = None;
+
+    for source in variants {
+        if !source.enabled || source.id.trim().is_empty() {
+            continue;
+        }
+        let template = source.archive_name_template.trim();
+        if template.is_empty() {
+            continue;
+        }
+
+        let mut candidates: Vec<(String, &str)> = Vec::new();
+        if is_dir {
+            if let Some(version) = extract_version_by_template(name, template) {
+                candidates.push((version, template));
+            }
+            let stripped_template = strip_archive_suffix(template);
+            if stripped_template != template {
+                if let Some(version) = extract_version_by_template(name, stripped_template) {
+                    candidates.push((version, stripped_template));
+                }
+            }
+        } else {
+            if let Some(version) = extract_version_by_template(name, template) {
+                candidates.push((version, template));
+            }
+            let stripped_name = strip_archive_suffix(name);
+            let stripped_template = strip_archive_suffix(template);
+            if let Some(version) = extract_version_by_template(stripped_name, stripped_template) {
+                candidates.push((version, stripped_template));
+            }
+        }
+
+        for (version, matched_template) in candidates {
+            if !version.trim().is_empty() {
+                let specificity = matched_template.replace("{version}", "").len();
+                let should_replace = match best_match.as_ref() {
+                    Some((score, _, _)) => specificity > *score,
+                    None => true,
+                };
+                if should_replace {
+                    best_match = Some((specificity, source.id.clone(), version));
+                }
+            }
+        }
+    }
+
+    if let Some((_, variant, version)) = best_match {
+        return Some((variant, version));
+    }
+
+    // 兼容历史命名规则
+    let normalized = strip_archive_suffix(name);
+    if let Some(version) = normalized
+        .strip_prefix("dxvk-gplasync-v")
+        .or_else(|| normalized.strip_prefix("dxvk-gplasync-"))
+    {
+        if !version.trim().is_empty() {
+            return Some(("gplasync".to_string(), version.to_string()));
+        }
+    }
+    if let Some(version) = normalized.strip_prefix("dxvk-") {
+        if !version.trim().is_empty() {
+            return Some(("dxvk".to_string(), version.to_string()));
+        }
+    }
+    None
+}
+
 /// 扫描本地缓存的 DXVK 版本（tools/dxvk/ 目录）
 pub fn scan_local_dxvk_versions() -> Vec<DxvkLocalVersion> {
     let cache_dir = crate::utils::file_manager::get_tools_dir().join("dxvk");
@@ -69,101 +418,75 @@ pub fn scan_local_dxvk_versions() -> Vec<DxvkLocalVersion> {
         return Vec::new();
     }
 
-    let mut versions = Vec::new();
+    let variants = load_dxvk_variants();
+    let mut by_key: HashMap<(String, String), DxvkLocalVersion> = HashMap::new();
+
+    let mut upsert = |variant: String, version: String, extracted: bool, path: PathBuf| match by_key
+        .get_mut(&(variant.clone(), version.clone()))
+    {
+        Some(existing) => {
+            // 同一版本同时存在压缩包与已解压目录时，优先保留已解压条目
+            if extracted && !existing.extracted {
+                existing.extracted = true;
+                existing.path = path;
+            }
+        }
+        None => {
+            by_key.insert(
+                (variant.clone(), version.clone()),
+                DxvkLocalVersion {
+                    version,
+                    variant,
+                    extracted,
+                    path,
+                },
+            );
+        }
+    };
+
     if let Ok(entries) = std::fs::read_dir(&cache_dir) {
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
-            if !path.is_dir() {
+            let is_dir = path.is_dir();
+            let is_file = path.is_file();
+            if !is_dir && !is_file {
                 continue;
             }
+
             let name = path
                 .file_name()
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
-            let has_x64 = path.join("x64").exists();
-            let has_x32 = path.join("x32").exists();
-            let extracted = has_x64 || has_x32;
-
-            // 目录名格式: dxvk-gplasync-v{version} 或 dxvk-{version}
-            if let Some(ver) = name.strip_prefix("dxvk-gplasync-v") {
-                versions.push(DxvkLocalVersion {
-                    version: ver.to_string(),
-                    variant: "gplasync".to_string(),
-                    extracted,
-                    path,
-                });
-            } else if let Some(ver) = name.strip_prefix("dxvk-gplasync-") {
-                versions.push(DxvkLocalVersion {
-                    version: ver.to_string(),
-                    variant: "gplasync".to_string(),
-                    extracted,
-                    path,
-                });
-            } else if let Some(ver) = name.strip_prefix("dxvk-") {
-                versions.push(DxvkLocalVersion {
-                    version: ver.to_string(),
-                    variant: "dxvk".to_string(),
-                    extracted,
-                    path,
-                });
-            }
-        }
-    }
-
-    // 同时检查 tar.gz 压缩包（已下载未解压）
-    if let Ok(entries) = std::fs::read_dir(&cache_dir) {
-        for entry in entries.filter_map(|e| e.ok()) {
-            let path = entry.path();
-            let name = path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            if !name.ends_with(".tar.gz") {
+            if name.trim().is_empty() {
                 continue;
             }
 
-            // dxvk-gplasync-v{ver}.tar.gz
-            if let Some(ver) = name
-                .strip_prefix("dxvk-gplasync-v")
-                .and_then(|s| s.strip_suffix(".tar.gz"))
-            {
-                if !ver.is_empty()
-                    && !versions
-                        .iter()
-                        .any(|v| v.version == ver && v.variant == "gplasync")
-                {
-                    versions.push(DxvkLocalVersion {
-                        version: ver.to_string(),
-                        variant: "gplasync".to_string(),
-                        extracted: false,
-                        path,
-                    });
-                }
+            if is_file && !is_supported_archive_name(&name) {
+                continue;
             }
-            // dxvk-{ver}.tar.gz (official)
-            else if let Some(ver) = name
-                .strip_prefix("dxvk-")
-                .and_then(|s| s.strip_suffix(".tar.gz"))
-            {
-                if !ver.is_empty()
-                    && !versions
-                        .iter()
-                        .any(|v| v.version == ver && v.variant == "dxvk")
-                {
-                    versions.push(DxvkLocalVersion {
-                        version: ver.to_string(),
-                        variant: "dxvk".to_string(),
-                        extracted: false,
-                        path,
-                    });
-                }
-            }
+
+            let Some((variant, version)) = detect_local_variant_version(&name, is_dir, variants)
+            else {
+                continue;
+            };
+
+            let extracted = if is_dir {
+                path.join("x64").exists() || path.join("x32").exists()
+            } else {
+                false
+            };
+
+            upsert(variant, version, extracted, path);
         }
     }
 
-    versions.sort_by(|a, b| b.version.cmp(&a.version));
+    let mut versions: Vec<DxvkLocalVersion> = by_key.into_values().collect();
+    versions.sort_by(|a, b| {
+        b.version
+            .cmp(&a.version)
+            .then_with(|| a.variant.cmp(&b.variant))
+    });
     versions
 }
 
@@ -352,14 +675,18 @@ fn match_dxvk_version_by_size(dirs: &[PathBuf]) -> Option<String> {
     None
 }
 
-/// 从指定 GitHub 仓库获取 DXVK 版本列表
+/// 从 GitHub releases 获取 DXVK 版本列表
 async fn fetch_dxvk_from_repo(
-    repo: &str,
-    variant: &str,
+    source: &DxvkVariantSource,
     max_count: usize,
     local_versions: &[DxvkLocalVersion],
     github_token: Option<&str>,
 ) -> Result<Vec<DxvkRemoteVersion>, String> {
+    let repo = source.repo.trim();
+    if repo.is_empty() {
+        return Err(format!("DXVK source '{}' 缺少 repo", source.id));
+    }
+
     let url = format!(
         "https://api.github.com/repos/{}/releases?per_page={}",
         repo, max_count
@@ -389,6 +716,14 @@ async fn fetch_dxvk_from_repo(
 
     let mut result = Vec::new();
     for release in &releases {
+        let prerelease = release
+            .get("prerelease")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if prerelease && !source.include_prerelease {
+            continue;
+        }
+
         let tag_name = release
             .get("tag_name")
             .and_then(|v| v.as_str())
@@ -406,7 +741,7 @@ async fn fetch_dxvk_from_repo(
         if let Some(assets) = assets {
             for asset in assets {
                 let name = asset.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                if name.ends_with(".tar.gz") && name.contains("dxvk") {
+                if matches_asset_pattern(name, &source.asset_pattern) {
                     let download_url = asset
                         .get("browser_download_url")
                         .and_then(|v| v.as_str())
@@ -415,22 +750,21 @@ async fn fetch_dxvk_from_repo(
                     let file_size = asset.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
 
                     // 从 asset 文件名提取版本号
-                    let version = extract_version_from_asset(name, variant)
-                        .unwrap_or_else(|| {
-                            tag_name
-                                .strip_prefix('v')
-                                .or_else(|| tag_name.strip_prefix("gplasync-v"))
-                                .unwrap_or(&tag_name)
-                                .to_string()
-                        });
+                    let version = extract_version_from_asset(name, source).unwrap_or_else(|| {
+                        tag_name
+                            .strip_prefix('v')
+                            .or_else(|| tag_name.strip_prefix("gplasync-v"))
+                            .unwrap_or(&tag_name)
+                            .to_string()
+                    });
 
                     let is_local = local_versions
                         .iter()
-                        .any(|v| v.version == version && v.variant == variant);
+                        .any(|v| v.version == version && v.variant == source.id);
 
                     result.push(DxvkRemoteVersion {
                         version,
-                        variant: variant.to_string(),
+                        variant: source.id.clone(),
                         tag_name: tag_name.clone(),
                         download_url,
                         file_size,
@@ -447,9 +781,13 @@ async fn fetch_dxvk_from_repo(
 }
 
 /// 从 asset 文件名提取版本号
-fn extract_version_from_asset(name: &str, variant: &str) -> Option<String> {
+fn extract_version_from_asset(name: &str, source: &DxvkVariantSource) -> Option<String> {
+    if let Some(v) = extract_version_by_template(name, &source.archive_name_template) {
+        return Some(v);
+    }
+
     let stem = name.strip_suffix(".tar.gz")?;
-    match variant {
+    match source.id.to_ascii_lowercase().as_str() {
         "gplasync" => {
             // dxvk-gplasync-v2.5.1 → 2.5.1
             stem.strip_prefix("dxvk-gplasync-v")
@@ -465,14 +803,17 @@ fn extract_version_from_asset(name: &str, variant: &str) -> Option<String> {
 
 /// 从 GitLab 仓库 releases/ 目录获取 DXVK-GPLAsync 版本列表
 async fn fetch_dxvk_gplasync_from_gitlab(
+    source: &DxvkVariantSource,
     max_count: usize,
     local_versions: &[DxvkLocalVersion],
 ) -> Result<Vec<DxvkRemoteVersion>, String> {
+    let endpoint = source.endpoint.trim();
+    if endpoint.is_empty() {
+        return Err(format!("DXVK source '{}' 缺少 endpoint", source.id));
+    }
+
     // GitLab API: 列出 releases/ 目录下的文件
-    let url = format!(
-        "https://gitlab.com/api/v4/projects/{}/repository/tree?path=releases&per_page={}",
-        "Ph42oN%2Fdxvk-gplasync", max_count
-    );
+    let url = render_source_template(endpoint, "", "", max_count);
 
     let client = reqwest::Client::new();
     let resp = client
@@ -494,27 +835,33 @@ async fn fetch_dxvk_gplasync_from_gitlab(
     let mut result = Vec::new();
     for file in &files {
         let name = file.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        if !name.ends_with(".tar.gz") || !name.contains("dxvk-gplasync") {
+        if !matches_asset_pattern(name, &source.asset_pattern) {
             continue;
         }
 
-        let version = match extract_version_from_asset(name, "gplasync") {
+        let version = match extract_version_from_asset(name, source) {
             Some(v) => v,
             None => continue,
         };
 
-        let download_url = format!(
-            "https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/{}",
-            name
-        );
+        let download_url = {
+            let template = source.download_url_template.trim();
+            if template.is_empty() {
+                return Err(format!(
+                    "DXVK source '{}' 缺少 downloadUrlTemplate",
+                    source.id
+                ));
+            }
+            render_source_template(template, &version, name, max_count)
+        };
 
         let is_local = local_versions
             .iter()
-            .any(|v| v.version == version && v.variant == "gplasync");
+            .any(|v| v.version == version && v.variant == source.id);
 
         result.push(DxvkRemoteVersion {
             version,
-            variant: "gplasync".to_string(),
+            variant: source.id.clone(),
             tag_name: name.to_string(),
             download_url,
             file_size: 0, // GitLab tree API 不返回文件大小
@@ -532,50 +879,64 @@ async fn fetch_dxvk_gplasync_from_gitlab(
     Ok(result)
 }
 
-pub async fn fetch_dxvk_releases(max_count: usize, github_token: Option<&str>) -> Result<Vec<DxvkRemoteVersion>, String> {
+pub async fn fetch_dxvk_releases(
+    max_count: usize,
+    github_token: Option<&str>,
+) -> Result<Vec<DxvkRemoteVersion>, String> {
     let local_versions = scan_local_dxvk_versions();
 
     let mut all = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
-    // 官方 DXVK (GitHub)
-    match fetch_dxvk_from_repo("doitsujin/dxvk", "dxvk", max_count, &local_versions, github_token).await {
-        Ok(v) => {
-            if let Ok(mut cache) = get_dxvk_cache().lock() {
-                *cache = v.clone();
-            }
-            all.extend(v);
-        }
-        Err(e) => {
-            warn!("获取官方 DXVK 版本失败: {}，使用缓存", e);
-            if let Ok(cache) = get_dxvk_cache().lock() {
-                if !cache.is_empty() {
-                    all.extend(cache.clone());
-                    warnings.push(format!("官方 DXVK: {} (使用缓存)", e));
-                } else {
-                    warnings.push(format!("官方 DXVK: {}", e));
-                }
-            }
-        }
-    }
+    let variants: Vec<DxvkVariantSource> = load_dxvk_variants()
+        .iter()
+        .filter(|v| v.enabled && !v.id.trim().is_empty())
+        .cloned()
+        .collect();
 
-    // DXVK-GPLAsync (GitLab)
-    match fetch_dxvk_gplasync_from_gitlab(max_count, &local_versions).await {
-        Ok(v) => {
-            if let Ok(mut cache) = get_gplasync_cache().lock() {
-                *cache = v.clone();
-            }
-            all.extend(v);
+    for source in variants {
+        let provider = source.provider.trim().to_ascii_lowercase();
+        let display_name = if source.display_name.trim().is_empty() {
+            source.id.clone()
+        } else {
+            source.display_name.clone()
+        };
+        if !source.note.trim().is_empty() {
+            info!(
+                "DXVK source loaded: {} ({}) - {}",
+                display_name, source.provider, source.note
+            );
+        } else {
+            info!("DXVK source loaded: {} ({})", display_name, source.provider);
         }
-        Err(e) => {
-            warn!("获取 DXVK-GPLAsync 版本失败: {}，使用缓存", e);
-            if let Ok(cache) = get_gplasync_cache().lock() {
-                if !cache.is_empty() {
-                    all.extend(cache.clone());
-                    warnings.push(format!("GPLAsync: {} (使用缓存)", e));
-                } else {
-                    warnings.push(format!("GPLAsync: {}", e));
+
+        let fetch_result = match provider.as_str() {
+            "github_releases" => {
+                fetch_dxvk_from_repo(&source, max_count, &local_versions, github_token).await
+            }
+            "gitlab_tree" => {
+                fetch_dxvk_gplasync_from_gitlab(&source, max_count, &local_versions).await
+            }
+            other => Err(format!(
+                "DXVK source '{}' 使用了不支持的 provider: {}",
+                source.id, other
+            )),
+        };
+
+        match fetch_result {
+            Ok(v) => {
+                set_cached_variant_versions(&source.id, v.clone());
+                all.extend(v);
+            }
+            Err(e) => {
+                warn!("获取 {} 版本失败: {}，尝试使用缓存", display_name, e);
+                let cached = get_cached_variant_versions(&source.id);
+                if !cached.is_empty() {
+                    all.extend(cached);
+                    warnings.push(format!("{}: {} (使用缓存)", display_name, e));
+                    continue;
                 }
+                warnings.push(format!("{}: {}", display_name, e));
             }
         }
     }
@@ -583,7 +944,7 @@ pub async fn fetch_dxvk_releases(max_count: usize, github_token: Option<&str>) -
     if !warnings.is_empty() {
         warn!("DXVK 版本获取警告: {:?}", warnings);
     }
-    info!("获取到 {} 个 DXVK 远程版本（含 GPLAsync）", all.len());
+    info!("获取到 {} 个 DXVK 远程版本", all.len());
     Ok(all)
 }
 
@@ -635,31 +996,80 @@ fn extract_field(text: &str, field: &str) -> Option<String> {
     None
 }
 
+fn dxvk_variant_display_name(variant: &str) -> String {
+    if let Some(source) = find_dxvk_variant(variant) {
+        if !source.display_name.trim().is_empty() {
+            return source.display_name;
+        }
+        if !source.id.trim().is_empty() {
+            return source.id;
+        }
+    }
+    if variant.eq_ignore_ascii_case("gplasync") {
+        return "DXVK-GPLAsync".to_string();
+    }
+    "DXVK".to_string()
+}
+
 /// 根据 variant 获取 DXVK 的 archive 名称和 extract 目录名
 fn dxvk_names(version: &str, variant: &str) -> (String, String) {
-    match variant {
-        "gplasync" => (
-            format!("dxvk-gplasync-v{}.tar.gz", version),
-            format!("dxvk-gplasync-v{}", version),
-        ),
-        _ => (
-            format!("dxvk-{}.tar.gz", version),
-            format!("dxvk-{}", version),
-        ),
-    }
+    let archive_name = find_dxvk_variant(variant)
+        .map(|source| {
+            let template = source.archive_name_template.trim();
+            if template.is_empty() {
+                String::new()
+            } else {
+                render_source_template(template, version, "", 0)
+            }
+        })
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| match variant {
+            "gplasync" => format!("dxvk-gplasync-v{}.tar.gz", version),
+            _ => format!("dxvk-{}.tar.gz", version),
+        });
+
+    let extract_dir_name = archive_name
+        .strip_suffix(".tar.gz")
+        .or_else(|| archive_name.strip_suffix(".tar.xz"))
+        .or_else(|| archive_name.strip_suffix(".zip"))
+        .unwrap_or(&archive_name)
+        .to_string();
+
+    (archive_name, extract_dir_name)
 }
 
 /// 根据 variant 构造 DXVK 下载 URL
 fn dxvk_download_url(version: &str, variant: &str, archive_name: &str) -> String {
+    if let Some(source) = find_dxvk_variant(variant) {
+        let template = source.download_url_template.trim();
+        if !template.is_empty() {
+            return render_source_template(template, version, archive_name, 0);
+        }
+
+        if source.provider.eq_ignore_ascii_case("github_releases") && !source.repo.trim().is_empty()
+        {
+            return format!(
+                "https://github.com/{}/releases/download/v{}/{}",
+                source.repo.trim(),
+                version,
+                archive_name
+            );
+        }
+    }
+
     match variant {
-        "gplasync" => format!(
-            "https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/{}",
-            archive_name
-        ),
-        _ => format!(
-            "https://github.com/doitsujin/dxvk/releases/download/v{}/{}",
-            version, archive_name
-        ),
+        "gplasync" => {
+            format!(
+                "https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/{}",
+                archive_name
+            )
+        }
+        _ => {
+            format!(
+                "https://github.com/doitsujin/dxvk/releases/download/v{}/{}",
+                version, archive_name
+            )
+        }
     }
 }
 
@@ -674,7 +1084,10 @@ pub async fn download_dxvk_only(dxvk_version: &str, variant: &str) -> Result<Str
 
     if !archive_path.exists() {
         let url = dxvk_download_url(dxvk_version, variant, &archive_name);
-        info!("Downloading DXVK {} ({}) from {}", dxvk_version, variant, url);
+        info!(
+            "Downloading DXVK {} ({}) from {}",
+            dxvk_version, variant, url
+        );
         download_tool(&url, &archive_path).await?;
     }
 
@@ -682,12 +1095,21 @@ pub async fn download_dxvk_only(dxvk_version: &str, variant: &str) -> Result<Str
         extract_tar_gz(&archive_path, &cache_dir)?;
     }
 
-    let label = if variant == "gplasync" { "DXVK-GPLAsync" } else { "DXVK" };
-    info!("{} {} 已缓存到 {}", label, dxvk_version, extract_dir.display());
+    let label = dxvk_variant_display_name(variant);
+    info!(
+        "{} {} 已缓存到 {}",
+        label,
+        dxvk_version,
+        extract_dir.display()
+    );
     Ok(format!("{} {} 下载完成", label, dxvk_version))
 }
 
-pub async fn install_dxvk(prefix_path: &Path, dxvk_version: &str, variant: &str) -> Result<String, String> {
+pub async fn install_dxvk(
+    prefix_path: &Path,
+    dxvk_version: &str,
+    variant: &str,
+) -> Result<String, String> {
     let cache_dir = crate::utils::file_manager::get_tools_dir().join("dxvk");
     crate::utils::file_manager::ensure_dir(&cache_dir)?;
 
@@ -698,7 +1120,10 @@ pub async fn install_dxvk(prefix_path: &Path, dxvk_version: &str, variant: &str)
     // Download if not cached
     if !archive_path.exists() {
         let url = dxvk_download_url(dxvk_version, variant, &archive_name);
-        info!("Downloading DXVK {} ({}) from {}", dxvk_version, variant, url);
+        info!(
+            "Downloading DXVK {} ({}) from {}",
+            dxvk_version, variant, url
+        );
         download_tool(&url, &archive_path).await?;
     }
 
@@ -750,24 +1175,27 @@ pub async fn install_dxvk(prefix_path: &Path, dxvk_version: &str, variant: &str)
     }
 
     if copied == 0 {
+        let label = dxvk_variant_display_name(variant);
         return Err(format!(
-            "DXVK {} 安装失败：x64 目录中未找到任何 DLL",
-            dxvk_version
+            "{} {} 安装失败：x64 目录中未找到任何 DLL",
+            label, dxvk_version
         ));
     }
 
     // 写入版本标记文件
     write_dxvk_version_marker(prefix_path, dxvk_version);
+    let label = dxvk_variant_display_name(variant);
 
     info!(
-        "Installed DXVK {} to {} ({} DLLs copied)",
+        "Installed {} {} to {} ({} DLLs copied)",
+        label,
         dxvk_version,
         prefix_path.display(),
         copied
     );
     Ok(format!(
-        "DXVK {} 安装完成（{} 个 DLL）",
-        dxvk_version, copied
+        "{} {} 安装完成（{} 个 DLL）",
+        label, dxvk_version, copied
     ))
 }
 

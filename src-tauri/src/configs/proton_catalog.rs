@@ -242,7 +242,10 @@ fn validate_catalog(catalog: &ProtonCatalog) -> Result<(), String> {
             return Err(format!("max_count 超出范围(1-100): {}", source.max_count));
         }
         if source.asset_index < -1 || source.asset_index > 100 {
-            return Err(format!("asset_index 超出范围(-1-100): {}", source.asset_index));
+            return Err(format!(
+                "asset_index 超出范围(-1-100): {}",
+                source.asset_index
+            ));
         }
     }
 

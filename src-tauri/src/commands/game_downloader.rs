@@ -431,11 +431,8 @@ pub async fn update_game_patch(
 
     let game_path = PathBuf::from(&game_folder);
     let region_scope = process_monitor::derive_region_scope(Some(&launcher_api), None, None);
-    let _write_guard = process_monitor::acquire_game_write_guard(
-        &game_path,
-        &region_scope,
-        "update_game_patch",
-    )?;
+    let _write_guard =
+        process_monitor::acquire_game_write_guard(&game_path, &region_scope, "update_game_patch")?;
     let local_version = get_local_version_internal(&game_path)
         .ok_or("No local version found, cannot do incremental update")?;
 
@@ -742,7 +739,8 @@ fn build_launcher_api_from_config(
                     format!("custom-{}", idx + 1)
                 }
             });
-            let label = read_non_empty_string(obj.get("label")).unwrap_or_else(|| "自定义".to_string());
+            let label =
+                read_non_empty_string(obj.get("label")).unwrap_or_else(|| "自定义".to_string());
             let biz_prefix = read_non_empty_string(obj.get("bizPrefix")).unwrap_or_default();
             servers.push(serde_json::json!({
                 "id": id,
@@ -902,8 +900,7 @@ pub fn resolve_downloaded_game_executable(
         return Ok(None);
     }
 
-    if let Some(path) =
-        resolve_known_game_executable(&game_preset, &root, launcher_api.as_deref())
+    if let Some(path) = resolve_known_game_executable(&game_preset, &root, launcher_api.as_deref())
     {
         return Ok(Some(path.to_string_lossy().to_string()));
     }
@@ -1289,11 +1286,15 @@ fn read_launcher_installer_meta(game_folder: &Path) -> Option<LauncherInstallerM
     serde_json::from_str::<LauncherInstallerMeta>(&content).ok()
 }
 
-fn write_launcher_installer_meta(game_folder: &Path, meta: &LauncherInstallerMeta) -> Result<(), String> {
+fn write_launcher_installer_meta(
+    game_folder: &Path,
+    meta: &LauncherInstallerMeta,
+) -> Result<(), String> {
     let path = installer_meta_path(game_folder);
     let content = serde_json::to_string_pretty(meta)
         .map_err(|e| format!("Failed to serialize launcher installer meta: {}", e))?;
-    std::fs::write(path, content).map_err(|e| format!("Failed to write launcher installer meta: {}", e))
+    std::fs::write(path, content)
+        .map_err(|e| format!("Failed to write launcher installer meta: {}", e))
 }
 
 fn remote_file_name_from_url(url: &str) -> Option<String> {
@@ -1448,7 +1449,11 @@ async fn download_launcher_installer_internal(
         downloaded += chunk.len() as u64;
         speed.record(chunk.len() as u64);
 
-        let total_for_progress = if total_size > 0 { total_size } else { downloaded };
+        let total_for_progress = if total_size > 0 {
+            total_size
+        } else {
+            downloaded
+        };
         let remaining = total_for_progress.saturating_sub(downloaded);
         let progress = DownloadProgress {
             phase: "download".to_string(),
@@ -1512,7 +1517,10 @@ mod tests {
         });
         let info = parse_launcher_installer_remote_from_value(&wrapped).expect("parse wrapped");
         assert_eq!(info.version, "1.1.1");
-        assert_eq!(info.installer_url, "https://example.com/launcher.exe?auth=1");
+        assert_eq!(
+            info.installer_url,
+            "https://example.com/launcher.exe?auth=1"
+        );
         assert_eq!(info.exe_size, Some(123456));
     }
 
@@ -1525,7 +1533,10 @@ mod tests {
         });
         let info = parse_launcher_installer_remote_from_value(&flat).expect("parse flat");
         assert_eq!(info.version, "1.1.0");
-        assert_eq!(info.installer_url, "https://example.com/launcher_global.exe");
+        assert_eq!(
+            info.installer_url,
+            "https://example.com/launcher_global.exe"
+        );
         assert_eq!(info.exe_size, Some(223344));
     }
 
@@ -1562,12 +1573,10 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("create temp dir");
 
         let installer = installer_path_for_preset(&dir, "ArknightsEndfield");
-        assert!(
-            installer
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n == "ArknightsEndfieldLauncherInstaller.exe")
-        );
+        assert!(installer
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n == "ArknightsEndfieldLauncherInstaller.exe"));
 
         let meta = LauncherInstallerMeta {
             version: "1.1.1".to_string(),

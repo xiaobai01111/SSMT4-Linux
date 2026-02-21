@@ -158,14 +158,12 @@ async fn move_file_or_copy(src: &Path, dst: &Path) -> Result<(), String> {
     match tokio::fs::rename(src, dst).await {
         Ok(_) => Ok(()),
         Err(rename_err) => {
-            tokio::fs::copy(src, dst)
-                .await
-                .map_err(|copy_err| {
-                    format!(
-                        "rename/copy 都失败 (rename: {}, copy: {})",
-                        rename_err, copy_err
-                    )
-                })?;
+            tokio::fs::copy(src, dst).await.map_err(|copy_err| {
+                format!(
+                    "rename/copy 都失败 (rename: {}, copy: {})",
+                    rename_err, copy_err
+                )
+            })?;
             tokio::fs::remove_file(src)
                 .await
                 .map_err(|e| format!("删除源文件失败 {}: {}", src.display(), e))
@@ -173,10 +171,7 @@ async fn move_file_or_copy(src: &Path, dst: &Path) -> Result<(), String> {
     }
 }
 
-async fn rollback_target_changes(
-    moved_into_target: &[PathBuf],
-    backups: &[(PathBuf, PathBuf)],
-) {
+async fn rollback_target_changes(moved_into_target: &[PathBuf], backups: &[(PathBuf, PathBuf)]) {
     for installed in moved_into_target.iter().rev() {
         tokio::fs::remove_file(installed).await.ok();
     }

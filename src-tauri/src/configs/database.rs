@@ -164,11 +164,6 @@ pub struct IdentityRecord {
     pub legacy_aliases: Vec<String>,
 }
 
-const GAME_CATALOG_SEED_JSON: &str =
-    include_str!("../../resources/bootstrap/game_catalog.seed.json");
-const PROTON_CATALOG_SEED_JSON: &str =
-    include_str!("../../resources/bootstrap/proton_catalog.seed.json");
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProtonCatalogSeed {
@@ -176,6 +171,24 @@ struct ProtonCatalogSeed {
     schema_version: u32,
     #[serde(default)]
     families: Vec<ProtonFamilySeed>,
+    #[serde(default)]
+    sources: Vec<ProtonSourceSeed>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProtonFamiliesModule {
+    #[serde(default = "default_proton_seed_schema")]
+    schema_version: u32,
+    #[serde(default)]
+    families: Vec<ProtonFamilySeed>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProtonFamilySourcesModule {
+    #[serde(default)]
+    family_key: String,
     #[serde(default)]
     sources: Vec<ProtonSourceSeed>,
 }
@@ -198,6 +211,7 @@ struct ProtonFamilySeed {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProtonSourceSeed {
+    #[serde(default)]
     family_key: String,
     #[serde(default = "default_provider")]
     provider: String,
@@ -251,8 +265,84 @@ fn default_proton_seed_schema() -> u32 {
     1
 }
 
+fn load_proton_catalog_seed() -> Result<ProtonCatalogSeed, String> {
+    if crate::utils::data_parameters::resolve_data_path("proton/families.json").is_some() {
+        let modular_result = (|| -> Result<ProtonCatalogSeed, String> {
+            let raw = crate::utils::data_parameters::read_data_json("proton/families.json")?;
+            let module = serde_json::from_str::<ProtonFamiliesModule>(&raw)
+                .map_err(|e| format!("解析 proton/families.json 失败: {}", e))?;
+
+            if module.families.is_empty() {
+                return Err("proton/families.json 中 families 为空".to_string());
+            }
+
+            let mut sources = Vec::new();
+            for family in &module.families {
+                let family_key = family.family_key.trim();
+                if family_key.is_empty() {
+                    continue;
+                }
+                let rel = format!("proton/{}/sources.json", family_key);
+                let Some(source_path) = crate::utils::data_parameters::resolve_data_path(&rel)
+                else {
+                    continue;
+                };
+
+                let source_raw = std::fs::read_to_string(&source_path)
+                    .map_err(|e| format!("读取 {} 失败: {}", source_path.display(), e))?;
+                let source_module = serde_json::from_str::<ProtonFamilySourcesModule>(&source_raw)
+                    .map_err(|e| format!("解析 {} 失败: {}", source_path.display(), e))?;
+
+                for mut source in source_module.sources {
+                    if source.family_key.trim().is_empty() {
+                        if !source_module.family_key.trim().is_empty() {
+                            source.family_key = source_module.family_key.trim().to_string();
+                        } else {
+                            source.family_key = family_key.to_string();
+                        }
+                    }
+                    sources.push(source);
+                }
+            }
+
+            Ok(ProtonCatalogSeed {
+                schema_version: module.schema_version,
+                families: module.families,
+                sources,
+            })
+        })();
+
+        match modular_result {
+            Ok(seed) => {
+                tracing::info!(
+                    "已加载模块化 Proton 配置: families={}, sources={}",
+                    seed.families.len(),
+                    seed.sources.len()
+                );
+                return Ok(seed);
+            }
+            Err(e) => {
+                tracing::warn!("读取模块化 Proton 配置失败，回退 catalog: {}", e);
+            }
+        }
+    }
+
+    let seed_json = crate::utils::data_parameters::read_catalog_json("proton_catalog.seed.json")?;
+    serde_json::from_str::<ProtonCatalogSeed>(&seed_json)
+        .map_err(|e| format!("解析 proton_catalog.seed.json 失败: {}", e))
+}
+
 fn ensure_game_catalog_seed(conn: &Connection) {
-    let seed = match serde_json::from_str::<SeedCatalog>(GAME_CATALOG_SEED_JSON) {
+    let seed_json = match crate::utils::data_parameters::read_catalog_json("game_catalog.seed.json")
+    {
+        Ok(content) => content,
+        Err(e) => {
+            tracing::error!("读取游戏目录种子失败: {}", e);
+            return;
+        }
+    };
+
+    let seed = match serde_json::from_str::<SeedCatalog>(&seed_json) {
         Ok(v) => v,
         Err(e) => {
             tracing::error!("解析游戏目录种子失败: {}", e);
@@ -295,8 +385,8 @@ fn ensure_game_catalog_seed(conn: &Connection) {
             }
             if let Err(e) = conn.execute(
                 "INSERT OR IGNORE INTO game_key_aliases (alias_key, canonical_key) VALUES (?1, ?2)",
-                    params![alias, identity.canonical_key.trim()],
-                ) {
+                params![alias, identity.canonical_key.trim()],
+            ) {
                 tracing::warn!(
                     "写入 game_key_aliases 失败: alias={}, canonical={}, err={}",
                     alias,
@@ -382,10 +472,10 @@ fn ensure_game_catalog_seed(conn: &Connection) {
 }
 
 fn ensure_proton_catalog_seed(conn: &Connection) {
-    let seed = match serde_json::from_str::<ProtonCatalogSeed>(PROTON_CATALOG_SEED_JSON) {
+    let seed = match load_proton_catalog_seed() {
         Ok(v) => v,
         Err(e) => {
-            tracing::error!("解析 Proton 目录种子失败: {}", e);
+            tracing::error!("读取 Proton 目录种子失败: {}", e);
             return;
         }
     };

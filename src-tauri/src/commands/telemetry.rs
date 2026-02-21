@@ -77,7 +77,10 @@ fn default_channel_mode(config: &game_presets::ChannelProtectionConfig) -> Strin
     }
 }
 
-fn resolve_channel_mode(game_preset: &str, config: &game_presets::ChannelProtectionConfig) -> String {
+fn resolve_channel_mode(
+    game_preset: &str,
+    config: &game_presets::ChannelProtectionConfig,
+) -> String {
     let has_init = config.init_value.is_some();
     if let Some(saved_mode) = db::get_setting(&channel_mode_setting_key(game_preset))
         .and_then(|v| normalize_channel_mode(&v, has_init))

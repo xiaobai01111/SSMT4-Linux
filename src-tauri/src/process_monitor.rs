@@ -225,7 +225,7 @@ pub async fn is_process_alive(pid: u32) -> bool {
     if pid == 0 {
         return false;
     }
-    
+
     let output = tokio::process::Command::new("ps")
         .arg("-p")
         .arg(pid.to_string())
@@ -233,7 +233,7 @@ pub async fn is_process_alive(pid: u32) -> bool {
         .arg("pid=")
         .output()
         .await;
-    
+
     match output {
         Ok(out) => {
             let stdout = String::from_utf8_lossy(&out.stdout);
@@ -248,13 +248,13 @@ pub async fn find_game_processes(game_exe_name: &str) -> Vec<u32> {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or(game_exe_name);
-    
+
     let output = tokio::process::Command::new("pgrep")
         .arg("-f")
         .arg(exe_name)
         .output()
         .await;
-    
+
     match output {
         Ok(out) if out.status.success() => {
             let stdout = String::from_utf8_lossy(&out.stdout);
@@ -270,13 +270,13 @@ pub async fn find_game_processes(game_exe_name: &str) -> Vec<u32> {
 pub async fn cleanup_stale_processes() {
     let mut games = RUNNING_GAMES.lock().await;
     let mut to_remove = Vec::new();
-    
+
     for (game_name, proc) in games.iter() {
         if !is_process_alive(proc.pid).await {
             to_remove.push(game_name.clone());
         }
     }
-    
+
     for game_name in to_remove {
         games.remove(&game_name);
         info!("清理已结束的游戏进程记录: {}", game_name);

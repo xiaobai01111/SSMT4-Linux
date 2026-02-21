@@ -104,7 +104,10 @@ pub async fn fetch_game_packages(api_url: &str, biz_prefix: &str) -> Result<Game
     fetch_game_packages_via_hyp(api_url, biz_prefix).await
 }
 
-async fn fetch_game_packages_via_hyp(api_url: &str, biz_prefix: &str) -> Result<GamePackage, String> {
+async fn fetch_game_packages_via_hyp(
+    api_url: &str,
+    biz_prefix: &str,
+) -> Result<GamePackage, String> {
     let client = Client::new();
     let resp = client
         .get(api_url)
@@ -172,9 +175,7 @@ async fn fetch_game_packages_via_hyp(api_url: &str, biz_prefix: &str) -> Result<
 
     info!(
         "HoYoverse package selected: biz={}, version={}, api={}",
-        selected.game.biz,
-        selected.main.major.version,
-        api_url
+        selected.game.biz, selected.main.major.version, api_url
     );
     Ok(selected)
 }
