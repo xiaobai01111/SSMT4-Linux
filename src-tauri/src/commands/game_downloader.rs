@@ -950,6 +950,7 @@ pub fn resolve_downloaded_game_executable(
     game_folder: String,
     launcher_api: Option<String>,
 ) -> Result<Option<String>, String> {
+    let _ = launcher_api;
     let game_preset = crate::configs::game_identity::to_canonical_or_keep(&game_name);
     let folder = game_folder.trim();
     if folder.is_empty() {
@@ -963,8 +964,7 @@ pub fn resolve_downloaded_game_executable(
         return Ok(None);
     }
 
-    if let Some(path) = resolve_known_game_executable(&game_preset, &root, launcher_api.as_deref())
-    {
+    if let Some(path) = resolve_known_game_executable(&game_preset, &root) {
         return Ok(Some(path.to_string_lossy().to_string()));
     }
 
@@ -976,7 +976,6 @@ fn supports_auto_exe_detection(game_preset: &str) -> bool {
     matches!(
         game_preset,
         "HonkaiStarRail"
-            | "GenshinImpact"
             | "ZenlessZoneZero"
             | "WutheringWaves"
             | "SnowbreakContainmentZone"
@@ -986,23 +985,10 @@ fn supports_auto_exe_detection(game_preset: &str) -> bool {
 fn resolve_known_game_executable(
     game_preset: &str,
     game_root: &Path,
-    launcher_api: Option<&str>,
 ) -> Option<PathBuf> {
     let mut candidates: Vec<String> = Vec::new();
     match game_preset {
         "HonkaiStarRail" => candidates.push("StarRail.exe".to_string()),
-        "GenshinImpact" => {
-            let is_cn = launcher_api
-                .map(|api| api.contains("mihoyo.com"))
-                .unwrap_or(false);
-            if is_cn {
-                candidates.push("YuanShen.exe".to_string());
-                candidates.push("GenshinImpact.exe".to_string());
-            } else {
-                candidates.push("GenshinImpact.exe".to_string());
-                candidates.push("YuanShen.exe".to_string());
-            }
-        }
         "ZenlessZoneZero" => candidates.push("ZenlessZoneZero.exe".to_string()),
         "WutheringWaves" => {
             // 鸣潮主程序优先使用 UE Shipping 可执行文件，避免误选启动器壳程序。
@@ -1158,7 +1144,6 @@ fn score_executable_candidate(game_preset: &str, root: &Path, path: &Path) -> i3
         "WutheringWaves" => &["wuthering", "client-win64-shipping"],
         "SnowbreakContainmentZone" => &["snowbreak", "x6game", "shipping"],
         "HonkaiStarRail" => &["starrail"],
-        "GenshinImpact" => &["yuanshen", "genshinimpact"],
         "ZenlessZoneZero" => &["zenlesszonezero", "zenless"],
         _ => &[],
     };
@@ -1820,7 +1805,7 @@ mod tests {
         let shipping = dir.join("Wuthering Waves Game/Client/Binaries/Win64/Client-Win64-Shipping.exe");
         std::fs::write(&shipping, b"shipping").expect("write shipping exe");
 
-        let resolved = resolve_known_game_executable("WutheringWaves", &dir, None)
+        let resolved = resolve_known_game_executable("WutheringWaves", &dir)
             .expect("resolve known wuwa exe");
         assert_eq!(resolved, shipping);
 
@@ -1840,7 +1825,7 @@ mod tests {
         let shipping = dir.join("Client/Binaries/Win64/Client-Win64-Shipping.exe");
         std::fs::write(&shipping, b"shipping").expect("write shipping exe");
 
-        let resolved = resolve_known_game_executable("WutheringWaves", &dir, None)
+        let resolved = resolve_known_game_executable("WutheringWaves", &dir)
             .expect("resolve known wuwa exe");
         assert_eq!(resolved, shipping);
 

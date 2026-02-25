@@ -21,7 +21,6 @@ SSMT4 Linux 是一个基于 `Tauri + Vue 3 + Rust` 的 Linux 游戏工具箱，�
 
 当前默认支持的游戏配置包括：
 
-- `GenshinImpact`
 - `HonkaiStarRail`
 - `ZenlessZoneZero`
 - `WutheringWaves`

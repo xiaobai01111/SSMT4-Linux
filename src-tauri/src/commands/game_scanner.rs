@@ -399,9 +399,9 @@ fn get_resource_games_dirs(app: &tauri::AppHandle) -> Result<Vec<PathBuf>, Strin
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GameTemplateInfo {
-    /// 模板文件夹名（英文游戏名，如 GenshinImpact）
+    /// 模板文件夹名（英文游戏名，如 WutheringWaves）
     pub name: String,
-    /// 游戏代码名（从 Config.json 的 LogicName 读取，如 GenshinImpact）
+    /// 游戏代码名（从 Config.json 的 LogicName 读取，如 WutheringWaves）
     pub game_id: String,
     pub display_name: String,
     pub icon_path: String,
@@ -647,12 +647,12 @@ mod tests {
         assert!(is_infrastructure_dir_name("prefix"));
         assert!(is_infrastructure_dir_name("Tools"));
         assert!(is_infrastructure_dir_name(".cache"));
-        assert!(!is_infrastructure_dir_name("GenshinImpact"));
+        assert!(!is_infrastructure_dir_name("WutheringWaves"));
     }
 
     #[test]
     fn known_preset_without_config_is_included() {
-        assert!(should_include_game_dir("GenshinImpact", None));
+        assert!(should_include_game_dir("WutheringWaves", None));
     }
 
     #[test]

@@ -100,7 +100,7 @@ pub struct ResourceEntry {
 // ============================================================
 
 /// 获取 HoYoverse 游戏包信息
-/// biz_prefix: 用于匹配游戏，如 "hkrpg_" (星穹铁道), "hk4e_" (原神), "nap_" (绝区零)
+/// biz_prefix: 用于匹配游戏，如 "hkrpg_" (星穹铁道), "nap_" (绝区零)
 pub async fn fetch_game_packages(api_url: &str, biz_prefix: &str) -> Result<GamePackage, String> {
     fetch_game_packages_via_hyp(api_url, biz_prefix).await
 }
@@ -143,7 +143,7 @@ async fn fetch_game_packages_via_hyp(
         .cloned()
         .collect();
 
-    // 兼容旧数据：历史上某些配置使用 "hk4e"/"hkrpg" 这种非 *_ 前缀，允许回退到前缀匹配。
+    // 兼容旧数据：历史上某些配置使用非 *_ 前缀，允许回退到前缀匹配。
     if candidates.is_empty() && exact_match {
         candidates = packages
             .into_iter()
@@ -477,8 +477,8 @@ mod tests {
 
     #[test]
     fn region_hint_matches_expected_biz_suffix() {
-        assert!(biz_matches_region_hint("hk4e_cn", "cn"));
-        assert!(!biz_matches_region_hint("hk4e_global", "cn"));
+        assert!(biz_matches_region_hint("nap_cn", "cn"));
+        assert!(!biz_matches_region_hint("nap_global", "cn"));
         assert!(biz_matches_region_hint("hkrpg_global", "global"));
         assert!(biz_matches_region_hint("hkrpg_overseas", "global"));
         assert!(!biz_matches_region_hint("hkrpg_cn", "global"));

@@ -203,7 +203,7 @@ async function runTask(task: DownloadTaskModel) {
             if (detectedExe) {
               config.other.gamePath = detectedExe;
             } else {
-              const exeName = resolveGameExeName(task.gameName, task.launcherApi);
+              const exeName = resolveGameExeName(task.gameName);
               if (exeName) {
                 config.other.gamePath = task.gameFolder + '/' + exeName;
               }
@@ -608,13 +608,10 @@ export async function cancelActive() {
 
 // ---- 已知游戏可执行文件名映射 ----
 
-function resolveGameExeName(gameName: string, launcherApi: string): string | null {
-  const isCN = launcherApi.includes('mihoyo.com');
+function resolveGameExeName(gameName: string): string | null {
   switch (gameName) {
     case 'HonkaiStarRail':
       return 'StarRail.exe';
-    case 'GenshinImpact':
-      return isCN ? 'YuanShen.exe' : 'GenshinImpact.exe';
     case 'ZenlessZoneZero':
       return 'ZenlessZoneZero.exe';
     default:

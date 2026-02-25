@@ -19,7 +19,6 @@ const links = computed<LinkItem[]>(() => [
   { key: 'issues', category: 'project', url: 'https://github.com/xiaobai01111/SSMT4-Linux/issues' },
   { key: 'docs', category: 'project', url: 'https://github.com/xiaobai01111/SSMT4-Linux/wiki' },
 
-  { key: 'genshin', category: 'games', cnUrl: 'https://ys.mihoyo.com/', globalUrl: 'https://genshin.hoyoverse.com/' },
   { key: 'hsr', category: 'games', cnUrl: 'https://sr.mihoyo.com/', globalUrl: 'https://hsr.hoyoverse.com/' },
   { key: 'zzz', category: 'games', cnUrl: 'https://zzz.mihoyo.com/', globalUrl: 'https://zenless.hoyoverse.com/' },
   { key: 'ww', category: 'games', cnUrl: 'https://mc.kurogames.com/', globalUrl: 'https://wutheringwaves.kurogames.com/' },

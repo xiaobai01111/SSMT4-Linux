@@ -54,8 +54,6 @@ fn required_repo_files() -> &'static [&'static str] {
         "catalogs/game_catalog.seed.json",
         "catalogs/proton_catalog.seed.json",
         "games/GameIconConfig.json",
-        "games/GenshinImpact/Config.json",
-        "games/GenshinImpact/Icon.png",
     ]
 }
 

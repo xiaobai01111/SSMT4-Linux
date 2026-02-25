@@ -333,7 +333,6 @@ mod tests {
             "WutheringWaves",
             "HonkaiStarRail",
             "ZenlessZoneZero",
-            "GenshinImpact",
             "SnowbreakContainmentZone",
             "ArknightsEndfield",
             "Arknights",

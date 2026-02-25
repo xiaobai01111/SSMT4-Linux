@@ -1,6 +1,5 @@
 {
   "games": {
-    "GenshinImpact": "Genshin Impact",
     "HonkaiStarRail": "Honkai: Star Rail",
     "ZenlessZoneZero": "Zenless Zone Zero",
     "WutheringWaves": "Wuthering Waves",
@@ -69,10 +68,6 @@
       "docs": {
         "name": "Online Docs",
         "desc": "Project documentation"
-      },
-      "genshin": {
-        "name": "Genshin Impact",
-        "desc": "Official website"
       },
       "hsr": {
         "name": "Honkai: Star Rail",

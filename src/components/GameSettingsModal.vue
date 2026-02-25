@@ -74,7 +74,7 @@ interface GameConfig {
 }
 
 const config = reactive<GameConfig>({
-  basic: { gamePreset: 'GenshinImpact', runtimeEnv: 'wine' },
+  basic: { gamePreset: props.gameName || 'WutheringWaves', runtimeEnv: 'wine' },
   other: {}
 });
 
@@ -143,7 +143,8 @@ const normalizeLoadedConfig = (raw: unknown): GameConfig => {
     asString(basicRaw.GamePreset) ||
     asString(root.GamePreset) ||
     asString(root.LogicName) ||
-    'GenshinImpact';
+    props.gameName ||
+    'WutheringWaves';
 
   const runtimeEnvRaw =
     asString(basicRaw.runtimeEnv) || asString(root.runtimeEnv);
@@ -287,7 +288,7 @@ const isJadeiteInstalling = ref(false);
 const prefixInfo = ref<PrefixInfo | null>(null);
 
 const isHoyoverse = computed(() =>
-  ['GenshinImpact', 'HonkaiStarRail', 'ZenlessZoneZero'].includes(
+  ['HonkaiStarRail', 'ZenlessZoneZero'].includes(
     config.basic.gamePreset,
   ),
 );
@@ -749,7 +750,7 @@ const resetToDefault = async () => {
     await apiResetGameBackground(props.gameName);
     // 重置配置为默认值
     await apiSaveGameConfig(props.gameName, {
-      basic: { gamePreset: 'GenshinImpact', runtimeEnv: 'wine' },
+      basic: { gamePreset: props.gameName || 'WutheringWaves', runtimeEnv: 'wine' },
       other: {}
     } as any);
     await loadConfig();

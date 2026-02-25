@@ -173,8 +173,8 @@ mod tests {
             "other": {"gpuIndex": 1},
             "customField": "keep-me"
         });
-        let mut v2 = GameInfoConfigV2::new("GenshinImpact");
-        v2.meta.game_preset = "GenshinImpact".to_string();
+        let mut v2 = GameInfoConfigV2::new("HonkaiStarRail");
+        v2.meta.game_preset = "HonkaiStarRail".to_string();
         v2.runtime.runtime_env = RuntimeEnvironment::Linux;
         v2.assets.background_type = BackgroundType::Image;
 
@@ -182,6 +182,6 @@ mod tests {
         assert_eq!(projected["customField"], "keep-me");
         assert_eq!(projected["other"]["gpuIndex"], 1);
         assert_eq!(projected["basic"]["runtimeEnv"], "linux");
-        assert_eq!(projected["basic"]["gamePreset"], "GenshinImpact");
+        assert_eq!(projected["basic"]["gamePreset"], "HonkaiStarRail");
     }
 }

@@ -1,6 +1,5 @@
 {
   "games": {
-    "GenshinImpact": "原神",
     "HonkaiStarRail": "崩坏：星穹铁道",
     "ZenlessZoneZero": "绝区零",
     "WutheringWaves": "鸣潮",
@@ -69,10 +68,6 @@
       "docs": {
         "name": "在线文档",
         "desc": "项目使用文档"
-      },
-      "genshin": {
-        "name": "原神 (Genshin Impact)",
-        "desc": "官方网站"
       },
       "hsr": {
         "name": "崩坏：星穹铁道 (Honkai: Star Rail)",

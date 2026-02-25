@@ -243,7 +243,6 @@ const buildExecutableCheckRoots = (
 
 const SHOULD_CHECK_EXECUTABLE_PRESETS = new Set([
   'wutheringwaves',
-  'genshinimpact',
   'honkaistarrail',
   'zenlesszonezero',
 ]);
