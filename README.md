@@ -19,12 +19,14 @@ Super Simple Linux Game Tools 4th
 
 SSMT4 Linux 是一个基于 `Tauri + Vue 3 + Rust` 的 Linux 游戏工具箱，目标是统一管理游戏下载、启动、Wine/Proton、DXVK 与游戏配置。
 
-当前默认支持的游戏配置包括：
+当前支持游戏（6 个）：
 
-- `HonkaiStarRail`
-- `ZenlessZoneZero`
-- `WutheringWaves`
-- `SnowbreakContainmentZone`
+- `Arknights`：明日方舟（已测试）
+- `ArknightsEndfield`：明日方舟：终末地（已测试）
+- `HonkaiStarRail`：崩坏：星穹铁道（已测试）
+- `ZenlessZoneZero`：绝区零（已测试）
+- `WutheringWaves`：鸣潮（已测试）
+- `SnowbreakContainmentZone`：尘白禁区（未测试）
 
 ## 架构说明
 
@@ -85,7 +87,7 @@ sudo dpkg -i "Installation package/SSMT4-Linux_*.deb"
 sudo rpm -ivh "Installation package/SSMT4-Linux-*.rpm"
 
 # Arch / Manjaro
-sudo pacman -U "Installation package/ssmt4-bin-*.pkg.tar.zst"
+sudo pacman -U "Installation package/ssmt4-linux-*.pkg.tar.zst"
 ```
 
 ### 方式 2：开发环境运行
@@ -103,6 +105,47 @@ sudo pacman -U "Installation package/ssmt4-bin-*.pkg.tar.zst"
 npm install
 npm run tauri dev
 ```
+
+### Arch 依赖分层安装（含 `umu-run`）
+
+分层定义：
+
+核心（`core`，必需）
+
+- `gtk3`
+- `webkit2gtk-4.1`
+- `libsoup3`
+- `xdg-utils`
+
+X（游戏基础运行）
+
+- `xorg-xwayland`
+- `wine`
+- `winetricks`
+- `libayatana-appindicator`
+- `wayland`
+
+XX（推荐，运行增强）
+
+- `umu-launcher`（`umu-run`）
+- `bubblewrap`（`bwrap` 沙盒）
+- `vulkan-tools`（`vulkaninfo`）
+- `pciutils`（`lspci`）
+- `7zip`
+- `unzip`
+- `git`
+- `polkit`（`pkexec`）
+- `procps-ng`（`ps/pgrep`）
+
+XXL（扩展游戏栈）
+
+- `steam`
+- `steam-devices`
+- `mangohud`
+- `lib32-mangohud`
+- `gamescope`
+- `gamemode`
+- `lib32-vulkan-icd-loader`
 
 ## 配置与数据目录
 
