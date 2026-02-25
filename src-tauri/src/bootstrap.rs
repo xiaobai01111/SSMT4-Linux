@@ -59,9 +59,13 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     //    这样新用户首次启动不会产生未经确认的符号链接
 
     let data_dir = configs::app_config::get_app_data_dir();
-    tracing::info!("Config dir: {}", config_dir.display());
-    tracing::info!("Data dir: {}", data_dir.display());
-    tracing::info!("Cache dir: {}", cache_dir.display());
+    tracing::info!(
+        "启动目录已就绪: 配置={}, 数据={}, 缓存={}, 前缀={}",
+        config_dir.display(),
+        data_dir.display(),
+        cache_dir.display(),
+        prefixes_dir.display()
+    );
 
     Ok(())
 }

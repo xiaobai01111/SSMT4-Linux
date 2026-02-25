@@ -21,6 +21,8 @@ const PARALLEL_CHUNK_THRESHOLD: u64 = 512 * 1024 * 1024;
 const PARALLEL_CHUNK_SIZE: u64 = 16 * 1024 * 1024;
 /// 单文件分片并发上限
 const MAX_CONCURRENT_CHUNKS: usize = 8;
+/// 文件校验并发上限（防止过度抢占 IO）
+const MAX_VERIFY_CONCURRENCY: usize = 8;
 
 // ============================================================
 // 全量下载：下载压缩包 → 解压到游戏目录
@@ -151,63 +153,123 @@ pub async fn verify_game(
     game_folder: &Path,
     cancel_token: Arc<Mutex<bool>>,
 ) -> Result<crate::downloader::verifier::VerifyResult, String> {
-    let res_list_url = &game_pkg.main.major.res_list_url;
-
-    let resource_list = hoyoverse::fetch_resource_list(res_list_url).await?;
-
-    if resource_list.is_empty() {
-        return Err("资源列表为空".to_string());
+    #[derive(Debug)]
+    enum VerifyTaskState {
+        Ok,
+        Failed(String),
+        Cancelled,
     }
 
-    let total_files = resource_list.len();
-    let total_size: u64 = resource_list.iter().map(|r| r.file_size).sum();
+    let res_list_url = &game_pkg.main.major.res_list_url;
+    let mut verify_targets: Vec<VerifyTarget> = Vec::new();
+    let mut verify_mode_label = "官方资源清单".to_string();
+
+    match hoyoverse::fetch_resource_list(res_list_url).await {
+        Ok(resource_list) if !resource_list.is_empty() => {
+            for entry in resource_list {
+                let file_path = match safe_join(game_folder, &entry.remote_name) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        warn!("跳过不安全的清单路径: {} ({})", entry.remote_name, e);
+                        continue;
+                    }
+                };
+                verify_targets.push(VerifyTarget {
+                    display_name: entry.remote_name.clone(),
+                    path: file_path,
+                    expected_size: entry.file_size,
+                    md5: entry.md5,
+                    sha256: entry.sha256,
+                });
+            }
+        }
+        Ok(_) => {
+            warn!("官方资源清单为空，回退到安装包缓存校验");
+        }
+        Err(e) => {
+            warn!("解析官方资源清单失败，回退到安装包缓存校验: {}", e);
+        }
+    }
+
+    if verify_targets.is_empty() {
+        verify_mode_label = "本地 pkg_version 清单".to_string();
+        verify_targets = collect_local_pkg_version_verify_targets(game_folder);
+    }
+
+    if verify_targets.is_empty() {
+        verify_mode_label = "安装包缓存".to_string();
+        verify_targets = collect_cached_archive_verify_targets(game_pkg, game_folder);
+    }
+
+    if verify_targets.is_empty() {
+        return Err("无法获取官方校验清单，且未找到可校验的本地 pkg_version/安装包缓存文件。请切换服务器后刷新状态再试，或先使用官方启动器校验。".to_string());
+    }
+
+    let total_files = verify_targets.len();
+    let total_size: u64 = verify_targets.iter().map(|r| r.expected_size).sum();
 
     info!(
-        "开始校验 {} 个文件, 总大小 {} 字节",
-        total_files, total_size
+        "开始校验 {} 个文件, 总大小 {} 字节, 模式={}",
+        total_files, total_size, verify_mode_label
     );
+    let verify_concurrency = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .max(2)
+        .min(MAX_VERIFY_CONCURRENCY);
+    info!("文件校验并发度: {}", verify_concurrency);
 
     let mut verified_ok: usize = 0;
     let redownloaded: usize = 0;
     let mut failed: Vec<String> = Vec::new();
     let mut finished_size: u64 = 0;
+    let mut finished_count: usize = 0;
     let mut speed_tracker = SpeedTracker::new();
-
-    for (i, entry) in resource_list.iter().enumerate() {
-        if *cancel_token.lock().await {
-            return Err("Verification cancelled".to_string());
-        }
-
-        let file_path = match safe_join(game_folder, &entry.remote_name) {
-            Ok(p) => p,
-            Err(e) => {
-                warn!("跳过不安全的清单路径: {} ({})", entry.remote_name, e);
-                continue;
+    let verify_stream = futures_util::stream::iter(verify_targets.into_iter().map(|entry| {
+        let cancel_token = cancel_token.clone();
+        async move {
+            if *cancel_token.lock().await {
+                return (entry.display_name, entry.expected_size, VerifyTaskState::Cancelled);
             }
-        };
-        let verify = hash_verify::verify_file_integrity(
-            &file_path,
-            entry.file_size,
-            Some(entry.sha256.as_str()),
-            Some(entry.md5.as_str()),
-        )
-        .await;
 
-        if verify.is_ok() {
-            verified_ok += 1;
-        } else {
-            warn!(
-                "{} 校验不匹配: {}",
-                entry.remote_name,
-                verify.err().unwrap_or_else(|| "unknown".to_string())
-            );
-            // 对于 HoYoverse 游戏，目前不支持单文件重下载（需要从 zip 中提取）
-            // 记录为失败
-            failed.push(entry.remote_name.clone());
+            match hash_verify::verify_file_integrity(
+                &entry.path,
+                entry.expected_size,
+                Some(entry.sha256.as_str()),
+                Some(entry.md5.as_str()),
+            )
+            .await
+            {
+                Ok(_) => (entry.display_name, entry.expected_size, VerifyTaskState::Ok),
+                Err(err) => (
+                    entry.display_name,
+                    entry.expected_size,
+                    VerifyTaskState::Failed(err),
+                ),
+            }
+        }
+    }))
+    .buffer_unordered(verify_concurrency);
+    tokio::pin!(verify_stream);
+
+    while let Some((display_name, expected_size, state)) = verify_stream.next().await {
+        match state {
+            VerifyTaskState::Ok => {
+                verified_ok += 1;
+            }
+            VerifyTaskState::Failed(err) => {
+                warn!("{} 校验不匹配: {}", display_name, err);
+                // 对于 HoYoverse 游戏，目前不支持单文件重下载（需要从 zip 中提取）
+                failed.push(display_name.clone());
+            }
+            VerifyTaskState::Cancelled => {
+                return Err("Verification cancelled".to_string());
+            }
         }
 
-        finished_size += entry.file_size;
-        speed_tracker.record(entry.file_size);
+        finished_count += 1;
+        finished_size += expected_size;
+        speed_tracker.record(expected_size);
 
         let remaining = total_size.saturating_sub(finished_size);
         let progress = DownloadProgress {
@@ -215,8 +277,8 @@ pub async fn verify_game(
             total_size,
             finished_size,
             total_count: total_files,
-            finished_count: i + 1,
-            current_file: entry.remote_name.clone(),
+            finished_count,
+            current_file: display_name,
             speed_bps: speed_tracker.speed_bps(),
             eta_seconds: speed_tracker.eta_seconds(remaining),
         };
@@ -1728,6 +1790,14 @@ struct DownloadTask {
     filename: String,
 }
 
+struct VerifyTarget {
+    display_name: String,
+    path: PathBuf,
+    expected_size: u64,
+    md5: String,
+    sha256: String,
+}
+
 /// 构造 mtime 缓存键："filename:size:mtime_secs"
 fn make_hash_cache_key(path: &Path, size: u64) -> String {
     let mtime = std::fs::metadata(path)
@@ -1745,6 +1815,105 @@ fn make_hash_cache_key(path: &Path, size: u64) -> String {
 /// 从 URL 中提取文件名
 fn filename_from_url(url: &str) -> String {
     url.rsplit('/').next().unwrap_or("unknown").to_string()
+}
+
+fn collect_cached_archive_verify_targets(
+    game_pkg: &GamePackage,
+    game_folder: &Path,
+) -> Vec<VerifyTarget> {
+    let mut targets = Vec::new();
+
+    for (idx, seg) in game_pkg.main.major.game_pkgs.iter().enumerate() {
+        let filename = filename_from_url(&seg.url);
+        let path = game_folder.join(&filename);
+        if !path.exists() {
+            continue;
+        }
+        let expected_size = seg.size.parse::<u64>().unwrap_or(0);
+        targets.push(VerifyTarget {
+            display_name: format!("游戏本体包#{:02} ({})", idx + 1, filename),
+            path,
+            expected_size,
+            md5: seg.md5.clone(),
+            sha256: seg.sha256.clone(),
+        });
+    }
+
+    for audio in &game_pkg.main.major.audio_pkgs {
+        let filename = filename_from_url(&audio.url);
+        let path = game_folder.join(&filename);
+        if !path.exists() {
+            continue;
+        }
+        let expected_size = audio.size.parse::<u64>().unwrap_or(0);
+        targets.push(VerifyTarget {
+            display_name: format!("语言包({}) ({})", audio.language, filename),
+            path,
+            expected_size,
+            md5: audio.md5.clone(),
+            sha256: audio.sha256.clone(),
+        });
+    }
+
+    targets
+}
+
+fn find_local_pkg_version_file(game_folder: &Path) -> Option<PathBuf> {
+    let direct = game_folder.join("pkg_version");
+    if direct.is_file() {
+        return Some(direct);
+    }
+
+    // 常见结构：<game_root>/<subdir>/pkg_version
+    if let Ok(entries) = std::fs::read_dir(game_folder) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let candidate = path.join("pkg_version");
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
+}
+
+fn collect_local_pkg_version_verify_targets(game_folder: &Path) -> Vec<VerifyTarget> {
+    let Some(pkg_version_path) = find_local_pkg_version_file(game_folder) else {
+        return Vec::new();
+    };
+    let Ok(content) = std::fs::read_to_string(&pkg_version_path) else {
+        return Vec::new();
+    };
+    let base_dir = pkg_version_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| game_folder.to_path_buf());
+
+    let mut targets = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(entry) = serde_json::from_str::<hoyoverse::ResourceEntry>(line) else {
+            continue;
+        };
+        let Ok(path) = safe_join(&base_dir, &entry.remote_name) else {
+            continue;
+        };
+        targets.push(VerifyTarget {
+            display_name: entry.remote_name,
+            path,
+            expected_size: entry.file_size,
+            md5: entry.md5,
+            sha256: entry.sha256,
+        });
+    }
+    targets
 }
 
 /// 从 audio_pkgs 中筛选用户选中的语言包

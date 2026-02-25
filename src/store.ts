@@ -34,6 +34,8 @@ export interface AppSettings {
   dataDir: string;
   initialized: boolean;
   tosRiskAcknowledged: boolean;
+  onboardingCompleted: boolean;
+  onboardingVersion: number;
   snowbreakSourcePolicy: 'official_first' | 'community_first';
 }
 
@@ -63,11 +65,53 @@ const defaultSettings: AppSettings = {
   dataDir: '',
   initialized: false,
   tosRiskAcknowledged: false,
+  onboardingCompleted: false,
+  onboardingVersion: 0,
   snowbreakSourcePolicy: 'official_first',
 }
 
 export const appSettings = reactive<AppSettings>({ ...defaultSettings })
 export const gamesList = reactive<GameInfo[]>([])
+export const FEATURE_ONBOARDING_VERSION = 1
+export const onboardingVisible = ref(false)
+export const onboardingStepIndex = ref(0)
+
+export const startFeatureOnboarding = (startStep = 0) => {
+  onboardingStepIndex.value = Math.max(0, Math.floor(startStep))
+  onboardingVisible.value = true
+}
+
+const markFeatureOnboardingDone = () => {
+  appSettings.onboardingCompleted = true
+  appSettings.onboardingVersion = FEATURE_ONBOARDING_VERSION
+}
+
+export const finishFeatureOnboarding = () => {
+  markFeatureOnboardingDone()
+  onboardingVisible.value = false
+}
+
+export const skipFeatureOnboarding = () => {
+  markFeatureOnboardingDone()
+  onboardingVisible.value = false
+}
+let onboardingAutoStarted = false
+
+const shouldAutoStartFeatureOnboarding = () => {
+  return (
+    appSettings.initialized &&
+    appSettings.tosRiskAcknowledged &&
+    Number(appSettings.onboardingVersion || 0) < FEATURE_ONBOARDING_VERSION &&
+    !appSettings.onboardingCompleted
+  )
+}
+
+const tryAutoStartFeatureOnboarding = () => {
+  if (onboardingAutoStarted) return
+  if (!shouldAutoStartFeatureOnboarding()) return
+  onboardingAutoStarted = true
+  setTimeout(() => startFeatureOnboarding(0), 160)
+}
 
 const canonicalGameKey = (value: string): string => {
   return value.trim();
@@ -167,6 +211,7 @@ export function switchToGame(game: GameInfo) {
 async function initStore() {
   await loadSettings();
   await loadGames();
+  tryAutoStartFeatureOnboarding();
 }
 initStore();
 
@@ -187,3 +232,15 @@ watch(appSettings, async (newVal) => {
     console.error('Failed to save settings:', e)
   }
 }, { deep: true })
+
+watch(
+  () => [
+    appSettings.initialized,
+    appSettings.tosRiskAcknowledged,
+    appSettings.onboardingCompleted,
+    appSettings.onboardingVersion,
+  ],
+  () => {
+    tryAutoStartFeatureOnboarding()
+  },
+)

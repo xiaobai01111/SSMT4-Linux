@@ -13,6 +13,7 @@ import {
   updateGame as apiUpdateGame,
   updateLauncherInstaller as apiUpdateLauncherInstaller,
   verifyGameFiles as apiVerifyGameFiles,
+  repairGameFiles as apiRepairGameFiles,
   cancelDownload as apiCancelDownload,
   resolveDownloadedGameExecutable,
   listenEvent,
@@ -28,6 +29,7 @@ export type DownloadOperation =
   | 'download_game'
   | 'update_game'
   | 'verify_game'
+  | 'repair_game'
   | 'download_launcher_installer'
   | 'update_launcher_installer';
 
@@ -41,6 +43,7 @@ export interface DownloadTaskModel {
   languages?: string[];
   bizPrefix?: string;
   gamePreset?: string;
+  repairFiles?: string[];
 }
 
 export interface DlState {
@@ -53,6 +56,11 @@ export interface DlState {
   error: string;
   task: DownloadTaskModel | null;
   pausedTask: DownloadTaskModel | null;
+  lastVerifyGameName: string;
+  lastVerifyGameFolder: string;
+  lastVerifyLauncherApi: string;
+  lastVerifyBizPrefix: string;
+  lastVerifyFailed: string[];
 }
 
 export const dlState = reactive<DlState>({
@@ -65,6 +73,11 @@ export const dlState = reactive<DlState>({
   error: '',
   task: null,
   pausedTask: null,
+  lastVerifyGameName: '',
+  lastVerifyGameFolder: '',
+  lastVerifyLauncherApi: '',
+  lastVerifyBizPrefix: '',
+  lastVerifyFailed: [],
 });
 
 // ---- Global event listeners (registered once) ----
@@ -94,6 +107,7 @@ function cloneTask(task: DownloadTaskModel): DownloadTaskModel {
   return {
     ...task,
     languages: task.languages ? [...task.languages] : undefined,
+    repairFiles: task.repairFiles ? [...task.repairFiles] : undefined,
   };
 }
 
@@ -121,6 +135,7 @@ function isCancellationLikeError(error: unknown): boolean {
 
 function taskKey(task: DownloadTaskModel): string {
   const langs = task.languages ? task.languages.join(',') : '';
+  const repairFiles = task.repairFiles ? task.repairFiles.join(',') : '';
   return [
     task.operation,
     task.gameName,
@@ -129,6 +144,7 @@ function taskKey(task: DownloadTaskModel): string {
     task.bizPrefix || '',
     task.gamePreset || '',
     langs,
+    repairFiles,
   ].join('::');
 }
 
@@ -141,7 +157,10 @@ function resetStateToIdle() {
 }
 
 function markTaskRunning(task: DownloadTaskModel) {
-  const phase: DlPhase = task.operation === 'verify_game' ? 'verifying' : 'downloading';
+  const phase: DlPhase =
+    task.operation === 'verify_game' || task.operation === 'repair_game'
+      ? 'verifying'
+      : 'downloading';
   const normalized = cloneTask(task);
   dlState.active = true;
   dlState.gameName = normalized.gameName;
@@ -218,6 +237,11 @@ async function runTask(task: DownloadTaskModel) {
         if (!verifyResult) {
           break;
         }
+        dlState.lastVerifyGameName = task.gameName;
+        dlState.lastVerifyGameFolder = task.gameFolder;
+        dlState.lastVerifyLauncherApi = task.launcherApi;
+        dlState.lastVerifyBizPrefix = task.bizPrefix || '';
+        dlState.lastVerifyFailed = [...verifyResult.failed];
 
         if (verifyResult.failed.length > 0) {
           await showMessage(
@@ -246,13 +270,76 @@ async function runTask(task: DownloadTaskModel) {
         dlState.active = false;
         dlState.task = null;
         dlState.pausedTask = null;
+        dlState.lastVerifyGameName = task.gameName;
+        dlState.lastVerifyGameFolder = task.gameFolder;
+        dlState.lastVerifyLauncherApi = task.launcherApi;
+        dlState.lastVerifyBizPrefix = task.bizPrefix || '';
+        dlState.lastVerifyFailed = [...result.failed];
 
         if (result.failed.length > 0) {
           dlState.error = `校验完成，但有 ${result.failed.length} 个文件仍然异常`;
-        } else {
+          const preview = result.failed.slice(0, 8);
+          const suffix =
+            result.failed.length > preview.length
+              ? `\n... 还有 ${result.failed.length - preview.length} 个文件未展示`
+              : '';
+          const details = preview.length > 0 ? `\n\n异常文件（部分）：\n${preview.join('\n')}${suffix}` : '';
           await showMessage(
-            `校验完成！共 ${result.total_files} 个文件，${result.verified_ok} 个正常，${result.redownloaded} 个已重新下载。`,
-            { title: '校验结果', kind: 'info' },
+            `校验完成：共 ${result.total_files} 个文件，${result.verified_ok} 个正常，${result.failed.length} 个异常。${details}\n\n可点击“修复异常文件”仅重下异常条目。`,
+            { title: '校验结果', kind: 'warning' },
+          );
+        } else {
+          dlState.error = '';
+          if (result.redownloaded > 0) {
+            await showMessage(
+              `校验完成！共 ${result.total_files} 个文件，${result.verified_ok} 个正常，${result.redownloaded} 个已重新下载。`,
+              { title: '校验结果', kind: 'info' },
+            );
+          } else {
+            await showMessage(
+              `校验完成！共 ${result.total_files} 个文件，${result.verified_ok} 个正常。`,
+              { title: '校验结果', kind: 'info' },
+            );
+          }
+        }
+        break;
+      }
+
+      case 'repair_game': {
+        const biz = task.bizPrefix || undefined;
+        const files = task.repairFiles ? [...task.repairFiles] : [];
+        if (files.length === 0) {
+          throw new Error('没有可修复的异常文件列表');
+        }
+        const result = await apiRepairGameFiles(task.launcherApi, task.gameFolder, files, biz);
+
+        dlState.phase = 'done';
+        dlState.active = false;
+        dlState.task = null;
+        dlState.pausedTask = null;
+        dlState.lastVerifyGameName = task.gameName;
+        dlState.lastVerifyGameFolder = task.gameFolder;
+        dlState.lastVerifyLauncherApi = task.launcherApi;
+        dlState.lastVerifyBizPrefix = task.bizPrefix || '';
+        dlState.lastVerifyFailed = [...result.failed];
+
+        if (result.failed.length > 0) {
+          dlState.error = `修复完成，但仍有 ${result.failed.length} 个文件异常`;
+          const preview = result.failed.slice(0, 8);
+          const suffix =
+            result.failed.length > preview.length
+              ? `\n... 还有 ${result.failed.length - preview.length} 个文件未展示`
+              : '';
+          const details = preview.length > 0 ? `\n\n仍异常文件（部分）：\n${preview.join('\n')}${suffix}` : '';
+          await showMessage(
+            `修复完成：请求修复 ${result.requested_files} 个文件，成功 ${result.repaired_ok} 个，失败 ${result.failed.length} 个。${details}`,
+            { title: '修复结果', kind: 'warning' },
+          );
+        } else {
+          dlState.error = '';
+          await showMessage(
+            `修复完成！请求修复 ${result.requested_files} 个文件，成功 ${result.repaired_ok} 个。`,
+            { title: '修复结果', kind: 'info' },
           );
         }
         break;
@@ -325,6 +412,16 @@ async function runTask(task: DownloadTaskModel) {
         `下载失败: ${String(e)}`,
         { title: '下载错误', kind: 'error' },
       ).catch(() => {});
+    } else if (task.operation === 'verify_game') {
+      await showMessage(
+        `校验失败: ${String(e)}`,
+        { title: '校验错误', kind: 'error' },
+      ).catch(() => {});
+    } else if (task.operation === 'repair_game') {
+      await showMessage(
+        `修复失败: ${String(e)}`,
+        { title: '修复错误', kind: 'error' },
+      ).catch(() => {});
     }
   } finally {
     if (_pauseRequestedTaskKey === key) {
@@ -335,6 +432,8 @@ async function runTask(task: DownloadTaskModel) {
 
 function startTask(task: DownloadTaskModel): boolean {
   if (dlState.active) return false;
+  // 兜底初始化事件监听，避免“任务已开始但界面无进度反馈”
+  initDlListeners().catch((e) => console.warn('[dlStore] init listeners failed:', e));
   _pauseRequestedTaskKey = null;
   dlState.pausedTask = null;
   markTaskRunning(task);
@@ -370,6 +469,15 @@ export interface VerifyOpts {
   bizPrefix?: string;
 }
 
+export interface RepairOpts {
+  gameName: string;
+  displayName: string;
+  launcherApi: string;
+  gameFolder: string;
+  bizPrefix?: string;
+  files: string[];
+}
+
 export interface StartLauncherInstallerDlOpts {
   gameName: string;
   gamePreset: string;
@@ -402,6 +510,18 @@ function taskFromVerify(opts: VerifyOpts): DownloadTaskModel {
   };
 }
 
+function taskFromRepair(opts: RepairOpts): DownloadTaskModel {
+  return {
+    operation: 'repair_game',
+    gameName: opts.gameName,
+    displayName: opts.displayName,
+    launcherApi: opts.launcherApi,
+    gameFolder: opts.gameFolder,
+    bizPrefix: opts.bizPrefix || undefined,
+    repairFiles: [...opts.files],
+  };
+}
+
 function taskFromInstaller(opts: StartLauncherInstallerDlOpts): DownloadTaskModel {
   return {
     operation: opts.isUpdate ? 'update_launcher_installer' : 'download_launcher_installer',
@@ -425,8 +545,26 @@ export function fireVerify(opts: VerifyOpts) {
   startTask(taskFromVerify(opts));
 }
 
+export function fireRepair(opts: RepairOpts) {
+  startTask(taskFromRepair(opts));
+}
+
 export function fireLauncherInstallerDownload(opts: StartLauncherInstallerDlOpts) {
   startTask(taskFromInstaller(opts));
+}
+
+export function getRepairableFailuresFor(
+  gameName: string,
+  gameFolder: string,
+  launcherApi: string,
+  bizPrefix?: string,
+): string[] {
+  if (dlState.lastVerifyFailed.length === 0) return [];
+  if (dlState.lastVerifyGameName !== gameName) return [];
+  if (dlState.lastVerifyGameFolder !== gameFolder) return [];
+  if (dlState.lastVerifyLauncherApi !== launcherApi) return [];
+  if ((dlState.lastVerifyBizPrefix || '') !== (bizPrefix || '')) return [];
+  return [...dlState.lastVerifyFailed];
 }
 
 export async function pauseActive() {

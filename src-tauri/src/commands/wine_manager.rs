@@ -139,6 +139,13 @@ pub async fn install_vkd3d(game_id: &str, version: &str) -> Result<String, Strin
 }
 
 #[tauri::command]
+pub fn uninstall_vkd3d(game_id: &str) -> Result<String, String> {
+    let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
+    let pfx_dir = prefix::get_prefix_pfx_dir(&game_id);
+    graphics::uninstall_vkd3d(&pfx_dir)
+}
+
+#[tauri::command]
 pub fn check_vulkan() -> Result<graphics::VulkanInfo, String> {
     Ok(graphics::check_vulkan())
 }
@@ -330,4 +337,32 @@ pub async fn fetch_dxvk_versions(
 #[tauri::command]
 pub async fn download_dxvk(version: &str, variant: &str) -> Result<String, String> {
     graphics::download_dxvk_only(version, variant).await
+}
+
+#[tauri::command]
+pub fn scan_local_vkd3d() -> Result<Vec<graphics::Vkd3dLocalVersion>, String> {
+    Ok(graphics::scan_local_vkd3d_versions())
+}
+
+#[tauri::command]
+pub fn detect_vkd3d_status(game_id: &str) -> Result<graphics::Vkd3dInstalledStatus, String> {
+    let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
+    let pfx_dir = prefix::get_prefix_pfx_dir(&game_id);
+    Ok(graphics::detect_installed_vkd3d(&pfx_dir))
+}
+
+#[tauri::command]
+pub async fn fetch_vkd3d_versions(
+    settings: State<'_, Mutex<crate::configs::app_config::AppConfig>>,
+) -> Result<Vec<graphics::Vkd3dRemoteVersion>, String> {
+    let github_token = {
+        let s = settings.lock().map_err(|e| e.to_string())?;
+        s.github_token.clone()
+    };
+    graphics::fetch_vkd3d_releases(20, Some(&github_token)).await
+}
+
+#[tauri::command]
+pub async fn download_vkd3d(version: &str) -> Result<String, String> {
+    graphics::download_vkd3d_only(version).await
 }

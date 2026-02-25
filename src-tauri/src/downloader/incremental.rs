@@ -98,7 +98,7 @@ pub async fn update_game_full(
             &file.dest,
         );
 
-        fetcher::download_with_resume(&client, &download_url, &file_path, true, None).await?;
+        fetcher::download_with_resume(&client, &download_url, &file_path, true, None, None).await?;
 
         finished_size += file.size;
         finished_count += 1;
@@ -235,7 +235,8 @@ pub async fn update_game_patch(
 
         if file.dest.ends_with(".krdiff") || file.dest.ends_with(".hdiff") {
             let dest_path = game_folder.parent().unwrap_or(game_folder).join(&file.dest);
-            fetcher::download_with_resume(&client, &download_url, &dest_path, false, None).await?;
+            fetcher::download_with_resume(&client, &download_url, &dest_path, false, None, None)
+                .await?;
             hash_verify::verify_file_integrity(
                 &dest_path,
                 file.size,
@@ -246,7 +247,8 @@ pub async fn update_game_patch(
             krdiff_path = Some(dest_path);
         } else {
             let dest_path = temp_folder.join(&file.dest);
-            fetcher::download_with_resume(&client, &download_url, &dest_path, false, None).await?;
+            fetcher::download_with_resume(&client, &download_url, &dest_path, false, None, None)
+                .await?;
             hash_verify::verify_file_integrity(
                 &dest_path,
                 file.size,

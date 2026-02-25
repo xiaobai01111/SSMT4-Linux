@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -140,6 +140,10 @@ async fn start_game_internal(
     region_override: Option<String>,
 ) -> Result<String, String> {
     let game_name = crate::configs::game_identity::to_canonical_or_keep(&game_name);
+    debug!(
+        "启动请求参数: game={}, game_exe_path={}, wine_version_id={}, region_override={:?}",
+        game_name, game_exe_path, wine_version_id, region_override
+    );
     let _launch_guard = process_monitor::acquire_launch_guard(&game_name)?;
 
     // 检查游戏是否已在运行
@@ -329,14 +333,49 @@ async fn start_game_internal(
     // 确保 prefix 中有 CJK 字体（解决中文乱码）
     prefix::ensure_cjk_fonts(&game_name);
 
+    let dxvk_status = crate::wine::graphics::detect_installed_dxvk(&pfx_dir);
+    debug!(
+        "DXVK 启动前检测: installed={}, version={:?}, dlls={:?}, prefix={}",
+        dxvk_status.installed,
+        dxvk_status.version,
+        dxvk_status.dlls_found,
+        pfx_dir.display()
+    );
+    if !dxvk_status.installed {
+        warn!(
+            "检测到 Prefix 未安装 DXVK: {}。若游戏依赖 DirectX 11/12，可能黑屏或启动失败。可在“游戏设置 -> 运行环境 -> DXVK 管理”安装。",
+            pfx_dir.display()
+        );
+    }
+
     // Find the selected wine/proton version
     let versions = detector::scan_all_versions(&[]);
+    debug!("运行时扫描结果: total_versions={}", versions.len());
     let wine_version = versions
         .iter()
         .find(|v| v.id == wine_version_id)
-        .ok_or_else(|| format!("Wine version '{}' not found", wine_version_id))?;
+        .ok_or_else(|| {
+            format!(
+                "未找到已配置的 Wine/Proton 版本: {}。请在“游戏设置 -> 运行环境”重新选择。",
+                wine_version_id
+            )
+        })?;
+    debug!(
+        "运行时匹配成功: id={}, name={}, variant={}, version={}, path={}",
+        wine_version.id,
+        wine_version.name,
+        wine_version.variant,
+        wine_version.version,
+        wine_version.path.display()
+    );
 
     let proton_path = &wine_version.path;
+    if !proton_path.exists() {
+        return Err(format!(
+            "启动配置错误：所选 Wine/Proton 路径不存在：{}。请在“游戏设置 -> 运行环境”修复。",
+            proton_path.display()
+        ));
+    }
     let settings = &prefix_config.proton_settings;
 
     // Build environment variables
@@ -538,6 +577,17 @@ async fn start_game_internal(
         (launch_exe.clone(), vec![])
     };
 
+    let configured_exe_path = game_exe.to_string_lossy().to_string();
+    let launch_exe_path = launch_exe.to_string_lossy().to_string();
+    let runner_exe_path = run_exe.to_string_lossy().to_string();
+    info!(
+        "启动可执行文件: 配置路径={}, 识别主程序={}, 实际执行器={}",
+        configured_exe_path, launch_exe_path, runner_exe_path
+    );
+    if !extra_args.is_empty() {
+        info!("启动附加参数: {:?}", extra_args);
+    }
+
     let force_direct_proton = preset_meta.map(|p| p.force_direct_proton).unwrap_or(false);
     let effective_use_pressure_vessel = if preset_meta
         .map(|p| p.force_disable_pressure_vessel)
@@ -624,13 +674,49 @@ async fn start_game_internal(
     )?;
 
     let runner_name = command_spec.runner.as_str().to_string();
+    let command_program_path = command_spec.program.to_string_lossy().to_string();
+    debug!(
+        "启动命令解析: runner={}, program={}, args={:?}, use_umu_runtime={}, effective_prefix_dir={}",
+        runner_name,
+        command_program_path,
+        command_spec.args,
+        command_spec.use_umu_runtime,
+        command_spec.effective_prefix_dir.display()
+    );
     info!(
-        "最终启动配置: runner={}, sandbox={}, pressureVessel={}, workingDir={}",
+        "最终启动配置: runner={}, sandbox={}, pressureVessel={}, workingDir={}, commandProgram={}",
         runner_name,
         launch_profile.runtime_flags.sandbox_enabled,
         launch_profile.runtime_flags.use_pressure_vessel,
-        launch_profile.working_dir
+        launch_profile.working_dir,
+        command_program_path
     );
+    let required_env_keys = [
+        "WINEPREFIX",
+        "STEAM_COMPAT_DATA_PATH",
+        "STEAM_COMPAT_INSTALL_PATH",
+        "STEAM_COMPAT_TOOL_PATHS",
+        "STEAM_PROTON_PATH",
+    ];
+    let missing_env_keys: Vec<&str> = required_env_keys
+        .iter()
+        .copied()
+        .filter(|k| {
+            launch_profile
+                .env
+                .get(*k)
+                .map(|v| v.trim().is_empty())
+                .unwrap_or(true)
+        })
+        .collect();
+    if missing_env_keys.is_empty() {
+        debug!("启动环境变量检查通过: required={:?}", required_env_keys);
+    } else {
+        warn!(
+            "启动环境变量缺失，可能导致启动异常: missing={:?}",
+            missing_env_keys
+        );
+    }
 
     let mut cmd = if launch_profile.runtime_flags.sandbox_enabled && !command_spec.use_umu_runtime {
         info!(
@@ -677,13 +763,20 @@ async fn start_game_internal(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("Failed to launch game: {}", e))?;
+        .map_err(|e| {
+            format!(
+                "启动失败：无法执行启动命令（runner={}, program={}）：{}。请检查所选运行时是否完整、可执行，并确认前缀目录权限正常。",
+                runner_name,
+                command_program_path,
+                e
+            )
+        })?;
 
     let pid = child.id().unwrap_or(0);
     let launched_at = chrono::Utc::now().to_rfc3339();
     info!("Game launched with PID {}", pid);
 
-    process_monitor::register_game_process(game_name.clone(), pid, game_exe_path.clone()).await;
+    process_monitor::register_game_process(game_name.clone(), pid, launch_exe_path.clone()).await;
 
     app.emit(
         "game-lifecycle",
@@ -693,7 +786,11 @@ async fn start_game_internal(
             "pid": pid,
             "runner": runner_name,
             "region": launch_profile.runtime_flags.region,
-            "launchedAt": launched_at
+            "launchedAt": launched_at,
+            "configuredExe": configured_exe_path,
+            "launchExe": launch_exe_path,
+            "runnerExe": runner_exe_path,
+            "commandProgram": command_program_path
         }),
     )
     .ok();
@@ -742,6 +839,10 @@ async fn start_game_internal(
                 signal = exit_status_signal(&status);
                 crashed = exit_code.map(|v| v != 0).unwrap_or(false) || signal.is_some();
                 info!("Direct child process exited with status: {}", status);
+                debug!(
+                    "子进程退出诊断: game={}, runner={}, exit_code={:?}, signal={:?}",
+                    game_name_for_monitor, runner_for_monitor, exit_code, signal
+                );
             }
             Err(e) => {
                 crashed = true;
@@ -1298,7 +1399,7 @@ fn build_proton_base_command(
     if use_pressure_vessel {
         if let Some(runtime_dir) = detector::find_steam_linux_runtime() {
             let entry_point = runtime_dir.join("_v2-entry-point");
-            info!(
+            debug!(
                 "Launching with pressure-vessel: {} -> {} -> {}",
                 entry_point.display(),
                 proton_path.display(),
@@ -1326,7 +1427,7 @@ fn build_direct_proton_command_spec_with_args(
     run_exe: &Path,
     extra_args: &[String],
 ) -> (PathBuf, Vec<String>) {
-    info!(
+    debug!(
         "Launching with direct proton: {} waitforexitandrun {} {:?}",
         proton_path.display(),
         run_exe.display(),
@@ -1612,21 +1713,18 @@ fn resolve_preferred_launch_exe(game_preset: &str, game_exe: &Path) -> PathBuf {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or_default();
-        if file_name.eq_ignore_ascii_case("Client-Win64-Shipping.exe") {
-            if let Some(win64_dir) = game_exe.parent() {
-                if let Some(binaries_dir) = win64_dir.parent() {
-                    if let Some(client_dir) = binaries_dir.parent() {
-                        if let Some(game_root) = client_dir.parent() {
-                            let wrapper = game_root.join("Wuthering Waves.exe");
-                            if wrapper.exists() {
-                                info!(
-                                    "WutheringWaves 启动可执行已切换为包装器: {}",
-                                    wrapper.display()
-                                );
-                                return wrapper;
-                            }
-                        }
-                    }
+        // 尊重用户配置：若已指定 Shipping 主程序，不再强制切换到包装器 exe。
+        // 仅在用户配置了包装器 exe 时，自动回退到 Shipping 主程序。
+        if file_name.eq_ignore_ascii_case("Wuthering Waves.exe") {
+            if let Some(game_root) = game_exe.parent() {
+                let shipping =
+                    game_root.join("Client/Binaries/Win64/Client-Win64-Shipping.exe");
+                if shipping.exists() {
+                    info!(
+                        "WutheringWaves 启动可执行已切换为主程序: {}",
+                        shipping.display()
+                    );
+                    return shipping;
                 }
             }
         }

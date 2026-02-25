@@ -30,6 +30,8 @@ export interface AppSettings {
   dataDir: string;
   initialized: boolean;
   tosRiskAcknowledged: boolean;
+  onboardingCompleted: boolean;
+  onboardingVersion: number;
   snowbreakSourcePolicy: 'official_first' | 'community_first';
 }
 
@@ -251,6 +253,27 @@ export interface DxvkInstalledStatus {
   dlls_found: string[];
 }
 
+export interface Vkd3dLocalVersion {
+  version: string;
+  extracted: boolean;
+  path: string;
+}
+
+export interface Vkd3dRemoteVersion {
+  version: string;
+  tag_name: string;
+  download_url: string;
+  file_size: number;
+  published_at: string;
+  is_local: boolean;
+}
+
+export interface Vkd3dInstalledStatus {
+  installed: boolean;
+  version: string | null;
+  dlls_found: string[];
+}
+
 export interface RemoteWineVersion {
   tag: string;
   version: string;
@@ -417,6 +440,12 @@ export interface VerifyResult {
   total_files: number;
   verified_ok: number;
   redownloaded: number;
+  failed: string[];
+}
+
+export interface RepairResult {
+  requested_files: number;
+  repaired_ok: number;
   failed: string[];
 }
 
@@ -700,6 +729,26 @@ export async function installVkd3d(gameId: string, version: string): Promise<str
   return invoke<string>('install_vkd3d', { gameId, version });
 }
 
+export async function uninstallVkd3d(gameId: string): Promise<string> {
+  return invoke<string>('uninstall_vkd3d', { gameId });
+}
+
+export async function scanLocalVkd3d(): Promise<Vkd3dLocalVersion[]> {
+  return invoke<Vkd3dLocalVersion[]>('scan_local_vkd3d');
+}
+
+export async function detectVkd3dStatus(gameId: string): Promise<Vkd3dInstalledStatus> {
+  return invoke<Vkd3dInstalledStatus>('detect_vkd3d_status', { gameId });
+}
+
+export async function fetchVkd3dVersions(): Promise<Vkd3dRemoteVersion[]> {
+  return invoke<Vkd3dRemoteVersion[]>('fetch_vkd3d_versions');
+}
+
+export async function downloadVkd3d(version: string): Promise<string> {
+  return invoke<string>('download_vkd3d', { version });
+}
+
 export async function checkVulkan(): Promise<VulkanInfo> {
   return invoke<VulkanInfo>('check_vulkan');
 }
@@ -870,6 +919,20 @@ export async function updateGamePatch(launcherApi: string, gameFolder: string): 
 
 export async function verifyGameFiles(launcherApi: string, gameFolder: string, bizPrefix?: string): Promise<VerifyResult> {
   return invoke<VerifyResult>('verify_game_files', { launcherApi, gameFolder, bizPrefix: bizPrefix || null });
+}
+
+export async function repairGameFiles(
+  launcherApi: string,
+  gameFolder: string,
+  files: string[],
+  bizPrefix?: string,
+): Promise<RepairResult> {
+  return invoke<RepairResult>('repair_game_files', {
+    launcherApi,
+    gameFolder,
+    files,
+    bizPrefix: bizPrefix || null,
+  });
 }
 
 export async function cancelDownload(gameFolder?: string): Promise<void> {

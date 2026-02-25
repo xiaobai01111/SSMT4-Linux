@@ -1,5 +1,5 @@
 <script setup lang="ts" >
-import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
+import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { gamesList, switchToGame, appSettings, loadGames } from '../store'
 import {
@@ -11,6 +11,10 @@ import {
   checkGameProtectionStatus,
   listenEvent,
   getGameWineConfig,
+  scanWineVersions,
+  scanLocalDxvk,
+  detectDxvkStatus,
+  resolveDownloadedGameExecutable,
 } from '../api'
 import GameSettingsModal from '../components/GameSettingsModal.vue'
 import GameDownloadModal from '../components/GameDownloadModal.vue'
@@ -91,6 +95,300 @@ const currentDisplayName = computed(() => {
   return game?.displayName || appSettings.currentConfigName;
 });
 const settingsModalRef = ref<InstanceType<typeof GameSettingsModal> | null>(null);
+
+type RuntimeFocusTarget = 'all' | 'wine_version' | 'dxvk' | 'vkd3d';
+type GlobalSettingsMenu = 'proton' | 'dxvk' | 'vkd3d';
+type OnboardingSettingsTab = 'info' | 'game' | 'runtime' | 'system';
+type OnboardingHomeAction =
+  | { type: 'open_download_modal' }
+  | { type: 'open_game_settings'; tab: OnboardingSettingsTab; runtimeFocus?: RuntimeFocusTarget }
+  | { type: 'close_modals' };
+
+const openGlobalSettingsMenu = async (
+  menu: GlobalSettingsMenu,
+  reason?: string,
+) => {
+  showSettings.value = false;
+  await router.push({
+    path: '/settings',
+    query: {
+      menu,
+      guide: '1',
+      reason: reason || '',
+      t: String(Date.now()),
+    },
+  });
+};
+
+const openRuntimeSettings = async (reason?: string, focusTarget: RuntimeFocusTarget = 'all') => {
+  showSettings.value = true;
+  await nextTick();
+  settingsModalRef.value?.switchTab?.('runtime');
+  settingsModalRef.value?.focusRuntimeSetup?.(reason, focusTarget);
+
+  // 二次触发，避免首次打开时被子组件初始化流程覆盖（导致无动画/未聚焦）
+  setTimeout(() => {
+    settingsModalRef.value?.switchTab?.('runtime');
+    settingsModalRef.value?.focusRuntimeSetup?.(reason, focusTarget);
+  }, 260);
+};
+
+const openGameSettingsGameTab = async () => {
+  showSettings.value = true;
+  await nextTick();
+  settingsModalRef.value?.switchTab?.('game');
+  setTimeout(() => {
+    settingsModalRef.value?.switchTab?.('game');
+  }, 220);
+};
+
+const openGameSettingsTab = async (tab: OnboardingSettingsTab, runtimeFocus: RuntimeFocusTarget = 'all') => {
+  showDownload.value = false;
+  showSettings.value = true;
+  await nextTick();
+  settingsModalRef.value?.switchTab?.(tab);
+  if (tab === 'runtime') {
+    settingsModalRef.value?.focusRuntimeSetup?.('', runtimeFocus);
+  }
+  setTimeout(() => {
+    settingsModalRef.value?.switchTab?.(tab);
+    if (tab === 'runtime') {
+      settingsModalRef.value?.focusRuntimeSetup?.('', runtimeFocus);
+    }
+  }, 220);
+};
+
+const applyOnboardingHomeAction = async (detail?: OnboardingHomeAction) => {
+  if (!detail) return;
+  if (detail.type === 'close_modals') {
+    showSettings.value = false;
+    showDownload.value = false;
+    return;
+  }
+  if (detail.type === 'open_download_modal') {
+    showSettings.value = false;
+    showDownload.value = true;
+    return;
+  }
+  if (detail.type === 'open_game_settings') {
+    await openGameSettingsTab(detail.tab, detail.runtimeFocus || 'all');
+  }
+};
+
+const onOnboardingActionEvent = (event: Event) => {
+  const detail = (event as CustomEvent<OnboardingHomeAction>).detail;
+  void applyOnboardingHomeAction(detail);
+};
+
+const normalizePathForCompare = (value: string) =>
+  String(value || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .replace(/\/$/, '');
+
+const parentDir = (path: string): string => {
+  const normalized = normalizePathForCompare(path);
+  if (!normalized) return '';
+  const idx = normalized.lastIndexOf('/');
+  if (idx <= 0) return '';
+  return normalized.slice(0, idx);
+};
+
+const pushUniquePath = (arr: string[], value: string) => {
+  const normalized = normalizePathForCompare(value);
+  if (!normalized) return;
+  if (!arr.includes(normalized)) {
+    arr.push(normalized);
+  }
+};
+
+const buildExecutableCheckRoots = (
+  preset: string,
+  gamePath: string,
+  configuredGameFolder?: string,
+): string[] => {
+  const roots: string[] = [];
+  pushUniquePath(roots, configuredGameFolder || '');
+
+  const normalizedPath = normalizePathForCompare(gamePath);
+  if (!normalizedPath) return roots;
+
+  const exeDir = parentDir(normalizedPath);
+  pushUniquePath(roots, exeDir);
+
+  let current = exeDir;
+  for (let i = 0; i < 4; i += 1) {
+    current = parentDir(current);
+    if (!current) break;
+    pushUniquePath(roots, current);
+  }
+
+  if (preset === 'wutheringwaves') {
+    const lower = normalizedPath.toLowerCase();
+    for (const marker of [
+      '/wuthering waves game/client/binaries/win64/',
+      '/client/binaries/win64/',
+      '/wuthering waves game/',
+    ]) {
+      const idx = lower.indexOf(marker);
+      if (idx > 0) {
+        pushUniquePath(roots, normalizedPath.slice(0, idx));
+      }
+    }
+  }
+
+  return roots;
+};
+
+const SHOULD_CHECK_EXECUTABLE_PRESETS = new Set([
+  'wutheringwaves',
+  'genshinimpact',
+  'honkaistarrail',
+  'zenlesszonezero',
+]);
+
+const checkExecutablePathMismatch = async (gameName: string, gameConfig: any) => {
+  const presetRaw = String(
+    gameConfig?.basic?.gamePreset ||
+      gameConfig?.basic?.GamePreset ||
+      gameConfig?.GamePreset ||
+      gameName,
+  ).trim();
+  const preset = presetRaw.toLowerCase();
+  if (!SHOULD_CHECK_EXECUTABLE_PRESETS.has(preset)) {
+    return;
+  }
+
+  const configuredPath = normalizePathForCompare(String(gameConfig?.other?.gamePath || ''));
+  if (!configuredPath) return;
+
+  const launcherApi = String(gameConfig?.other?.launcherApi || '').trim();
+  const configuredGameFolder = String(gameConfig?.other?.gameFolder || '').trim();
+  const roots = buildExecutableCheckRoots(preset, configuredPath, configuredGameFolder);
+  if (roots.length === 0) return;
+
+  let detectedPath: string | null = null;
+  for (const root of roots) {
+    try {
+      detectedPath = await resolveDownloadedGameExecutable(
+        presetRaw,
+        root,
+        launcherApi || undefined,
+      );
+    } catch {
+      detectedPath = null;
+    }
+    if (detectedPath) break;
+  }
+
+  const detected = normalizePathForCompare(String(detectedPath || ''));
+  if (!detected || detected === configuredPath) {
+    return;
+  }
+
+  await showMessage(
+    `检测到主程序路径可能不匹配。\n当前配置：${configuredPath}\n推荐主程序：${detected}\n\n已自动跳转到“游戏设置 -> 游戏选项”。本次不会阻止启动。`,
+    { title: '主程序路径提醒', kind: 'warning' },
+  );
+  await openGameSettingsGameTab();
+};
+
+const ensureRuntimeReady = async (gameName: string, gameConfig: any, wineVersionId: string) => {
+  const runtimeEnv = String(gameConfig?.basic?.runtimeEnv || 'wine').toLowerCase();
+  if (runtimeEnv !== 'wine') {
+    return true;
+  }
+
+  let versions: any[] = [];
+  let localDxvk: any[] = [];
+  let dxvkInstalledInPrefix = false;
+  let dxvkStatusCached: any | null = null;
+  try {
+    versions = await scanWineVersions();
+  } catch (e: any) {
+    await showMessage(`运行环境扫描失败，请在“游戏设置 -> 运行环境”检查 Proton 配置：${e}`, {
+      title: '运行环境检查失败',
+      kind: 'error',
+    });
+    await openGlobalSettingsMenu('proton', '运行环境扫描失败，请先配置 Proton');
+    return false;
+  }
+
+  try {
+    localDxvk = await scanLocalDxvk();
+  } catch (e) {
+    console.warn('[launch] DXVK 本地缓存扫描失败:', e);
+  }
+
+  try {
+    const dxvkStatus = await detectDxvkStatus(gameName);
+    dxvkStatusCached = dxvkStatus;
+    dxvkInstalledInPrefix = !!dxvkStatus.installed;
+  } catch (e) {
+    console.warn('[launch] DXVK 安装状态检测失败:', e);
+  }
+
+  if (versions.length === 0) {
+    await showMessage(
+      '未检测到任何 Wine/Proton 版本。\n请先打开“设置 -> Proton 管理”下载安装版本后再启动。',
+      { title: '缺少 Proton', kind: 'warning' },
+    );
+    await openGlobalSettingsMenu('proton', '请先在此下载 Proton 版本。');
+    return false;
+  }
+
+  if (localDxvk.length === 0 && !dxvkInstalledInPrefix) {
+    await showMessage(
+      '未检测到可用 DXVK（本地无缓存且当前 Prefix 未安装）。\n请先打开“设置 -> DXVK 管理”下载安装版本。',
+      { title: '缺少 DXVK', kind: 'warning' },
+    );
+    await openGlobalSettingsMenu('dxvk', '请先在此下载 DXVK 版本。');
+    return false;
+  }
+
+  if (!wineVersionId?.trim()) {
+    await showMessage(
+      '当前游戏尚未选择 Wine/Proton 版本。\n请先打开“游戏设置 -> 运行环境”进行设置。',
+      { title: '未设置 Proton', kind: 'warning' },
+    );
+    await openRuntimeSettings('请先在此选择或下载 Wine/Proton 版本。', 'wine_version');
+    return false;
+  }
+
+  const selected = versions.find((v) => v.id === wineVersionId);
+  if (!selected) {
+    await showMessage(
+      `当前配置的 Wine/Proton 版本不存在：${wineVersionId}\n请在“游戏设置 -> 运行环境”重新选择可用版本。`,
+      { title: 'Proton 配置无效', kind: 'warning' },
+    );
+    await openRuntimeSettings('当前 Wine/Proton 配置无效，请重新选择。', 'wine_version');
+    return false;
+  }
+
+  try {
+    const dxvkStatus = dxvkStatusCached || (await detectDxvkStatus(gameName));
+    if (!dxvkStatus.installed) {
+      const openNow = await askConfirm(
+        '检测到当前 Prefix 未安装 DXVK。\n这可能导致 DirectX 11/12 游戏黑屏、崩溃或无法启动。\n\n是否现在打开“游戏设置 -> 运行环境”安装 DXVK？',
+        {
+          title: '缺少 DXVK',
+          kind: 'warning',
+          okLabel: '打开运行环境',
+          cancelLabel: '继续启动',
+        },
+      );
+      if (openNow) {
+        await openRuntimeSettings('请在此安装 DXVK（建议优先官方 DXVK）。', 'dxvk');
+        return false;
+      }
+    }
+  } catch (e) {
+    console.warn('[launch] DXVK 检测失败:', e);
+  }
+
+  return true;
+};
 
 // 检查当前游戏是否已配置可执行文件
 const gameHasExe = ref(false);
@@ -251,11 +549,13 @@ const launchGame = async () => {
         return;
       }
 
-      if (!wineVersionId) {
-        await showMessage('请先在游戏设置中选择 Wine/Proton 版本', { title: '提示', kind: 'info' });
+      if (!(await ensureRuntimeReady(gameName, data, wineVersionId))) {
         isLaunching.value = false;
         return;
       }
+
+      // 主程序路径不匹配仅提示，不阻止启动
+      await checkExecutablePathMismatch(gameName, data);
 
       await apiStartGame(gameName, gameExePath, wineVersionId);
       // 启动成功后，等待 game-lifecycle 事件来更新状态
@@ -265,7 +565,27 @@ const launchGame = async () => {
     console.error('Start Game Error:', e);
     // 只在启动失败时重置状态
     isLaunching.value = false;
-    await showMessage(`启动失败: ${e}`, { title: '错误', kind: 'error' });
+    const errText = String(e || '');
+    if (
+      errText.includes('Wine/Proton') ||
+      errText.includes('运行环境') ||
+      errText.includes('启动配置错误')
+    ) {
+      const openNow = await askConfirm(
+        `启动失败（运行环境问题）：\n${errText}\n\n是否现在打开“游戏设置 -> 运行环境”进行修复？`,
+        {
+          title: '运行环境错误',
+          kind: 'error',
+          okLabel: '打开运行环境',
+          cancelLabel: '稍后处理',
+        },
+      );
+      if (openNow) {
+        await openRuntimeSettings('请先修复运行环境配置（Proton / DXVK）。', 'wine_version');
+        return;
+      }
+    }
+    await showMessage(`启动失败: ${errText}`, { title: '错误', kind: 'error' });
   }
 }
 
@@ -279,6 +599,7 @@ let unlistenAnticheat: (() => void) | null = null;
 
 onMounted(async () => {
   document.addEventListener('click', closeMenu);
+  window.addEventListener('ssmt4-onboarding-action', onOnboardingActionEvent as EventListener);
   checkGameExe();
   unlistenLifecycle = await listenEvent('game-lifecycle', (event: any) => {
     const data = event.payload;
@@ -312,6 +633,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   document.removeEventListener('click', closeMenu);
+  window.removeEventListener('ssmt4-onboarding-action', onOnboardingActionEvent as EventListener);
   if (unlistenLifecycle) unlistenLifecycle();
   if (unlistenComponentDl) unlistenComponentDl();
   if (unlistenAnticheat) unlistenAnticheat();
@@ -344,7 +666,7 @@ onUnmounted(() => {
       <div class="dashboard-panel">
         
         <!-- Game Selection (Dock) -->
-        <div class="games-dock">
+        <div class="games-dock" data-onboarding="home-games-dock">
           <!-- Empty state: guide to Game Library -->
           <el-tooltip v-if="sidebarGames.length === 0" content="添加游戏到侧边栏" placement="top" effect="dark" popper-class="game-tooltip">
             <div class="dock-icon add-game-btn" @click="router.push('/games')">
@@ -372,7 +694,7 @@ onUnmounted(() => {
         <!-- Start Game Button & Settings -->
         <div class="action-bar">
           <div class="start-game-wrapper">
-             <div class="start-game-btn" @click="(isGameRunning || isLaunching) ? null : (gameHasExe ? launchGame() : (showDownload = true))" :class="{ 'disabled': isLaunching, 'running': isGameRunning }">
+             <div class="start-game-btn" data-onboarding="home-start-button" @click="(isGameRunning || isLaunching) ? null : (gameHasExe ? launchGame() : (showDownload = true))" :class="{ 'disabled': isLaunching, 'running': isGameRunning }">
                <div class="btn-background-fx"></div>
                <div class="icon-wrapper">
                  <div class="play-triangle" v-if="gameHasExe && !isGameRunning"></div>
@@ -385,7 +707,7 @@ onUnmounted(() => {
 
           <!-- Settings Menu Button -->
           <el-dropdown trigger="hover" placement="top-end" popper-class="settings-dropdown">
-            <div class="settings-btn">
+            <div class="settings-btn" data-onboarding="home-settings-button">
               <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-settings-2"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="7" r="3"/><circle cx="8" cy="17" r="3"/></svg>
             </div>
             <template #dropdown>

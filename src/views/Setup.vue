@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { appSettings } from '../store';
 import { openFileDialog } from '../api';
 
 const router = useRouter();
-const step = ref(appSettings.initialized ? 3 : 1);
+const route = useRoute();
+const restartMode = String(route.query.restart || '').trim() === '1';
+const step = ref(restartMode ? 1 : (appSettings.initialized ? 3 : 1));
 const selectedDir = ref(appSettings.dataDir || '');
-const confirmUnofficial = ref(appSettings.tosRiskAcknowledged);
-const confirmRisk = ref(appSettings.tosRiskAcknowledged);
+const confirmUnofficial = ref(restartMode ? false : appSettings.tosRiskAcknowledged);
+const confirmRisk = ref(restartMode ? false : appSettings.tosRiskAcknowledged);
 
 const canFinish = computed(() => confirmUnofficial.value && confirmRisk.value);
 

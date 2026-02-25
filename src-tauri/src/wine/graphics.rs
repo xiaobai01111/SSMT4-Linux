@@ -61,6 +61,39 @@ pub struct DxvkInstalledStatus {
     pub dlls_found: Vec<String>,
 }
 
+/// 本地已缓存的 VKD3D-Proton 版本信息
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Vkd3dLocalVersion {
+    pub version: String,
+    /// 是否已解压（可直接安装）
+    pub extracted: bool,
+    /// 缓存目录路径
+    pub path: PathBuf,
+}
+
+/// 远程可用的 VKD3D-Proton 版本（GitHub Release）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Vkd3dRemoteVersion {
+    pub version: String,
+    pub tag_name: String,
+    pub download_url: String,
+    pub file_size: u64,
+    pub published_at: String,
+    /// 是否已在本地缓存
+    pub is_local: bool,
+}
+
+/// 当前 Prefix 中安装的 VKD3D-Proton 状态
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Vkd3dInstalledStatus {
+    /// 是否检测到 VKD3D DLL
+    pub installed: bool,
+    /// 匹配到的版本号（优先标记文件）
+    pub version: Option<String>,
+    /// 检测到的 VKD3D DLL 列表
+    pub dlls_found: Vec<String>,
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DxvkCatalogSeed {
@@ -590,6 +623,184 @@ fn remove_dxvk_version_marker(prefix_path: &Path) {
     let _ = std::fs::remove_file(&marker);
 }
 
+/// 获取 VKD3D 版本标记文件路径
+fn vkd3d_version_marker_path(prefix_path: &Path) -> PathBuf {
+    prefix_path.join(".vkd3d-version")
+}
+
+/// 读取安装时写入的 .vkd3d-version 标记文件
+fn read_vkd3d_version_marker(prefix_path: &Path) -> Option<String> {
+    let marker = vkd3d_version_marker_path(prefix_path);
+    std::fs::read_to_string(&marker)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// 写入 .vkd3d-version 标记文件
+fn write_vkd3d_version_marker(prefix_path: &Path, version: &str) {
+    let marker = vkd3d_version_marker_path(prefix_path);
+    let _ = std::fs::write(&marker, version);
+}
+
+/// 删除 .vkd3d-version 标记文件
+fn remove_vkd3d_version_marker(prefix_path: &Path) {
+    let marker = vkd3d_version_marker_path(prefix_path);
+    let _ = std::fs::remove_file(&marker);
+}
+
+fn parse_vkd3d_version_from_name(name: &str) -> Option<String> {
+    strip_archive_suffix(name)
+        .strip_prefix("vkd3d-proton-")
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// 扫描本地缓存的 VKD3D-Proton 版本（tools/vkd3d/ 目录）
+pub fn scan_local_vkd3d_versions() -> Vec<Vkd3dLocalVersion> {
+    let cache_dir = crate::utils::file_manager::get_tools_dir().join("vkd3d");
+    if !cache_dir.exists() {
+        return Vec::new();
+    }
+
+    let mut by_version: HashMap<String, Vkd3dLocalVersion> = HashMap::new();
+    let mut upsert = |version: String, extracted: bool, path: PathBuf| {
+        match by_version.get_mut(&version) {
+            Some(existing) => {
+                // 同一版本同时存在压缩包与已解压目录时，优先保留已解压条目
+                if extracted && !existing.extracted {
+                    existing.extracted = true;
+                    existing.path = path;
+                }
+            }
+            None => {
+                by_version.insert(
+                    version.clone(),
+                    Vkd3dLocalVersion {
+                        version,
+                        extracted,
+                        path,
+                    },
+                );
+            }
+        }
+    };
+
+    if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            let is_dir = path.is_dir();
+            let is_file = path.is_file();
+            if !is_dir && !is_file {
+                continue;
+            }
+
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            if name.trim().is_empty() {
+                continue;
+            }
+
+            if is_file && !name.ends_with(".tar.zst") {
+                continue;
+            }
+
+            let Some(version) = parse_vkd3d_version_from_name(&name) else {
+                continue;
+            };
+
+            let extracted = if is_dir {
+                path.join("x64").exists()
+                    || find_arch_dir(&path, &["x64"]).is_some()
+                    || path.join("x86").exists()
+                    || path.join("x32").exists()
+            } else {
+                false
+            };
+
+            upsert(version, extracted, path);
+        }
+    }
+
+    let mut versions: Vec<Vkd3dLocalVersion> = by_version.into_values().collect();
+    versions.sort_by(|a, b| b.version.cmp(&a.version));
+    versions
+}
+
+/// 检测 Prefix 中已安装的 VKD3D-Proton 版本
+pub fn detect_installed_vkd3d(prefix_path: &Path) -> Vkd3dInstalledStatus {
+    let system32 = prefix_path.join("drive_c").join("windows").join("system32");
+    let syswow64 = prefix_path.join("drive_c").join("windows").join("syswow64");
+    let vkd3d_dlls = ["d3d12.dll", "d3d12core.dll", "dxil.dll"];
+    let mut found_dlls = Vec::new();
+    let marker_version = read_vkd3d_version_marker(prefix_path);
+
+    for dll in &vkd3d_dlls {
+        if system32.join(dll).exists() || syswow64.join(dll).exists() {
+            found_dlls.push(dll.to_string());
+        }
+    }
+
+    let installed = !found_dlls.is_empty() || marker_version.is_some();
+    let version = if installed {
+        if marker_version.is_some() {
+            marker_version
+        } else {
+            match_vkd3d_version_by_size(&[system32, syswow64])
+        }
+    } else {
+        None
+    };
+
+    Vkd3dInstalledStatus {
+        installed,
+        version,
+        dlls_found: found_dlls,
+    }
+}
+
+/// 通过 DLL 文件大小与本地缓存版本比对（兜底方案）
+fn match_vkd3d_version_by_size(dirs: &[PathBuf]) -> Option<String> {
+    let local_versions = scan_local_vkd3d_versions();
+    let reference_dlls = ["d3d12.dll", "d3d12core.dll", "dxil.dll"];
+
+    let mut installed_size = None;
+    for dir in dirs {
+        for dll in &reference_dlls {
+            let path = dir.join(dll);
+            if let Ok(meta) = std::fs::metadata(path) {
+                installed_size = Some(meta.len());
+                break;
+            }
+        }
+        if installed_size.is_some() {
+            break;
+        }
+    }
+    let installed_size = installed_size?;
+
+    for local in &local_versions {
+        if !local.extracted {
+            continue;
+        }
+
+        let x64_dir =
+            find_arch_dir(&local.path, &["x64"]).unwrap_or_else(|| local.path.join("x64"));
+        for dll in &reference_dlls {
+            let cached_dll = x64_dir.join(dll);
+            if let Ok(meta) = std::fs::metadata(&cached_dll) {
+                if meta.len() == installed_size {
+                    return Some(local.version.clone());
+                }
+            }
+        }
+    }
+    None
+}
+
 /// 直接读取 DLL 二进制数据，搜索 "dxvk-X.Y.Z" 版本字符串
 ///
 /// 不依赖外部 `strings` 命令，兼容所有 Linux 发行版。
@@ -948,6 +1159,145 @@ pub async fn fetch_dxvk_releases(
     Ok(all)
 }
 
+fn vkd3d_names(version: &str) -> (String, String) {
+    let archive_name = format!("vkd3d-proton-{}.tar.zst", version);
+    let extract_dir_name = archive_name
+        .strip_suffix(".tar.zst")
+        .unwrap_or(&archive_name)
+        .to_string();
+    (archive_name, extract_dir_name)
+}
+
+fn vkd3d_download_url(version: &str, archive_name: &str) -> String {
+    format!(
+        "https://github.com/HansKristian-Work/vkd3d-proton/releases/download/v{}/{}",
+        version, archive_name
+    )
+}
+
+pub async fn fetch_vkd3d_releases(
+    max_count: usize,
+    github_token: Option<&str>,
+) -> Result<Vec<Vkd3dRemoteVersion>, String> {
+    let local_versions = scan_local_vkd3d_versions();
+    let url = format!(
+        "https://api.github.com/repos/HansKristian-Work/vkd3d-proton/releases?per_page={}",
+        max_count
+    );
+
+    let client = reqwest::Client::new();
+    let mut req = client
+        .get(&url)
+        .header("User-Agent", "SSMT4/0.1")
+        .header("Accept", "application/vnd.github.v3+json");
+    if let Some(token) = github_token.map(|v| v.trim()).filter(|v| !v.is_empty()) {
+        req = req.bearer_auth(token);
+    }
+
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("请求 VKD3D 远程版本失败: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("VKD3D API 返回 HTTP {}", resp.status()));
+    }
+
+    let releases: Vec<serde_json::Value> = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析 VKD3D 远程版本失败: {}", e))?;
+
+    let mut result = Vec::new();
+    for release in releases {
+        let prerelease = release
+            .get("prerelease")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if prerelease {
+            continue;
+        }
+
+        let tag_name = release
+            .get("tag_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let published_at = release
+            .get("published_at")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let Some(assets) = release.get("assets").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        let Some(asset) = assets.iter().find(|asset| {
+            let name = asset.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            name.starts_with("vkd3d-proton-") && name.ends_with(".tar.zst")
+        }) else {
+            continue;
+        };
+
+        let name = asset.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let version = parse_vkd3d_version_from_name(name).unwrap_or_else(|| {
+            tag_name
+                .trim_start_matches('v')
+                .trim()
+                .to_string()
+        });
+        let download_url = asset
+            .get("browser_download_url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let file_size = asset.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+        let is_local = local_versions.iter().any(|v| v.version == version);
+
+        result.push(Vkd3dRemoteVersion {
+            version,
+            tag_name,
+            download_url,
+            file_size,
+            published_at,
+            is_local,
+        });
+    }
+
+    result.sort_by(|a, b| b.version.cmp(&a.version));
+    if result.len() > max_count {
+        result.truncate(max_count);
+    }
+    info!("获取到 {} 个 VKD3D 远程版本", result.len());
+    Ok(result)
+}
+
+/// 仅下载并解压 VKD3D-Proton 到本地缓存（不安装到任何 Prefix）
+pub async fn download_vkd3d_only(vkd3d_version: &str) -> Result<String, String> {
+    let cache_dir = crate::utils::file_manager::get_tools_dir().join("vkd3d");
+    crate::utils::file_manager::ensure_dir(&cache_dir)?;
+
+    let (archive_name, extract_dir_name) = vkd3d_names(vkd3d_version);
+    let archive_path = cache_dir.join(&archive_name);
+    let extract_dir = cache_dir.join(&extract_dir_name);
+
+    if !archive_path.exists() {
+        let url = vkd3d_download_url(vkd3d_version, &archive_name);
+        info!("Downloading VKD3D-Proton {} from {}", vkd3d_version, url);
+        download_tool(&url, &archive_path).await?;
+    }
+
+    if !extract_dir.exists() {
+        extract_tar_zst(&archive_path, &cache_dir).await?;
+    }
+
+    info!(
+        "VKD3D-Proton {} 已缓存到 {}",
+        vkd3d_version,
+        extract_dir.display()
+    );
+    Ok(format!("VKD3D-Proton {} 下载完成", vkd3d_version))
+}
+
 pub fn check_vulkan() -> VulkanInfo {
     let output = std::process::Command::new("vulkaninfo")
         .arg("--summary")
@@ -1227,15 +1577,12 @@ pub async fn install_vkd3d(prefix_path: &Path, vkd3d_version: &str) -> Result<St
     let cache_dir = crate::utils::file_manager::get_tools_dir().join("vkd3d");
     crate::utils::file_manager::ensure_dir(&cache_dir)?;
 
-    let archive_name = format!("vkd3d-proton-{}.tar.zst", vkd3d_version);
+    let (archive_name, extract_dir_name) = vkd3d_names(vkd3d_version);
     let archive_path = cache_dir.join(&archive_name);
-    let extract_dir = cache_dir.join(format!("vkd3d-proton-{}", vkd3d_version));
+    let extract_dir = cache_dir.join(&extract_dir_name);
 
     if !archive_path.exists() {
-        let url = format!(
-            "https://github.com/HansKristian-Work/vkd3d-proton/releases/download/v{}/{}",
-            vkd3d_version, archive_name
-        );
+        let url = vkd3d_download_url(vkd3d_version, &archive_name);
         info!("Downloading VKD3D-Proton {} from {}", vkd3d_version, url);
         download_tool(&url, &archive_path).await?;
     }
@@ -1280,13 +1627,39 @@ pub async fn install_vkd3d(prefix_path: &Path, vkd3d_version: &str) -> Result<St
         ));
     }
 
+    write_vkd3d_version_marker(prefix_path, vkd3d_version);
+
     info!(
         "Installed VKD3D-Proton {} to {} ({} DLLs copied)",
         vkd3d_version,
         prefix_path.display(),
         copied
     );
-    Ok(format!("VKD3D-Proton {} installed", vkd3d_version))
+    Ok(format!(
+        "VKD3D-Proton {} 安装完成（{} 个 DLL）",
+        vkd3d_version, copied
+    ))
+}
+
+pub fn uninstall_vkd3d(prefix_path: &Path) -> Result<String, String> {
+    let system32 = prefix_path.join("drive_c").join("windows").join("system32");
+    let syswow64 = prefix_path.join("drive_c").join("windows").join("syswow64");
+    let dlls = ["d3d12.dll", "d3d12core.dll", "dxil.dll"];
+
+    for dll in &dlls {
+        let path = system32.join(dll);
+        if path.exists() {
+            std::fs::remove_file(&path).ok();
+        }
+        let path = syswow64.join(dll);
+        if path.exists() {
+            std::fs::remove_file(&path).ok();
+        }
+    }
+
+    remove_vkd3d_version_marker(prefix_path);
+    info!("Uninstalled VKD3D-Proton from {}", prefix_path.display());
+    Ok("VKD3D-Proton 已卸载".to_string())
 }
 
 fn find_arch_dir(root: &Path, names: &[&str]) -> Option<PathBuf> {
@@ -1396,9 +1769,10 @@ async fn download_tool(url: &str, dest: &Path) -> Result<(), String> {
         ));
     }
 
-    // 归档格式魔数校验（tar.gz/tar.xz/zip）
+    // 归档格式魔数校验（tar.gz/tar.xz/tar.zst/zip）
     let valid_archive = (header_filled >= 2 && header_buf[..2] == [0x1F, 0x8B])        // gzip
         || (header_filled >= 6 && header_buf[..6] == [0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00]) // xz
+        || (header_filled >= 4 && header_buf[..4] == [0x28, 0xB5, 0x2F, 0xFD]) // zstd
         || (header_filled >= 4 && header_buf[..4] == [0x50, 0x4B, 0x03, 0x04]); // zip
     if !valid_archive {
         tokio::fs::remove_file(dest).await.ok();

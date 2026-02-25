@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tauri::Manager;
-use tracing::info;
+use tracing::{debug, info};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +28,59 @@ fn get_default_display_name(game_key: &str) -> String {
         .unwrap_or_else(|| game_key.to_string())
 }
 
+fn is_infrastructure_dir_name(folder_name: &str) -> bool {
+    let normalized = folder_name.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return true;
+    }
+    if normalized.starts_with('.') {
+        return true;
+    }
+    matches!(
+        normalized.as_str(),
+        "prefix"
+            | "prefixes"
+            | "tools"
+            | "tool"
+            | "cache"
+            | "caches"
+            | "logs"
+            | "log"
+            | "tmp"
+            | "temp"
+            | "data-parameters"
+            | "gametemplates"
+            | "_templates"
+            | "downloads"
+    )
+}
+
+fn extract_game_id_from_config(config: &serde_json::Value) -> Option<String> {
+    config
+        .get("LogicName")
+        .or_else(|| config.get("GamePreset"))
+        .and_then(|v| v.as_str())
+        .map(crate::configs::game_identity::to_canonical_or_keep)
+        .filter(|v| !v.trim().is_empty())
+}
+
+fn should_include_game_dir(folder_name: &str, fs_config: Option<&serde_json::Value>) -> bool {
+    if is_infrastructure_dir_name(folder_name) {
+        return false;
+    }
+
+    // 有 Config 且可提取游戏标识：一律视为有效游戏目录（含自定义游戏）
+    if let Some(config) = fs_config {
+        if extract_game_id_from_config(config).is_some() {
+            return true;
+        }
+    }
+
+    // 无 Config 时，仅识别为已知游戏预设（避免把 prefix 等运行目录当游戏）
+    let canonical = crate::configs::game_identity::to_canonical_or_keep(folder_name);
+    crate::configs::game_presets::get_preset(&canonical).is_some()
+}
+
 #[tauri::command]
 pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
     let user_games_dir = get_user_games_dir()?;
@@ -43,17 +96,28 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
     // game_id -> (用户目录路径, 资源目录路径)
     let mut game_user_paths: HashMap<String, PathBuf> = HashMap::new();
     let mut game_resource_paths: HashMap<String, PathBuf> = HashMap::new();
-    let mut all_dir_names: HashSet<String> = HashSet::new();
+    let mut user_game_ids: HashSet<String> = HashSet::new();
+    let mut resource_game_ids: HashSet<String> = HashSet::new();
+    let mut skipped_dir_count: usize = 0;
 
     for (dir_idx, games_dir) in scan_dirs.iter().enumerate() {
         if !games_dir.exists() {
             continue;
         }
 
-        let entries =
-            std::fs::read_dir(games_dir).map_err(|e| format!("Failed to read games dir: {}", e))?;
+        let mut entries: Vec<_> = std::fs::read_dir(games_dir)
+            .map_err(|e| format!("Failed to read games dir: {}", e))?
+            .filter_map(|e| e.ok())
+            .collect();
+        // 稳定排序，避免 read_dir 无序导致偶发不一致
+        entries.sort_by_key(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .to_string()
+                .to_ascii_lowercase()
+        });
 
-        for entry in entries.flatten() {
+        for entry in entries {
             if !entry.path().is_dir() {
                 continue;
             }
@@ -71,31 +135,52 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
                 None
             };
 
+            if !should_include_game_dir(&folder_name, fs_config.as_ref()) {
+                skipped_dir_count += 1;
+                debug!(
+                    "跳过非游戏目录: 目录={}, 来源={}",
+                    folder_name,
+                    if dir_idx == 0 {
+                        "用户目录"
+                    } else {
+                        "资源目录"
+                    }
+                );
+                continue;
+            }
+
             // game_id = LogicName || GamePreset || 文件夹名
             let game_id = fs_config
                 .as_ref()
-                .and_then(|v| v.get("LogicName").or_else(|| v.get("GamePreset")))
-                .and_then(|v| v.as_str())
-                .map(crate::configs::game_identity::to_canonical_or_keep)
+                .and_then(extract_game_id_from_config)
                 .unwrap_or_else(|| {
                     crate::configs::game_identity::to_canonical_or_keep(&folder_name)
                 });
 
-            all_dir_names.insert(game_id.clone());
-
             if dir_idx == 0 {
                 // 用户目录
+                user_game_ids.insert(game_id.clone());
                 game_user_paths.entry(game_id).or_insert(game_path);
             } else {
                 // 资源目录
+                resource_game_ids.insert(game_id.clone());
                 game_resource_paths.entry(game_id).or_insert(game_path);
             }
         }
     }
 
-    // 合并：用户目录优先，资源目录回退
+    // 显示“全部支持的游戏”：
+    // - 优先使用资源目录（Data-parameters）作为支持列表
+    // - 当资源目录不可用时，回退到用户目录
+    let final_game_ids: HashSet<String> = if !resource_game_ids.is_empty() {
+        resource_game_ids.clone()
+    } else {
+        user_game_ids.clone()
+    };
+
+    // 合并路径：用户目录优先（用于覆盖图标/背景/配置），资源目录回退
     let mut game_paths: HashMap<String, PathBuf> = HashMap::new();
-    for game_id in &all_dir_names {
+    for game_id in &final_game_ids {
         if let Some(path) = game_user_paths.get(game_id) {
             game_paths.insert(game_id.clone(), path.clone());
         } else if let Some(path) = game_resource_paths.get(game_id) {
@@ -211,14 +296,34 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
     // 同步 SQLite：仅清理已不存在的游戏配置
     let db_names = crate::configs::database::list_game_names();
     for db_name in &db_names {
-        if !all_dir_names.contains(db_name.as_str()) {
+        if !final_game_ids.contains(db_name.as_str()) {
             crate::configs::database::delete_game_config(db_name);
             crate::configs::database::delete_game_config_v2(db_name);
             info!("已清理过期游戏配置: {}", db_name);
         }
     }
 
-    info!("Scanned {} games", games.len());
+    let installed_count = final_game_ids
+        .iter()
+        .filter(|id| game_user_paths.contains_key(*id))
+        .count();
+    let resource_fallback_count = final_game_ids
+        .iter()
+        .filter(|id| game_resource_paths.contains_key(*id))
+        .count();
+    let resource_only_template_count = final_game_ids
+        .iter()
+        .filter(|id| !game_user_paths.contains_key(*id))
+        .count();
+    info!(
+        "游戏扫描完成: 支持总数={}, 已安装={}, 资源回退匹配={}, 仅资源模板={}, 忽略目录={}, 返回={}",
+        final_game_ids.len(),
+        installed_count,
+        resource_fallback_count,
+        resource_only_template_count,
+        skipped_dir_count,
+        games.len()
+    );
     Ok(games)
 }
 
@@ -531,4 +636,35 @@ fn load_hidden_games(games_dir: &Path) -> Vec<String> {
         }
     }
     Vec::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_infrastructure_dir_name, should_include_game_dir};
+
+    #[test]
+    fn infrastructure_dirs_are_filtered() {
+        assert!(is_infrastructure_dir_name("prefix"));
+        assert!(is_infrastructure_dir_name("Tools"));
+        assert!(is_infrastructure_dir_name(".cache"));
+        assert!(!is_infrastructure_dir_name("GenshinImpact"));
+    }
+
+    #[test]
+    fn known_preset_without_config_is_included() {
+        assert!(should_include_game_dir("GenshinImpact", None));
+    }
+
+    #[test]
+    fn unknown_dir_without_config_is_not_included() {
+        assert!(!should_include_game_dir("random-folder", None));
+    }
+
+    #[test]
+    fn config_with_logic_name_is_included_even_for_custom_game() {
+        let cfg = serde_json::json!({
+            "LogicName": "MyCustomGame"
+        });
+        assert!(should_include_game_dir("random-folder", Some(&cfg)));
+    }
 }

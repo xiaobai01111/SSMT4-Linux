@@ -80,6 +80,10 @@ pub struct AppConfig {
     pub initialized: bool,
     #[serde(alias = "tos_risk_acknowledged")]
     pub tos_risk_acknowledged: bool,
+    #[serde(alias = "onboarding_completed")]
+    pub onboarding_completed: bool,
+    #[serde(alias = "onboarding_version")]
+    pub onboarding_version: u32,
     #[serde(alias = "snowbreak_source_policy")]
     pub snowbreak_source_policy: String,
     #[serde(alias = "window_width")]
@@ -116,6 +120,8 @@ impl Default for AppConfig {
             data_dir: String::new(),
             initialized: false,
             tos_risk_acknowledged: false,
+            onboarding_completed: false,
+            onboarding_version: 0,
             snowbreak_source_policy: "official_first".to_string(),
             window_width: 1280.0,
             window_height: 720.0,

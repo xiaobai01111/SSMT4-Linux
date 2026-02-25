@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
-import { appSettings } from '../store'
+import { useRoute } from 'vue-router';
+import { appSettings, startFeatureOnboarding } from '../store'
 import {
   downloadDxvk,
+  downloadVkd3d,
   downloadProton,
   fetchDxvkVersions,
+  fetchVkd3dVersions,
   fetchRemoteProtonGrouped,
   getResourceVersionInfo,
   getVersionCheckInfo,
@@ -14,10 +17,13 @@ import {
   pullResourceUpdates,
   saveProtonCatalog,
   scanLocalDxvk,
+  scanLocalVkd3d,
   scanLocalProtonGrouped,
   showMessage,
   type DxvkLocalVersion,
   type DxvkRemoteVersion,
+  type Vkd3dLocalVersion,
+  type Vkd3dRemoteVersion,
   type ProtonCatalog,
   type ProtonFamily,
   type ProtonFamilyLocalGroup,
@@ -29,8 +35,40 @@ import {
 import { useI18n } from 'vue-i18n';
 
 const { t } = useI18n()
+const route = useRoute();
 
 const activeMenu = ref('basic')
+const guideMenu = ref('');
+let guideMenuTimer: ReturnType<typeof setTimeout> | null = null;
+
+const VALID_MENUS = new Set([
+  'basic',
+  'appearance',
+  'display',
+  'version',
+  'resource',
+  'proton',
+  'dxvk',
+  'vkd3d',
+]);
+
+const applyMenuFromRoute = () => {
+  const menu = String(route.query.menu || '').trim();
+  const guide = String(route.query.guide || '').trim();
+  if (VALID_MENUS.has(menu)) {
+    activeMenu.value = menu;
+    if (guide === '1') {
+      guideMenu.value = menu;
+      if (guideMenuTimer) {
+        clearTimeout(guideMenuTimer);
+      }
+      guideMenuTimer = setTimeout(() => {
+        guideMenu.value = '';
+        guideMenuTimer = null;
+      }, 2600);
+    }
+  }
+};
 const versionInfo = ref<VersionCheckInfo | null>(null);
 const isVersionChecking = ref(false);
 const versionCheckLoaded = ref(false);
@@ -102,6 +140,10 @@ const pullResources = async () => {
   } finally {
     isResourcePulling.value = false;
   }
+};
+
+const reenterOnboarding = async () => {
+  startFeatureOnboarding(0);
 };
 
 const remoteItemKey = (item: ProtonRemoteVersionItem) => `${item.tag}@@${item.source_repo}`;
@@ -584,6 +626,105 @@ const doDownloadDxvk = async () => {
 
 const dxvkLocalCount = computed(() => dxvkLocalVersions.value.length);
 
+// ============================================================
+// VKD3D 管理
+// ============================================================
+const vkd3dLocalVersions = ref<Vkd3dLocalVersion[]>([]);
+const vkd3dRemoteVersions = ref<Vkd3dRemoteVersion[]>([]);
+const vkd3dSelectedVersion = ref('');
+const isVkd3dFetching = ref(false);
+const isVkd3dDownloading = ref(false);
+const vkd3dLoaded = ref(false);
+const vkd3dFetchWarning = ref('');
+
+interface Vkd3dVersionItem {
+  version: string;
+  isLocal: boolean;
+  isRemote: boolean;
+  fileSize: number;
+  publishedAt: string;
+}
+
+const vkd3dVersionList = computed<Vkd3dVersionItem[]>(() => {
+  const map = new Map<string, Vkd3dVersionItem>();
+
+  for (const rv of vkd3dRemoteVersions.value) {
+    map.set(rv.version, {
+      version: rv.version,
+      isLocal: rv.is_local,
+      isRemote: true,
+      fileSize: rv.file_size,
+      publishedAt: rv.published_at,
+    });
+  }
+
+  for (const lv of vkd3dLocalVersions.value) {
+    if (!map.has(lv.version)) {
+      map.set(lv.version, {
+        version: lv.version,
+        isLocal: true,
+        isRemote: false,
+        fileSize: 0,
+        publishedAt: '',
+      });
+    }
+  }
+
+  return Array.from(map.values()).sort((a, b) => b.version.localeCompare(a.version));
+});
+
+const selectedVkd3dItem = computed(() =>
+  vkd3dVersionList.value.find(v => v.version === vkd3dSelectedVersion.value)
+);
+
+const refreshVkd3dLocal = async () => {
+  try {
+    vkd3dLocalVersions.value = await scanLocalVkd3d();
+  } catch (e) {
+    console.warn('[vkd3d] 扫描本地版本失败:', e);
+  }
+};
+
+const refreshVkd3dRemote = async () => {
+  if (isVkd3dFetching.value) return;
+  vkd3dFetchWarning.value = '';
+  try {
+    isVkd3dFetching.value = true;
+    vkd3dRemoteVersions.value = await fetchVkd3dVersions();
+    if (!vkd3dSelectedVersion.value && vkd3dRemoteVersions.value.length > 0) {
+      vkd3dSelectedVersion.value = vkd3dRemoteVersions.value[0].version;
+    }
+    if (vkd3dRemoteVersions.value.length === 0) {
+      vkd3dFetchWarning.value = '未获取到远程版本，请稍后重试。';
+    }
+  } catch (e) {
+    await showMessage(`获取 VKD3D 版本列表失败: ${e}`, { title: '错误', kind: 'error' });
+  } finally {
+    isVkd3dFetching.value = false;
+  }
+};
+
+const doDownloadVkd3d = async () => {
+  const item = selectedVkd3dItem.value;
+  if (isVkd3dDownloading.value || !item) return;
+  try {
+    isVkd3dDownloading.value = true;
+    showDlDialog('下载 VKD3D-Proton', `正在下载 VKD3D-Proton ${item.version}，请稍候...`);
+    const result = await downloadVkd3d(item.version);
+    dlDialogStatus.value = 'success';
+    dlDialogMessage.value = result;
+    await refreshVkd3dLocal();
+    vkd3dRemoteVersions.value = await fetchVkd3dVersions();
+  } catch (e) {
+    dlDialogStatus.value = 'error';
+    dlDialogMessage.value = `下载失败: ${e}`;
+  } finally {
+    isVkd3dDownloading.value = false;
+  }
+};
+
+const vkd3dLocalCount = computed(() => vkd3dLocalVersions.value.length);
+
 const selectCacheDir = async () => {
   const selected = await openFileDialog({
     directory: true,
@@ -628,15 +769,26 @@ watch(
       await refreshDxvkRemote();
       dxvkLoaded.value = true;
     }
+    if (menu === 'vkd3d' && !vkd3dLoaded.value) {
+      await refreshVkd3dLocal();
+      await refreshVkd3dRemote();
+      vkd3dLoaded.value = true;
+    }
   },
   { immediate: true }
+);
+
+watch(
+  () => [route.query.menu, route.query.guide, route.query.t],
+  () => applyMenuFromRoute(),
+  { immediate: true },
 );
 </script>
 
 <template>
   <div class="settings-layout">
     <!-- 左侧菜单 -->
-    <div class="settings-menu">
+    <div class="settings-menu" data-onboarding="settings-menu">
       <el-menu
         :default-active="activeMenu"
         @select="(index: string) => activeMenu = index"
@@ -663,12 +815,18 @@ watch(
           <span>资源更新</span>
         </el-menu-item>
         <el-menu-item index="proton">
+          <span v-if="guideMenu === 'proton'" class="menu-guide-dot"></span>
           <el-icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 16V8a2 2 0 0 0-1-1.73l-6-3.46a2 2 0 0 0-2 0L5 6.27A2 2 0 0 0 4 8v8a2 2 0 0 0 1 1.73l6 3.46a2 2 0 0 0 2 0l6-3.46A2 2 0 0 0 20 16z"></path><polyline points="7.5 4.21 12 6.81 16.5 4.21"></polyline><polyline points="7.5 19.79 7.5 14.6 3 12"></polyline><polyline points="21 12 16.5 14.6 16.5 19.79"></polyline><polyline points="12 22.08 12 16.9 7.5 14.3"></polyline><polyline points="12 16.9 16.5 14.3"></polyline><polyline points="12 6.81 12 12"></polyline></svg></el-icon>
           <span>{{ tr('settings.proton_manage_title', 'Proton 管理') }}</span>
         </el-menu-item>
         <el-menu-item index="dxvk">
+          <span v-if="guideMenu === 'dxvk'" class="menu-guide-dot"></span>
           <el-icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20h20"/><path d="M5 20V8l7-5 7 5v12"/><path d="M9 20v-4h6v4"/><path d="M9 12h6"/><path d="M9 16h6"/></svg></el-icon>
           <span>{{ tr('settings.dxvk_manage_title', 'DXVK 管理') }}</span>
+        </el-menu-item>
+        <el-menu-item index="vkd3d">
+          <el-icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16"/><path d="M6 20V8l6-4 6 4v12"/><path d="M9 12h6"/><path d="M9 16h6"/></svg></el-icon>
+          <span>{{ tr('settings.vkd3d_manage_title', 'VKD3D 管理') }}</span>
         </el-menu-item>
       </el-menu>
     </div>
@@ -676,7 +834,7 @@ watch(
     <!-- 右侧内容区 -->
     <div class="settings-content">
       <!-- 基础设置 -->
-      <div v-show="activeMenu === 'basic'" class="settings-panel">
+      <div v-show="activeMenu === 'basic'" class="settings-panel" data-onboarding="settings-basic-panel">
         <div class="panel-title">{{ t('settings.basicsettings') }}</div>
         <el-form label-width="140px">
           <el-form-item :label="t('settings.language')">
@@ -726,6 +884,14 @@ watch(
               </div>
             </div>
           </el-form-item>
+          <el-form-item label="新手引导">
+            <div class="form-item-vertical">
+              <el-button @click="reenterOnboarding">重新进入新手引导</el-button>
+              <div class="form-item-hint">
+                仅重新展示功能导览（主页、游戏库、运行环境等），不会重置初始化设置。
+              </div>
+            </div>
+          </el-form-item>
         </el-form>
       </div>
 
@@ -744,7 +910,7 @@ watch(
       </div>
 
       <!-- 页面显示设置 -->
-      <div v-show="activeMenu === 'display'" class="settings-panel">
+      <div v-show="activeMenu === 'display'" class="settings-panel" data-onboarding="settings-display-panel">
         <div class="panel-title">{{ t('settings.page_display') }}</div>
         <el-form label-width="140px">
           <el-form-item :label="t('settings.websitepage')">
@@ -757,7 +923,7 @@ watch(
       </div>
 
       <!-- 版本检查 -->
-      <div v-show="activeMenu === 'version'" class="settings-panel version-panel">
+      <div v-show="activeMenu === 'version'" class="settings-panel version-panel" data-onboarding="settings-version-panel">
         <div class="panel-title">{{ tr('settings.version_check_title', '版本检查') }}</div>
 
         <div class="section-block">
@@ -806,7 +972,7 @@ watch(
       </div>
 
       <!-- 资源检查 -->
-      <div v-show="activeMenu === 'resource'" class="settings-panel version-panel">
+      <div v-show="activeMenu === 'resource'" class="settings-panel version-panel" data-onboarding="settings-resource-panel">
         <div class="panel-title">资源更新</div>
 
         <div class="section-block">
@@ -858,8 +1024,11 @@ watch(
       </div>
 
       <!-- Proton 管理 -->
-      <div v-show="activeMenu === 'proton'" class="settings-panel proton-panel">
+      <div v-show="activeMenu === 'proton'" class="settings-panel proton-panel" data-onboarding="settings-proton-panel">
         <div class="panel-title">{{ tr('settings.proton_manage_title', 'Proton 管理') }}</div>
+        <div v-if="guideMenu === 'proton'" class="settings-guide-banner">
+          请先在此下载并安装至少一个 Proton 版本，然后回到主页启动游戏。
+        </div>
 
         <div class="section-block">
           <div class="section-header">
@@ -1034,8 +1203,11 @@ watch(
       </div>
 
       <!-- DXVK 管理 -->
-      <div v-show="activeMenu === 'dxvk'" class="settings-panel dxvk-panel">
+      <div v-show="activeMenu === 'dxvk'" class="settings-panel dxvk-panel" data-onboarding="settings-dxvk-panel">
         <div class="panel-title">{{ tr('settings.dxvk_manage_title', 'DXVK 管理') }}</div>
+        <div v-if="guideMenu === 'dxvk'" class="settings-guide-banner">
+          请先在此下载 DXVK 版本；下载后可在“游戏设置 -> 运行环境”里应用到当前 Prefix。
+        </div>
 
         <div class="section-block">
           <div class="section-header">
@@ -1140,6 +1312,97 @@ watch(
         </div>
       </div>
 
+      <!-- VKD3D 管理 -->
+      <div v-show="activeMenu === 'vkd3d'" class="settings-panel dxvk-panel" data-onboarding="settings-vkd3d-panel">
+        <div class="panel-title">{{ tr('settings.vkd3d_manage_title', 'VKD3D 管理') }}</div>
+
+        <div class="section-block">
+          <div class="section-header">
+            <div>
+              <div class="section-title">VKD3D-Proton (Direct3D 12 → Vulkan)</div>
+              <div class="section-hint">
+                {{ tr('settings.vkd3d_hint', '在此下载和管理 VKD3D-Proton 版本，可用于 Direct3D 12 转译。') }}
+              </div>
+            </div>
+            <div class="toolbar-actions">
+              <el-button size="small" @click="refreshVkd3dLocal">
+                {{ tr('settings.vkd3d_refresh_local', '刷新本地') }}
+              </el-button>
+              <el-button size="small" @click="refreshVkd3dRemote" :loading="isVkd3dFetching">
+                {{ isVkd3dFetching ? tr('settings.vkd3d_fetching', '获取中...') : tr('settings.vkd3d_refresh_remote', '获取可用版本') }}
+              </el-button>
+            </div>
+          </div>
+
+          <!-- 本地已缓存版本 -->
+          <div class="dxvk-section">
+            <div class="editor-subtitle" style="margin-top: 14px;">
+              {{ tr('settings.vkd3d_local_title', '本地已缓存') }}
+              <span class="dxvk-count">({{ vkd3dLocalCount }} {{ tr('settings.vkd3d_versions', '个版本') }})</span>
+            </div>
+            <div v-if="vkd3dLocalVersions.length === 0" class="row-sub" style="margin-top: 8px;">
+              {{ tr('settings.vkd3d_no_local', '暂无本地缓存版本，请先获取可用版本并下载。') }}
+            </div>
+            <div v-else class="dxvk-local-list">
+              <div v-for="lv in vkd3dLocalVersions" :key="lv.version" class="dxvk-local-item">
+                <div class="dxvk-local-ver">{{ lv.version }}</div>
+                <el-tag v-if="lv.extracted" type="success" size="small">{{ tr('settings.vkd3d_extracted', '已解压') }}</el-tag>
+                <el-tag v-else type="info" size="small">{{ tr('settings.vkd3d_archive_only', '仅存档') }}</el-tag>
+                <div class="dxvk-local-path">{{ lv.path }}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 版本选择 + 下载 -->
+          <div class="dxvk-section" style="margin-top: 16px;">
+            <div class="editor-subtitle">{{ tr('settings.vkd3d_download_title', '下载 VKD3D-Proton 版本') }}</div>
+            <div v-if="vkd3dFetchWarning" class="dxvk-fetch-warning" style="margin-bottom: 8px;">
+              ⚠ {{ vkd3dFetchWarning }}
+            </div>
+            <div class="dxvk-download-row">
+              <el-select
+                v-model="vkd3dSelectedVersion"
+                :placeholder="tr('settings.vkd3d_select_version', '选择版本...')"
+                class="dxvk-version-select"
+                filterable
+              >
+                <el-option
+                  v-for="v in vkd3dVersionList"
+                  :key="v.version"
+                  :label="`${v.version}${v.isLocal ? ' [本地]' : ''}${v.fileSize > 0 ? ` (${formatBytes(v.fileSize)})` : ''}`"
+                  :value="v.version"
+                >
+                  <div class="remote-option-row">
+                    <span>
+                      {{ v.version }}
+                      <el-tag v-if="v.isLocal" type="success" size="small" style="margin-left: 6px;">{{ tr('settings.vkd3d_cached', '已缓存') }}</el-tag>
+                    </span>
+                    <span class="remote-option-meta">
+                      {{ v.fileSize > 0 ? formatBytes(v.fileSize) : '' }}
+                      {{ v.publishedAt ? `· ${formatDate(v.publishedAt)}` : '' }}
+                    </span>
+                  </div>
+                </el-option>
+              </el-select>
+              <el-button
+                type="primary"
+                :disabled="!selectedVkd3dItem || isVkd3dDownloading || selectedVkd3dItem?.isLocal"
+                :loading="isVkd3dDownloading"
+                @click="doDownloadVkd3d"
+              >
+                {{
+                  isVkd3dDownloading
+                    ? tr('settings.vkd3d_downloading', '下载中...')
+                    : selectedVkd3dItem?.isLocal
+                      ? tr('settings.vkd3d_already_cached', '已缓存')
+                      : tr('settings.vkd3d_download', '下载')
+                }}
+              </el-button>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </div>
 
     <!-- 下载进度弹窗 -->
@@ -1216,6 +1479,25 @@ watch(
   letter-spacing: 0.5px;
 }
 
+.menu-guide-dot {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  margin-top: -4px;
+  border-radius: 999px;
+  background: #f59e0b;
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.8);
+  animation: menuGuideBlink 0.7s ease-in-out 0s 6;
+}
+
+@keyframes menuGuideBlink {
+  0% { opacity: 0.3; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.25); }
+  100% { opacity: 0.35; transform: scale(0.9); }
+}
+
 .settings-el-menu .el-menu-item:hover {
   background-color: rgba(0, 240, 255, 0.1);
   color: #fff;
@@ -1255,6 +1537,23 @@ watch(
   letter-spacing: 1px;
   text-transform: uppercase;
   text-shadow: 0 0 12px rgba(0, 240, 255, 0.4);
+}
+
+.settings-guide-banner {
+  margin-bottom: 14px;
+  border-radius: 6px;
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.14);
+  color: #fbbf24;
+  padding: 10px 12px;
+  font-size: 13px;
+  animation: guideBannerPulse 0.8s ease-in-out 0s 4;
+}
+
+@keyframes guideBannerPulse {
+  0% { opacity: 0.65; }
+  50% { opacity: 1; }
+  100% { opacity: 0.68; }
 }
 
 .form-item-vertical {

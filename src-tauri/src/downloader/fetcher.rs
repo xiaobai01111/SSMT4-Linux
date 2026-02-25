@@ -1,6 +1,8 @@
 use reqwest::Client;
 use std::path::Path;
+use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
+use tokio::sync::Mutex as AsyncMutex;
 use tracing::{info, warn};
 
 /// Download a file with resume support using .temp intermediate file.
@@ -11,7 +13,14 @@ pub async fn download_with_resume(
     file_path: &Path,
     overwrite: bool,
     progress_callback: Option<&(dyn Fn(u64) + Send + Sync)>,
+    cancel_token: Option<Arc<AsyncMutex<bool>>>,
 ) -> Result<(), String> {
+    if let Some(token) = &cancel_token {
+        if *token.lock().await {
+            return Err("Download cancelled".to_string());
+        }
+    }
+
     // If file exists and not overwriting, skip
     if file_path.exists() && !overwrite {
         if let Some(cb) = progress_callback {
@@ -110,6 +119,15 @@ pub async fn download_with_resume(
     let mut stream = resp.bytes_stream();
 
     while let Some(chunk_result) = stream.next().await {
+        if let Some(token) = &cancel_token {
+            if *token.lock().await {
+                file.flush()
+                    .await
+                    .map_err(|e| format!("Flush error before cancel: {}", e))?;
+                return Err("Download cancelled".to_string());
+            }
+        }
+
         let chunk = chunk_result.map_err(|e| format!("Stream error: {}", e))?;
         file.write_all(&chunk)
             .await

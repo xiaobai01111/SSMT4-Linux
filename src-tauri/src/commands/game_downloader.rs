@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::Mutex as AsyncMutex;
-use tracing::info;
+use tracing::{info, warn};
 
 /// 按任务（game_folder）管理取消令牌，避免并行任务互相干扰
 static CANCEL_TOKENS: once_cell::sync::Lazy<StdMutex<HashMap<String, Arc<AsyncMutex<bool>>>>> =
@@ -506,7 +506,6 @@ pub async fn verify_game_files(
 
         let result = verifier::verify_game_files(
             app,
-            &launcher_info,
             &resource_index,
             &game_path,
             cancel_token.clone(),
@@ -519,6 +518,70 @@ pub async fn verify_game_files(
         } else {
             tracing::warn!(
                 "Verification finished with {} failed files; local version will not be updated",
+                result.failed.len()
+            );
+        }
+
+        Ok(result)
+    }
+    .await;
+
+    cleanup_cancel_token(&game_folder);
+    result
+}
+
+#[tauri::command]
+pub async fn repair_game_files(
+    app: AppHandle,
+    settings: State<'_, StdMutex<AppConfig>>,
+    launcher_api: String,
+    game_folder: String,
+    files: Vec<String>,
+    biz_prefix: Option<String>,
+) -> Result<verifier::RepairResult, String> {
+    let cancel_token = get_cancel_token(&game_folder);
+    let snowbreak_policy = get_snowbreak_policy(&settings);
+
+    let game_path = PathBuf::from(&game_folder);
+    let region_scope =
+        process_monitor::derive_region_scope(Some(&launcher_api), biz_prefix.as_deref(), None);
+    let _write_guard =
+        process_monitor::acquire_game_write_guard(&game_path, &region_scope, "repair_game_files")?;
+
+    let result = async {
+        // Snowbreak 分支：暂不支持按列表单文件修复
+        if snowbreak::is_snowbreak_api(&launcher_api) {
+            let _ = snowbreak_policy; // 占位，保留策略读取行为
+            return Err("Snowbreak 暂不支持按异常列表单文件修复，请使用完整下载/更新".to_string());
+        }
+
+        // HoYoverse 分支：目前仅支持整包重下
+        if hoyoverse::is_hoyoverse_api(&launcher_api) {
+            return Err("HoYoverse 目前不支持按异常列表单文件修复，请使用重新下载".to_string());
+        }
+
+        // Kuro Games 分支
+        let launcher_info = cdn::fetch_launcher_info(&launcher_api).await?;
+        let resource_index =
+            cdn::fetch_resource_index(&launcher_info.cdn_url, &launcher_info.index_file_url)
+                .await?;
+
+        let result = verifier::repair_game_files(
+            app,
+            &launcher_info,
+            &resource_index,
+            &game_path,
+            &files,
+            cancel_token.clone(),
+        )
+        .await?;
+
+        if result.failed.is_empty() {
+            write_local_version(&game_path, &launcher_info.version)?;
+            write_download_source_meta(&game_path, &launcher_api, biz_prefix.as_deref())?;
+        } else {
+            warn!(
+                "Repair finished with {} failed files; local version will not be updated",
                 result.failed.len()
             );
         }
@@ -942,7 +1005,11 @@ fn resolve_known_game_executable(
         }
         "ZenlessZoneZero" => candidates.push("ZenlessZoneZero.exe".to_string()),
         "WutheringWaves" => {
-            candidates.push("Wuthering Waves.exe".to_string());
+            // 鸣潮主程序优先使用 UE Shipping 可执行文件，避免误选启动器壳程序。
+            candidates.push(
+                "Wuthering Waves Game/Client/Binaries/Win64/Client-Win64-Shipping.exe"
+                    .to_string(),
+            );
             candidates.push("Client/Binaries/Win64/Client-Win64-Shipping.exe".to_string());
         }
         "SnowbreakContainmentZone" => {
@@ -1734,5 +1801,49 @@ mod tests {
             servers[0].get("launcherApi").and_then(|v| v.as_str()),
             Some("https://example.com/custom")
         );
+    }
+
+    #[test]
+    fn wuthering_known_exe_prefers_shipping_under_game_subdir() {
+        let dir = std::env::temp_dir().join(format!(
+            "ssmt4-wuwa-known-exe-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(
+            dir.join("Wuthering Waves Game/Client/Binaries/Win64"),
+        )
+        .expect("create dirs");
+        std::fs::write(dir.join("Wuthering Waves.exe"), b"launcher").expect("write launcher exe");
+        let shipping = dir.join("Wuthering Waves Game/Client/Binaries/Win64/Client-Win64-Shipping.exe");
+        std::fs::write(&shipping, b"shipping").expect("write shipping exe");
+
+        let resolved = resolve_known_game_executable("WutheringWaves", &dir, None)
+            .expect("resolve known wuwa exe");
+        assert_eq!(resolved, shipping);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn wuthering_known_exe_supports_root_at_game_subdir() {
+        let dir = std::env::temp_dir().join(format!(
+            "ssmt4-wuwa-known-exe-root-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(dir.join("Client/Binaries/Win64")).expect("create dirs");
+        let shipping = dir.join("Client/Binaries/Win64/Client-Win64-Shipping.exe");
+        std::fs::write(&shipping, b"shipping").expect("write shipping exe");
+
+        let resolved = resolve_known_game_executable("WutheringWaves", &dir, None)
+            .expect("resolve known wuwa exe");
+        assert_eq!(resolved, shipping);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -11,6 +11,7 @@ watch(() => appSettings.bgType, (t) => {
   console.log('[BG] Type changed to:', t);
 });
 import TitleBar from "./components/TitleBar.vue";
+import FeatureOnboarding from "./components/FeatureOnboarding.vue";
 import { ElMessage, ElNotification } from "element-plus";
 
 
@@ -152,6 +153,8 @@ onUnmounted(() => {
         </main>
       </div>
     </el-config-provider>
+
+    <FeatureOnboarding />
   </template>
 </template>
 

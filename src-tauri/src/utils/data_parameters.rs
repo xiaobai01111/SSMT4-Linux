@@ -335,6 +335,12 @@ pub fn resolve_games_dirs() -> Vec<PathBuf> {
         }
     }
 
+    // 只要 Data-parameters/games 可用，就将其作为唯一权威来源；
+    // 避免旧版内置 resources/Games 混入过期游戏目录（如已下线条目）。
+    if !dirs.is_empty() {
+        return dirs;
+    }
+
     // 兼容旧内置路径：resources/Games
     for root in legacy_resource_roots() {
         let games_dir = root.join("Games");

@@ -1,7 +1,13 @@
 use crate::configs::wine_config::{PrefixConfig, PrefixTemplate};
 use crate::utils::file_manager;
+use once_cell::sync::Lazy;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use tracing::{info, warn};
+
+static FAILED_PREFIX_MIGRATIONS: Lazy<Mutex<HashSet<String>>> =
+    Lazy::new(|| Mutex::new(HashSet::new()));
 
 /// 从数据库的游戏配置中解析游戏根目录
 ///
@@ -104,6 +110,89 @@ fn resolve_best_legacy_prefix(game_id: &str) -> Option<PathBuf> {
     best_path
 }
 
+fn migration_cache_key(legacy: &Path, preferred: &Path) -> String {
+    format!("{}=>{}", legacy.display(), preferred.display())
+}
+
+fn migration_mark_failed(key: &str) {
+    if let Ok(mut set) = FAILED_PREFIX_MIGRATIONS.lock() {
+        set.insert(key.to_string());
+    }
+}
+
+fn migration_failed_before(key: &str) -> bool {
+    FAILED_PREFIX_MIGRATIONS
+        .lock()
+        .map(|set| set.contains(key))
+        .unwrap_or(false)
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    if !src.exists() {
+        return Err(format!("源目录不存在: {}", src.display()));
+    }
+    std::fs::create_dir_all(dst).map_err(|e| {
+        format!(
+            "创建目标目录失败 {} -> {}: {}",
+            src.display(),
+            dst.display(),
+            e
+        )
+    })?;
+    let entries =
+        std::fs::read_dir(src).map_err(|e| format!("读取源目录失败 {}: {}", src.display(), e))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("遍历目录失败 {}: {}", src.display(), e))?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        let file_type = entry
+            .file_type()
+            .map_err(|e| format!("读取文件类型失败 {}: {}", from.display(), e))?;
+        if file_type.is_dir() {
+            copy_dir_recursive(&from, &to)?;
+        } else if file_type.is_file() {
+            std::fs::copy(&from, &to).map_err(|e| {
+                format!(
+                    "复制文件失败 {} -> {}: {}",
+                    from.display(),
+                    to.display(),
+                    e
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn migrate_legacy_prefix(legacy: &Path, preferred: &Path) -> Result<(), String> {
+    if let Some(parent) = preferred.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("创建目标上级目录失败 {}: {}", parent.display(), e))?;
+    }
+
+    match std::fs::rename(legacy, preferred) {
+        Ok(_) => return Ok(()),
+        Err(rename_err) => {
+            // rename 在跨磁盘/不同挂载点时常失败，回退到复制+删除。
+            copy_dir_recursive(legacy, preferred).map_err(|copy_err| {
+                format!(
+                    "rename 失败: {}; copy 回退失败: {}",
+                    rename_err, copy_err
+                )
+            })?;
+            std::fs::remove_dir_all(legacy).map_err(|e| {
+                format!(
+                    "copy 成功但删除旧目录失败 {}: {}",
+                    legacy.display(),
+                    e
+                )
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
 pub fn get_prefix_dir(game_id: &str) -> PathBuf {
     let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
     // 如果找到游戏根目录，总是使用游戏目录下的 prefix/
@@ -113,18 +202,21 @@ pub fn get_prefix_dir(game_id: &str) -> PathBuf {
         // 如果旧的 prefix 存在且新位置不存在，尝试迁移
         if !preferred.exists() {
             if let Some(legacy) = resolve_best_legacy_prefix(&game_id) {
+                let cache_key = migration_cache_key(&legacy, &preferred);
+                if migration_failed_before(&cache_key) {
+                    return preferred;
+                }
                 info!(
                     "检测到旧 prefix，尝试迁移: {} -> {}",
                     legacy.display(),
                     preferred.display()
                 );
-                if let Some(parent) = preferred.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                if std::fs::rename(&legacy, &preferred).is_ok() {
-                    info!("prefix 迁移成功");
-                } else {
-                    warn!("prefix 迁移失败，将在游戏目录创建新 prefix");
+                match migrate_legacy_prefix(&legacy, &preferred) {
+                    Ok(_) => info!("prefix 迁移成功"),
+                    Err(err) => {
+                        migration_mark_failed(&cache_key);
+                        warn!("prefix 迁移失败，将在游戏目录创建新 prefix: {}", err);
+                    }
                 }
             }
         }

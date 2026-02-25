@@ -304,6 +304,18 @@ fn settings_to_kv(cfg: &AppConfig) -> Result<(), String> {
         },
     ));
     entries.push((
+        "onboarding_completed".to_string(),
+        if cfg.onboarding_completed {
+            "true".to_string()
+        } else {
+            "false".to_string()
+        },
+    ));
+    entries.push((
+        "onboarding_version".to_string(),
+        cfg.onboarding_version.to_string(),
+    ));
+    entries.push((
         "snowbreak_source_policy".to_string(),
         cfg.snowbreak_source_policy.clone(),
     ));
@@ -437,6 +449,14 @@ fn settings_from_kv(pairs: &[(String, String)]) -> AppConfig {
             let v = get_any(&["tos_risk_acknowledged", "tosRiskAcknowledged"]);
             parse_bool_or_default(&v, defaults.tos_risk_acknowledged)
         },
+        onboarding_completed: {
+            let v = get_any(&["onboarding_completed", "onboardingCompleted"]);
+            parse_bool_or_default(&v, defaults.onboarding_completed)
+        },
+        onboarding_version: {
+            let v = get_any(&["onboarding_version", "onboardingVersion"]);
+            parse_u32_or_default(&v, defaults.onboarding_version)
+        },
         snowbreak_source_policy: normalize_snowbreak_source_policy(
             &get_any(&["snowbreak_source_policy", "snowbreakSourcePolicy"]),
             &defaults.snowbreak_source_policy,
@@ -454,6 +474,10 @@ fn parse_bool_or_default(value: &str, default: bool) -> bool {
 }
 
 fn parse_f64_or_default(value: &str, default: f64) -> f64 {
+    value.parse().unwrap_or(default)
+}
+
+fn parse_u32_or_default(value: &str, default: u32) -> u32 {
     value.parse().unwrap_or(default)
 }
 
@@ -502,6 +526,9 @@ fn normalize_settings(cfg: &mut AppConfig) {
 
     if !cfg.data_dir.trim().is_empty() {
         cfg.data_dir = app_config::expand_user_path_string(&cfg.data_dir);
+    }
+    if cfg.onboarding_version > 999 {
+        cfg.onboarding_version = 999;
     }
 }
 

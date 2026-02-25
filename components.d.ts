@@ -32,6 +32,7 @@ declare module 'vue' {
     ElSwitch: typeof import('element-plus/es')['ElSwitch']
     ElTag: typeof import('element-plus/es')['ElTag']
     ElTooltip: typeof import('element-plus/es')['ElTooltip']
+    FeatureOnboarding: typeof import('./src/components/FeatureOnboarding.vue')['default']
     GameDownloadModal: typeof import('./src/components/GameDownloadModal.vue')['default']
     GameInfoAssetsSection: typeof import('./src/components/game-info/GameInfoAssetsSection.vue')['default']
     GameInfoPresetSection: typeof import('./src/components/game-info/GameInfoPresetSection.vue')['default']

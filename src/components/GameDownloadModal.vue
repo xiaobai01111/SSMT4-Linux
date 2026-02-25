@@ -29,9 +29,11 @@ import {
   fireDownload,
   fireLauncherInstallerDownload,
   fireVerify,
+  fireRepair,
   pauseActive,
   resumePaused,
   cancelActive,
+  getRepairableFailuresFor,
 } from '../downloadStore';
 
 const props = defineProps<{
@@ -187,6 +189,8 @@ interface LauncherApiConfig {
 
 const isHoyoverseApi = (api: string): boolean =>
   api.includes('mihoyo.com') || api.includes('hoyoverse.com');
+const isSnowbreakApi = (api: string): boolean =>
+  api.includes('amazingseasuncdn.com') || api.includes('snowbreak');
 
 const currentBizPrefix = (): string => (selectedServer.value?.bizPrefix || '').trim();
 const resolvedBizPrefix = (): string => {
@@ -476,8 +480,14 @@ const startDownload = async () => {
     await resumeDownload();
     return;
   }
-  if (!launcherApi.value || !gameFolder.value) return;
-  if (dlState.active) return;
+  if (!launcherApi.value || !gameFolder.value) {
+    await showMessage('请先配置下载源和安装目录，再开始下载。', { title: '提示', kind: 'warning' });
+    return;
+  }
+  if (dlState.active) {
+    await showMessage('当前已有下载/校验任务正在进行，请稍候。', { title: '提示', kind: 'warning' });
+    return;
+  }
   if (!isLauncherInstallerMode.value && !ensureBizPrefixReady()) return;
   if (!(await ensureRiskAcknowledged())) return;
   error.value = '';
@@ -511,8 +521,20 @@ const startVerify = async () => {
     return;
   }
   if (isLauncherInstallerMode.value) return;
-  if (!launcherApi.value || !gameFolder.value) return;
-  if (dlState.active) return;
+  if (!launcherApi.value || !gameFolder.value) {
+    await showMessage('请先配置下载源和安装目录，再执行校验。', { title: '提示', kind: 'warning' });
+    return;
+  }
+  if (dlState.active) {
+    await showMessage('当前已有下载/校验任务正在进行，请稍候。', { title: '提示', kind: 'warning' });
+    return;
+  }
+  if (!gameState.value?.local_version) {
+    await showMessage('未识别到本地版本号，将按远程清单尝试校验当前目录文件。', {
+      title: '提示',
+      kind: 'info',
+    });
+  }
   if (!ensureBizPrefixReady()) return;
 
   fireVerify({
@@ -521,6 +543,40 @@ const startVerify = async () => {
     launcherApi: launcherApi.value,
     gameFolder: gameFolder.value,
     bizPrefix: resolvedBizPrefix() || undefined,
+  });
+};
+
+const startRepair = async () => {
+  if (isPaused.value) {
+    await resumeDownload();
+    return;
+  }
+  if (isLauncherInstallerMode.value) return;
+  if (isHoyoverseApi(launcherApi.value) || isSnowbreakApi(launcherApi.value)) {
+    await showMessage('当前游戏暂不支持按异常列表单文件修复。', { title: '提示', kind: 'warning' });
+    return;
+  }
+  if (!launcherApi.value || !gameFolder.value) {
+    await showMessage('请先配置下载源和安装目录，再执行修复。', { title: '提示', kind: 'warning' });
+    return;
+  }
+  if (dlState.active) {
+    await showMessage('当前已有下载/校验/修复任务正在进行，请稍候。', { title: '提示', kind: 'warning' });
+    return;
+  }
+  const files = repairableFailures.value;
+  if (files.length === 0) {
+    await showMessage('当前没有可修复的异常文件，请先执行一次校验。', { title: '提示', kind: 'info' });
+    return;
+  }
+  if (!ensureBizPrefixReady()) return;
+  fireRepair({
+    gameName: props.gameName,
+    displayName: props.displayName,
+    launcherApi: launcherApi.value,
+    gameFolder: gameFolder.value,
+    bizPrefix: resolvedBizPrefix() || undefined,
+    files,
   });
 };
 
@@ -717,6 +773,43 @@ const canDownload = computed(() => {
   return gameState.value.state === 'needinstall' || gameState.value.state === 'needupdate';
 });
 
+const canShowPrimaryDownload = computed(() => {
+  // 全量/增量游戏下载模式：始终保留下载入口（已安装后也支持“重新下载”）
+  if (!isLauncherInstallerMode.value) return true;
+  // 启动器安装器模式维持原有状态判断
+  return canDownload.value;
+});
+
+const primaryDownloadLabel = computed(() => {
+  if (isLauncherInstallerMode.value) {
+    return gameState.value?.state === 'needupdate' ? '更新官方启动器' : '下载官方启动器';
+  }
+  if (gameState.value?.state === 'needupdate') return '开始更新';
+  if (gameState.value?.state === 'startgame') return '重新下载';
+  return '开始下载';
+});
+
+const canVerifyNow = computed(() => {
+  if (isLauncherInstallerMode.value) return false;
+  // 后端校验能力不强依赖 local_version，版本识别失败时也允许发起校验。
+  return !!launcherApi.value && !!gameFolder.value;
+});
+
+const repairableFailures = computed(() =>
+  getRepairableFailuresFor(
+    props.gameName,
+    gameFolder.value,
+    launcherApi.value,
+    resolvedBizPrefix() || undefined,
+  ),
+);
+
+const canRepairNow = computed(() => {
+  if (isLauncherInstallerMode.value) return false;
+  if (isHoyoverseApi(launcherApi.value) || isSnowbreakApi(launcherApi.value)) return false;
+  return repairableFailures.value.length > 0 && !!launcherApi.value && !!gameFolder.value;
+});
+
 const isWorking = computed(() => isActiveFor(props.gameName) && (dlState.phase === 'downloading' || dlState.phase === 'verifying'));
 const isVerifyPhase = computed(() => dlState.phase === 'verifying' || progress.value?.phase === 'verify');
 const workingPhase = computed(() => {
@@ -761,7 +854,7 @@ watch(launcherApi, (api) => {
 <template>
   <transition name="modal-fade">
     <div v-if="modelValue" class="dl-overlay" @click.self="close">
-      <div class="dl-window">
+      <div class="dl-window" data-onboarding="download-modal-root">
         <!-- 标题栏 -->
         <div class="dl-header">
           <span class="dl-title">下载 / 安装游戏</span>
@@ -803,7 +896,7 @@ watch(launcherApi, (api) => {
             </div>
 
             <!-- 游戏状态卡片 -->
-            <div v-if="gameState" class="state-card" :class="stateClass">
+            <div v-if="gameState" class="state-card" :class="stateClass" data-onboarding="download-state-card">
               <div class="state-label">{{ stateLabel }}</div>
               <div class="state-versions" v-if="gameState.remote_version">
                 <span v-if="gameState.local_version">本地: {{ gameState.local_version }}</span>
@@ -852,7 +945,7 @@ watch(launcherApi, (api) => {
             </div>
 
             <!-- 安装目录（始终显示，下载前必须确认） -->
-            <div v-if="!isWorking" class="install-dir-section">
+            <div v-if="!isWorking" class="install-dir-section" data-onboarding="download-install-dir">
               <label class="install-dir-label">安装目录</label>
               <div class="install-dir-row">
                 <input v-model="gameFolder" type="text" class="dl-input" placeholder="选择游戏安装目录..." />
@@ -892,7 +985,7 @@ watch(launcherApi, (api) => {
             </div>
 
             <!-- 下载/更新按钮 -->
-            <div v-if="!isWorking" class="main-actions">
+            <div v-if="!isWorking" class="main-actions" data-onboarding="download-main-actions">
               <div
                 v-if="!isLauncherInstallerMode && protectionInfo?.hasProtections"
                 class="protection-status"
@@ -909,7 +1002,7 @@ watch(launcherApi, (api) => {
                 继续下载
               </button>
               <button
-                v-else-if="canDownload"
+                v-else-if="canShowPrimaryDownload"
                 class="action-btn primary large"
                 @click="startDownload"
                 :disabled="!gameFolder"
@@ -920,14 +1013,13 @@ watch(launcherApi, (api) => {
                   <polyline points="7 10 12 15 17 10"/>
                   <line x1="12" y1="15" x2="12" y2="3"/>
                 </svg>
-                {{
-                  gameState?.state === 'needupdate'
-                    ? (isLauncherInstallerMode ? '更新官方启动器' : '开始更新')
-                    : (isLauncherInstallerMode ? '下载官方启动器' : '开始下载')
-                }}
+                {{ primaryDownloadLabel }}
               </button>
-              <button class="action-btn" @click="startVerify" v-if="!isPaused && !isLauncherInstallerMode && gameState?.state === 'startgame'">
+              <button class="action-btn" @click="startVerify" v-if="!isPaused && canVerifyNow">
                 校验游戏文件
+              </button>
+              <button class="action-btn warning-soft" @click="startRepair" v-if="!isPaused && canRepairNow">
+                修复异常文件 ({{ repairableFailures.length }})
               </button>
               <button
                 class="action-btn"
@@ -954,34 +1046,37 @@ watch(launcherApi, (api) => {
             </div>
 
             <!-- 进度条 -->
-            <div v-if="isWorking && progress" class="progress-section">
+            <div v-if="isWorking" class="progress-section">
               <div class="progress-phase">{{ workingPhase }}</div>
-              <div class="progress-bar-track">
-                <div class="progress-bar-fill"
-                  :class="{ 'verify-fill': isVerifyPhase }"
-                  :style="{ width: progressPercent + '%' }"></div>
-              </div>
-              <div class="progress-info">
-                <span>{{ progressPercent }}%</span>
-                <span v-if="progress.phase === 'install'">
-                  {{ progress.finished_size }} / {{ progress.total_size }} 条目
-                </span>
-                <span v-else>
-                  {{ formatSize(progress.finished_size) }} / {{ formatSize(progress.total_size) }}
-                </span>
-              </div>
-              <div class="progress-detail">
-                <span class="progress-file">{{ progress.current_file }}</span>
-                <span v-if="isVerifyPhase">
-                  校验速度 {{ formatSize(progress.speed_bps) }}/s · 剩余 {{ formatEta(progress.eta_seconds) }}
-                </span>
-                <span v-else-if="progress.phase !== 'install'">
-                  {{ formatSize(progress.speed_bps) }}/s · 剩余 {{ formatEta(progress.eta_seconds) }}
-                </span>
-              </div>
-              <div class="progress-counts">
-                {{ isVerifyPhase ? '文件' : '包' }}: {{ progress.finished_count }} / {{ progress.total_count }}
-              </div>
+              <template v-if="progress">
+                <div class="progress-bar-track">
+                  <div class="progress-bar-fill"
+                    :class="{ 'verify-fill': isVerifyPhase }"
+                    :style="{ width: progressPercent + '%' }"></div>
+                </div>
+                <div class="progress-info">
+                  <span>{{ progressPercent }}%</span>
+                  <span v-if="progress.phase === 'install'">
+                    {{ progress.finished_size }} / {{ progress.total_size }} 条目
+                  </span>
+                  <span v-else>
+                    {{ formatSize(progress.finished_size) }} / {{ formatSize(progress.total_size) }}
+                  </span>
+                </div>
+                <div class="progress-detail">
+                  <span class="progress-file">{{ progress.current_file }}</span>
+                  <span v-if="isVerifyPhase">
+                    校验速度 {{ formatSize(progress.speed_bps) }}/s · 剩余 {{ formatEta(progress.eta_seconds) }}
+                  </span>
+                  <span v-else-if="progress.phase !== 'install'">
+                    {{ formatSize(progress.speed_bps) }}/s · 剩余 {{ formatEta(progress.eta_seconds) }}
+                  </span>
+                </div>
+                <div class="progress-counts">
+                  {{ isVerifyPhase ? '文件' : '包' }}: {{ progress.finished_count }} / {{ progress.total_count }}
+                </div>
+              </template>
+              <div v-else class="progress-waiting">任务已启动，正在等待进度数据...</div>
               <div class="progress-actions">
                 <button class="action-btn" @click="pauseDownload">暂停</button>
                 <button class="action-btn danger" @click="cancelDownload">取消</button>
@@ -1097,24 +1192,34 @@ watch(launcherApi, (api) => {
 /* 状态卡片 */
 .state-card {
   background:rgba(0,0,0,0.25); border:1px solid rgba(255,255,255,0.06);
-  border-radius:8px; padding:14px 16px; margin-bottom:24px;
+  border-radius:10px; padding:18px 20px; margin-bottom:24px;
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
-.state-card.state-ok { border-color:rgba(103,194,58,0.3); }
-.state-card.state-install { border-color:rgba(247,206,70,0.3); }
-.state-card.state-update { border-color:rgba(0,122,204,0.3); }
-.state-card.state-error { border-color:rgba(232,17,35,0.3); }
-.state-label { font-size:15px; font-weight:500; color:rgba(255,255,255,0.9); }
+.state-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+}
+.state-card.state-ok { border-color:rgba(103,194,58,0.4); background: rgba(103,194,58,0.05); }
+.state-card.state-install { border-color:rgba(247,206,70,0.4); background: rgba(247,206,70,0.05); }
+.state-card.state-update { border-color:rgba(0,122,204,0.4); background: rgba(0,122,204,0.05); }
+.state-card.state-error { border-color:rgba(232,17,35,0.4); background: rgba(232,17,35,0.05); }
+.state-label { font-size:16px; font-weight:600; color:rgba(255,255,255,0.95); }
 .state-versions {
-  margin-top:6px; font-size:12px; color:rgba(255,255,255,0.45);
+  margin-top:8px; font-size:13px; color:rgba(255,255,255,0.6);
   display:flex; gap:16px;
 }
 
 .channel-mode-card {
   background: rgba(0, 0, 0, 0.22);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
-  padding: 12px 14px;
+  border-radius: 10px;
+  padding: 16px 20px;
   margin-bottom: 24px;
+  transition: all 0.3s ease;
+}
+.channel-mode-card:hover {
+  border-color: rgba(255, 255, 255, 0.15);
 }
 
 .channel-mode-head {
@@ -1178,30 +1283,43 @@ watch(launcherApi, (api) => {
 /* 安装目录 */
 .install-dir-section { margin-bottom:24px; }
 .install-dir-label {
-  display:block; font-size:14px;
-  color:rgba(255,255,255,0.8); margin-bottom:8px;
+  display:block; font-size:14px; font-weight: 500;
+  color:rgba(255,255,255,0.85); margin-bottom:10px;
 }
 .install-dir-row { display:flex; gap:12px; }
 .install-dir-row .dl-input { 
   flex:1; 
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.3s ease;
+}
+.install-dir-row .dl-input:focus {
+  background: rgba(0, 0, 0, 0.4);
+  border-color: rgba(0, 240, 255, 0.5);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.15);
 }
 .install-dir-row .dir-btn {
   display:flex; align-items:center; justify-content:center;
-  color:rgba(255,255,255,0.6);
+  color:rgba(255,255,255,0.7);
   padding: 0 16px;
-  height: 36px;
-  border: none;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.1);
+  height: 38px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
   cursor: pointer;
   transition: all 0.2s;
 }
 .install-dir-row .dir-btn:hover { 
   color:#fff;
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.25);
+  transform: translateY(-1px);
+}
+.install-dir-row .dir-btn:active {
+  transform: translateY(0);
 }
 .install-dir-hint {
-  font-size:12px; color:rgba(255,255,255,0.4); margin-top:8px; line-height:1.4;
+  font-size:12px; color:rgba(255,255,255,0.5); margin-top:8px; line-height:1.5;
 }
 
 /* 语言包选择 */
@@ -1233,10 +1351,21 @@ watch(launcherApi, (api) => {
 .protection-status {
   width: 100%;
   font-size: 13px;
-  border-radius: 6px;
-  padding: 10px 14px;
+  border-radius: 8px;
+  padding: 12px 16px;
   border: 1px solid rgba(255,255,255,0.12);
   background: rgba(255,255,255,0.06);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.protection-status::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
 }
 .protection-status.enabled {
   color: #67c23a;
@@ -1252,46 +1381,66 @@ watch(launcherApi, (api) => {
   color: rgba(255,255,255,0.5);
 }
 .action-btn {
-  padding:0 16px; height: 36px; border:none; border-radius:4px; font-size:13px; cursor:pointer;
-  color:#fff; background:rgba(255,255,255,0.1); transition:all 0.2s;
-  display:inline-flex; align-items:center; justify-content: center; gap:6px;
-  flex: 1;
+  padding:0 16px; height: 40px; border:none; border-radius:6px; font-size:14px; cursor:pointer;
+  color:#fff; background:rgba(255,255,255,0.1); transition:all 0.25s cubic-bezier(0.25, 0.8, 0.25, 1);
+  display:inline-flex; align-items:center; justify-content: center; gap:8px;
+  flex: 1; min-width: 120px;
 }
-.action-btn:hover { background:rgba(255,255,255,0.2); }
+.action-btn:hover:not(:disabled) { 
+  background:rgba(255,255,255,0.2); 
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+.action-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
 .action-btn:disabled { opacity:0.5; cursor:not-allowed; }
-.action-btn.large { padding:0 24px; font-size:15px; font-weight:600; flex: none; width: auto; min-width: 120px; height: 44px; }
+.action-btn.large { padding:0 24px; font-size:15px; font-weight:600; flex: 2; height: 44px; }
 .action-btn.primary {
   background:rgba(0, 240, 255, 0.15); color:#00f0ff; border:1px solid rgba(0, 240, 255, 0.4);
 }
-.action-btn.primary:hover { background:rgba(0, 240, 255, 0.25); }
-.action-btn.primary.large { padding:0 24px; font-size:15px; font-weight:600; flex: none; width: auto; min-width: 120px; height: 44px; }
-.action-btn.danger { background:rgba(232,17,35,0.2); color:#ff6b6b; margin-top:8px; }
-.action-btn.danger:hover { background:rgba(232,17,35,0.3); }
+.action-btn.primary:hover:not(:disabled) { 
+  background:rgba(0, 240, 255, 0.25); 
+  box-shadow: 0 4px 16px rgba(0, 240, 255, 0.2);
+}
+.action-btn.primary.large { padding:0 24px; font-size:15px; font-weight:600; flex: 2; height: 44px; }
+.action-btn.warning-soft {
+  background: rgba(240, 160, 48, 0.14);
+  color: #ffc266;
+  border: 1px solid rgba(240, 160, 48, 0.28);
+}
+.action-btn.warning-soft:hover:not(:disabled) {
+  background: rgba(240, 160, 48, 0.24);
+}
+.action-btn.danger { background:rgba(232,17,35,0.2); color:#ff6b6b; margin-top:8px; border:1px solid rgba(232,17,35,0.3); }
+.action-btn.danger:hover:not(:disabled) { background:rgba(232,17,35,0.3); }
 .action-btn.danger-soft {
   background: rgba(232, 17, 35, 0.12);
   color: #ff8f8f;
   border: 1px solid rgba(232, 17, 35, 0.24);
 }
-.action-btn.danger-soft:hover {
+.action-btn.danger-soft:hover:not(:disabled) {
   background: rgba(232, 17, 35, 0.2);
 }
-.action-btn.sm { padding:0 12px; font-size:12px; margin-top:8px; flex: none; height: 28px; }
+.action-btn.sm { padding:0 12px; font-size:13px; margin-top:8px; flex: none; height: 32px; min-width: auto; }
 
 /* 进度条 */
 .progress-section {
-  background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.06);
-  border-radius:8px; padding:16px; margin-bottom:16px;
+  background:rgba(0,0,0,0.25); border:1px solid rgba(255,255,255,0.08);
+  border-radius:10px; padding:20px; margin-bottom:16px;
+  box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.2);
 }
 .progress-phase {
-  font-size:13px; font-weight:600; color:rgba(255,255,255,0.8); margin-bottom:10px;
+  font-size:14px; font-weight:600; color:rgba(255,255,255,0.9); margin-bottom:12px;
 }
 .progress-bar-track {
-  width:100%; height:10px; background:rgba(255,255,255,0.08); border-radius:5px; overflow:hidden;
+  width:100%; height:12px; background:rgba(255,255,255,0.08); border-radius:6px; overflow:hidden;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.5);
 }
 .progress-bar-fill {
-  height:100%; background:linear-gradient(90deg, #00f0ff, #00a0ff); border-radius:5px;
+  height:100%; background:linear-gradient(90deg, #00f0ff, #00a0ff); border-radius:6px;
   transition: width 0.3s ease;
-  box-shadow: 0 0 10px rgba(0, 240, 255, 0.4);
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.5);
 }
 .progress-bar-fill.verify-fill {
   background:linear-gradient(90deg, #67c23a, #4caf50);
@@ -1310,6 +1459,11 @@ watch(launcherApi, (api) => {
 .progress-counts {
   font-size:11px; color:rgba(255,255,255,0.5); margin-top:4px;
 }
+.progress-waiting {
+  margin-top: 10px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+}
 .progress-actions {
   display:flex;
   gap:8px;
@@ -1321,19 +1475,28 @@ watch(launcherApi, (api) => {
 
 /* 折叠配置 */
 .config-details {
-  margin:16px 0;
+  margin:20px 0;
+  background: rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  overflow: hidden;
 }
 .config-details summary {
-  font-size:12px; color:rgba(255,255,255,0.4); cursor:pointer;
-  padding:6px 0; user-select:none;
+  font-size:13px; color:rgba(255,255,255,0.6); cursor:pointer;
+  padding:10px 14px; user-select:none;
+  background: rgba(255, 255, 255, 0.02);
+  transition: background 0.2s;
 }
-.config-details summary:hover { color:rgba(255,255,255,0.7); }
+.config-details summary:hover { 
+  color:rgba(255,255,255,0.9);
+  background: rgba(255, 255, 255, 0.05);
+}
 .config-content {
-  margin-top:10px; padding:12px; background:rgba(0,0,0,0.15);
-  border:1px solid rgba(255,255,255,0.04); border-radius:6px;
+  padding:16px 14px; 
+  border-top:1px solid rgba(255,255,255,0.04);
 }
-.field { margin-bottom:10px; }
-.field label { display:block; font-size:12px; color:rgba(255,255,255,0.5); margin-bottom:4px; }
+.field { margin-bottom:12px; }
+.field label { display:block; font-size:13px; color:rgba(255,255,255,0.6); margin-bottom:6px; }
 .dl-input {
   width:100%; box-sizing:border-box; background:rgba(0,0,0,0.3);
   border:1px solid rgba(255,255,255,0.1); border-radius:4px;
@@ -1354,8 +1517,8 @@ watch(launcherApi, (api) => {
 
 /* 分隔线 */
 .divider {
-  display:flex; align-items:center; gap:12px; margin:24px 0;
-  color:rgba(255,255,255,0.3); font-size:12px; text-transform: uppercase;
+  display:flex; align-items:center; gap:16px; margin:28px 0;
+  color:rgba(255,255,255,0.4); font-size:12px; text-transform: uppercase; letter-spacing: 1px;
 }
 .divider::before, .divider::after {
   content:''; flex:1; height:1px; background:rgba(255,255,255,0.08);
@@ -1364,9 +1527,9 @@ watch(launcherApi, (api) => {
 /* 手动安装区 */
 .section { margin-bottom:24px; }
 .section-title {
-  font-size:14px; font-weight:600; color:rgba(255,255,255,0.8); margin-bottom:8px;
+  font-size:15px; font-weight:600; color:rgba(255,255,255,0.9); margin-bottom:10px;
 }
-.hint { font-size:12px; color:rgba(255,255,255,0.4); margin-bottom:16px; line-height:1.5; }
+.hint { font-size:13px; color:rgba(255,255,255,0.5); margin-bottom:16px; line-height:1.5; }
 
 /* 错误 */
 .error-msg {

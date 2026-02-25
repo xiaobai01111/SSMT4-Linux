@@ -1,5 +1,6 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::cmp::Ordering;
 use tracing::info;
 
@@ -245,11 +246,20 @@ pub async fn fetch_resource_list(res_list_url: &str) -> Result<Vec<ResourceEntry
         .text()
         .await
         .map_err(|e| format!("读取资源列表失败: {}", e))?;
+    let text = text.trim_start_matches('\u{feff}');
 
     // 尝试解析为 JSON 数组
     if let Ok(list) = serde_json::from_str::<Vec<ResourceEntry>>(&text) {
         info!("资源列表: {} 个文件 (JSON 数组)", list.len());
         return Ok(list);
+    }
+
+    // 尝试解析为 JSON 对象（兼容包装结构 / 字段名差异）
+    if let Ok(value) = serde_json::from_str::<Value>(&text) {
+        if let Some(list) = extract_resource_entries_from_value(&value) {
+            info!("资源列表: {} 个文件 (JSON 对象兼容解析)", list.len());
+            return Ok(list);
+        }
     }
 
     // 尝试逐行解析 (NDJSON)
@@ -270,6 +280,115 @@ pub async fn fetch_resource_list(res_list_url: &str) -> Result<Vec<ResourceEntry
 
     info!("资源列表: {} 个文件 (NDJSON)", files.len());
     Ok(files)
+}
+
+fn parse_u64(value: Option<&Value>) -> Option<u64> {
+    value
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_i64().and_then(|n| u64::try_from(n).ok()))
+                .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+        })
+}
+
+fn parse_non_empty_string(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+}
+
+fn parse_resource_entry_value(value: &Value) -> Option<ResourceEntry> {
+    let obj = value.as_object()?;
+    let remote_name = parse_non_empty_string(
+        obj.get("remoteName")
+            .or_else(|| obj.get("remote_name"))
+            .or_else(|| obj.get("fileName"))
+            .or_else(|| obj.get("file_name"))
+            .or_else(|| obj.get("path"))
+            .or_else(|| obj.get("name")),
+    )?;
+    let md5 = parse_non_empty_string(
+        obj.get("md5")
+            .or_else(|| obj.get("md5Hash"))
+            .or_else(|| obj.get("md5_hash")),
+    )?;
+    let file_size = parse_u64(
+        obj.get("fileSize")
+            .or_else(|| obj.get("file_size"))
+            .or_else(|| obj.get("size"))
+            .or_else(|| obj.get("length")),
+    )?;
+    let sha256 = parse_non_empty_string(
+        obj.get("sha256")
+            .or_else(|| obj.get("sha_256"))
+            .or_else(|| obj.get("sha256Hash"))
+            .or_else(|| obj.get("sha256_hash")),
+    )
+    .unwrap_or_default();
+
+    Some(ResourceEntry {
+        remote_name,
+        md5,
+        sha256,
+        file_size,
+    })
+}
+
+fn parse_resource_entries_from_array(array: &[Value]) -> Vec<ResourceEntry> {
+    array
+        .iter()
+        .filter_map(parse_resource_entry_value)
+        .collect()
+}
+
+fn extract_resource_entries_from_value(value: &Value) -> Option<Vec<ResourceEntry>> {
+    if let Some(array) = value.as_array() {
+        let parsed = parse_resource_entries_from_array(array);
+        if !parsed.is_empty() {
+            return Some(parsed);
+        }
+    }
+
+    let object = value.as_object()?;
+
+    // 常见键名优先
+    for key in [
+        "files",
+        "file_list",
+        "resource_list",
+        "resourceList",
+        "res_list",
+        "list",
+        "assets",
+        "entries",
+    ] {
+        if let Some(array) = object.get(key).and_then(|v| v.as_array()) {
+            let parsed = parse_resource_entries_from_array(array);
+            if !parsed.is_empty() {
+                return Some(parsed);
+            }
+        }
+    }
+
+    // 常见包装层
+    for key in ["data", "rsp", "result", "payload"] {
+        if let Some(nested) = object.get(key) {
+            if let Some(parsed) = extract_resource_entries_from_value(nested) {
+                return Some(parsed);
+            }
+        }
+    }
+
+    // 最后兜底：扫描对象所有字段
+    for nested in object.values() {
+        if let Some(parsed) = extract_resource_entries_from_value(nested) {
+            return Some(parsed);
+        }
+    }
+
+    None
 }
 
 // ============================================================
@@ -363,5 +482,46 @@ mod tests {
         assert!(biz_matches_region_hint("hkrpg_global", "global"));
         assert!(biz_matches_region_hint("hkrpg_overseas", "global"));
         assert!(!biz_matches_region_hint("hkrpg_cn", "global"));
+    }
+
+    #[test]
+    fn parse_resource_list_from_wrapped_json_object() {
+        let wrapped = serde_json::json!({
+            "retcode": 0,
+            "data": {
+                "files": [
+                    {
+                        "remoteName": "GameData/foo.bin",
+                        "md5": "abc",
+                        "sha256": "def",
+                        "fileSize": "123"
+                    }
+                ]
+            }
+        });
+
+        let parsed = extract_resource_entries_from_value(&wrapped).expect("wrapped parse");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].remote_name, "GameData/foo.bin");
+        assert_eq!(parsed[0].file_size, 123);
+    }
+
+    #[test]
+    fn parse_resource_list_with_legacy_field_names() {
+        let legacy = serde_json::json!({
+            "resource_list": [
+                {
+                    "path": "foo/bar.pck",
+                    "md5Hash": "abc",
+                    "size": 456
+                }
+            ]
+        });
+
+        let parsed = extract_resource_entries_from_value(&legacy).expect("legacy parse");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].remote_name, "foo/bar.pck");
+        assert_eq!(parsed[0].md5, "abc");
+        assert_eq!(parsed[0].file_size, 456);
     }
 }

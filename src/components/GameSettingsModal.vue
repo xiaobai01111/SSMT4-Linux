@@ -22,9 +22,13 @@ import {
   getJadeiteStatus,
   installJadeite,
   installDxvk,
+  installVkd3d,
   uninstallDxvk,
+  uninstallVkd3d,
   scanLocalDxvk,
+  scanLocalVkd3d,
   detectDxvkStatus,
+  detectVkd3dStatus,
   getLocalVersion,
   type WineVersion,
   type ProtonSettings,
@@ -34,6 +38,8 @@ import {
   type DisplayInfo,
   type DxvkLocalVersion,
   type DxvkInstalledStatus,
+  type Vkd3dLocalVersion,
+  type Vkd3dInstalledStatus,
   type RuntimeEnv,
 } from '../api';
 import { loadGames, gamesList, switchToGame } from '../store';
@@ -415,6 +421,63 @@ const doUninstallDxvk = async () => {
   }
 };
 
+// VKD3D 版本管理（本地安装/卸载，无远程下载）
+const vkd3dLocalVersions = ref<Vkd3dLocalVersion[]>([]);
+const vkd3dInstalledStatus = ref<Vkd3dInstalledStatus | null>(null);
+const vkd3dSelectedVersion = ref('');
+const isVkd3dBusy = ref(false);
+
+const loadVkd3dState = async () => {
+  if (!props.gameName) return;
+  try {
+    const [local, status] = await Promise.all([
+      scanLocalVkd3d(),
+      detectVkd3dStatus(props.gameName),
+    ]);
+    vkd3dLocalVersions.value = local;
+    vkd3dInstalledStatus.value = status;
+
+    if (status.installed && status.version) {
+      vkd3dSelectedVersion.value = status.version;
+    } else if (local.length > 0 && !vkd3dSelectedVersion.value) {
+      vkd3dSelectedVersion.value = local[0].version;
+    }
+  } catch (e) {
+    console.warn('[vkd3d] 加载状态失败:', e);
+  }
+};
+
+const doInstallVkd3d = async () => {
+  if (isVkd3dBusy.value || !vkd3dSelectedVersion.value) return;
+  try {
+    isVkd3dBusy.value = true;
+    notify?.info('VKD3D-Proton', `正在应用 VKD3D-Proton ${vkd3dSelectedVersion.value}...`);
+    const result = await installVkd3d(props.gameName, vkd3dSelectedVersion.value);
+    notify?.success('VKD3D 应用完成', result);
+    await loadVkd3dState();
+  } catch (e) {
+    notify?.error('VKD3D 应用失败', `${e}`);
+  } finally {
+    isVkd3dBusy.value = false;
+  }
+};
+
+const doUninstallVkd3d = async () => {
+  if (isVkd3dBusy.value) return;
+  const confirmed = await askConfirm('确定要从当前 Prefix 中卸载 VKD3D 吗？', { title: 'VKD3D', kind: 'warning' });
+  if (!confirmed) return;
+  try {
+    isVkd3dBusy.value = true;
+    const result = await uninstallVkd3d(props.gameName);
+    notify?.success('VKD3D 卸载完成', result);
+    await loadVkd3dState();
+  } catch (e) {
+    notify?.error('VKD3D 卸载失败', `${e}`);
+  } finally {
+    isVkd3dBusy.value = false;
+  }
+};
+
 // Tabs（参考 Lutris 风格：5个标签页）
 const activeTab = ref('info');
 const tabs = computed(() => [
@@ -423,6 +486,55 @@ const tabs = computed(() => [
   { id: 'runtime', label: '运行环境' },
   { id: 'system', label: '系统选项' },
 ]);
+type RuntimeFocusTarget = 'all' | 'wine_version' | 'dxvk' | 'vkd3d';
+const runtimeAttention = ref(false);
+const runtimeAttentionMessage = ref('');
+const runtimeFocusTarget = ref<RuntimeFocusTarget>('all');
+let runtimeAttentionTimer: ReturnType<typeof setTimeout> | null = null;
+const runtimeWineVersionRef = ref<HTMLElement | null>(null);
+const runtimeDxvkRef = ref<HTMLElement | null>(null);
+const runtimeVkd3dRef = ref<HTMLElement | null>(null);
+
+const clearRuntimeAttention = () => {
+  runtimeAttention.value = false;
+  runtimeAttentionMessage.value = '';
+  if (runtimeAttentionTimer) {
+    clearTimeout(runtimeAttentionTimer);
+    runtimeAttentionTimer = null;
+  }
+};
+
+const focusRuntimeSetup = (message?: string, focusTarget: RuntimeFocusTarget = 'all') => {
+  activeTab.value = 'runtime';
+  runtimeFocusTarget.value = focusTarget;
+  runtimeAttentionMessage.value =
+    message?.trim() || '请先在此完成运行环境配置（Proton / DXVK / VKD3D）。';
+  runtimeAttention.value = false;
+  requestAnimationFrame(() => {
+    runtimeAttention.value = true;
+  });
+  if (runtimeAttentionTimer) {
+    clearTimeout(runtimeAttentionTimer);
+  }
+  runtimeAttentionTimer = setTimeout(() => {
+    runtimeAttention.value = false;
+    runtimeAttentionMessage.value = '';
+    runtimeFocusTarget.value = 'all';
+    runtimeAttentionTimer = null;
+  }, 3600);
+
+  requestAnimationFrame(() => {
+    const targetEl =
+      focusTarget === 'wine_version'
+        ? runtimeWineVersionRef.value
+        : focusTarget === 'dxvk'
+          ? runtimeDxvkRef.value
+          : focusTarget === 'vkd3d'
+            ? runtimeVkd3dRef.value
+          : null;
+    targetEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+};
 
 const syncInfoConfigToLegacyState = () => {
   config.basic.gamePreset = infoConfig.value.meta.gamePreset || config.basic.gamePreset;
@@ -805,7 +917,9 @@ watch(() => props.modelValue, async (val) => {
     loadJadeiteState();
     loadPrefixState();
     loadDxvkState();
+    loadVkd3dState();
   } else {
+    clearRuntimeAttention();
     // Only save when current modal session loaded successfully.
     if (hasLoadedConfig.value) {
       await saveConfig();
@@ -832,6 +946,7 @@ watch(() => props.gameName, async (newGame, oldGame) => {
     loadJadeiteState();
     loadPrefixState();
     loadDxvkState();
+    loadVkd3dState();
   }
 });
 
@@ -843,6 +958,7 @@ const close = async () => {
     });
     if (!discard) return;
   }
+  clearRuntimeAttention();
   emit('update:modelValue', false);
 };
 
@@ -850,14 +966,15 @@ const close = async () => {
 defineExpose({
   switchTab: (tabId: string) => {
     activeTab.value = tabId;
-  }
+  },
+  focusRuntimeSetup,
 });
 </script>
 
 <template>
   <transition name="modal-fade">
     <div v-if="modelValue" class="settings-overlay">
-      <div class="settings-window">
+      <div class="settings-window" data-onboarding="game-settings-modal-root">
         <!-- Loading Overlay -->
         <div v-if="isBusy" class="loading-overlay">
           <div class="spinner"></div>
@@ -865,10 +982,15 @@ defineExpose({
         </div>
 
         <!-- Sidebar -->
-        <div class="settings-sidebar">
+        <div class="settings-sidebar" data-onboarding="game-settings-sidebar">
           <div class="sidebar-title">{{ t('gamesettingsmodal.title') }}</div>
 
-          <div v-for="tab in tabs" :key="tab.id" class="sidebar-item" :class="{ active: activeTab === tab.id }"
+          <div
+            v-for="tab in tabs"
+            :key="tab.id"
+            class="sidebar-item"
+            :class="{ active: activeTab === tab.id, 'runtime-attention': tab.id === 'runtime' && runtimeAttention }"
+            :data-onboarding="`game-settings-tab-${tab.id}`"
             @click="activeTab = tab.id">
             {{ tab.label }}
           </div>
@@ -889,7 +1011,7 @@ defineExpose({
 
           <div class="scroll-content">
             <!-- ==================== Tab 1: 游戏信息 ==================== -->
-            <div v-if="activeTab === 'info'" class="tab-pane">
+            <div v-if="activeTab === 'info'" class="tab-pane" data-onboarding="game-settings-info-tab">
               <div v-if="infoConfig.readOnly || infoPageReadOnly" class="info-readonly-banner">
                 <template v-if="infoPageReadOnly">
                   游戏信息页当前为只读展示模式（仅背景资源可修改）。
@@ -899,23 +1021,25 @@ defineExpose({
                 </template>
               </div>
 
-              <GameInfoProfileSection
-                :config-name="configName"
-                :display-name="infoConfig.meta.displayName"
-                :name-validation="nameValidation"
-                :read-only="infoPageReadOnly"
-                :can-save="!infoConfig.readOnly && !infoPageReadOnly"
-                :dirty="infoDirty.meta"
-                :saving="infoSaving.meta"
-                :error="infoSectionErrors.meta"
-                @update:config-name="onConfigNameInput"
-                @update:display-name="onDisplayNameInput"
-                @validate-name="validateConfigNameNow"
-                @create="createNewConfig"
-                @delete="deleteCurrentConfig"
-                @reset="resetToDefault"
-                @save="saveInfoMetaSection"
-              />
+              <div data-onboarding="game-settings-info-profile">
+                <GameInfoProfileSection
+                  :config-name="configName"
+                  :display-name="infoConfig.meta.displayName"
+                  :name-validation="nameValidation"
+                  :read-only="infoPageReadOnly"
+                  :can-save="!infoConfig.readOnly && !infoPageReadOnly"
+                  :dirty="infoDirty.meta"
+                  :saving="infoSaving.meta"
+                  :error="infoSectionErrors.meta"
+                  @update:config-name="onConfigNameInput"
+                  @update:display-name="onDisplayNameInput"
+                  @validate-name="validateConfigNameNow"
+                  @create="createNewConfig"
+                  @delete="deleteCurrentConfig"
+                  @reset="resetToDefault"
+                  @save="saveInfoMetaSection"
+                />
+              </div>
 
               <GameInfoVersionSection
                 :version="localGameVersion"
@@ -950,8 +1074,8 @@ defineExpose({
             </div>
 
             <!-- ==================== Tab 2: 游戏选项 ==================== -->
-            <div v-if="activeTab === 'game'" class="tab-pane">
-              <div class="setting-group">
+            <div v-if="activeTab === 'game'" class="tab-pane" data-onboarding="game-settings-game-tab">
+              <div class="setting-group" data-onboarding="game-settings-game-exe">
                 <div class="setting-label">主程序</div>
                 <input v-model="config.other.gamePath" type="text" class="custom-input" placeholder="选择游戏可执行文件（如 StarRail.exe）..." />
                 <div class="button-row">
@@ -1004,7 +1128,15 @@ defineExpose({
             </div>
 
             <!-- ==================== Tab 3: 运行环境 ==================== -->
-            <div v-if="activeTab === 'runtime'" class="tab-pane">
+            <div
+              v-if="activeTab === 'runtime'"
+              class="tab-pane"
+              data-onboarding="game-settings-runtime-tab"
+              :class="{ 'runtime-pane-attention': runtimeAttention && runtimeFocusTarget === 'all' }"
+            >
+              <div v-if="runtimeAttentionMessage" class="runtime-guide-banner">
+                {{ runtimeAttentionMessage }}
+              </div>
               <div class="setting-group">
                 <div class="setting-label">{{ t('gamesettingsmodal.info.runtimeEnv') }}</div>
                 <el-select
@@ -1025,7 +1157,12 @@ defineExpose({
               </div>
 
               <!-- Wine/Proton 本地已安装版本 -->
-              <div class="setting-group">
+              <div
+                ref="runtimeWineVersionRef"
+                class="setting-group"
+                data-onboarding="game-settings-runtime-wine"
+                :class="{ 'runtime-section-attention': runtimeAttention && runtimeFocusTarget === 'wine_version' }"
+              >
                 <div class="setting-label">Wine / Proton 版本（本地已安装）</div>
                 <el-select v-model="selectedWineVersionId" placeholder="选择 Wine/Proton 版本..." class="custom-select" filterable style="width: 100%">
                   <el-option-group
@@ -1062,7 +1199,12 @@ defineExpose({
               </div>
 
               <!-- DXVK 版本管理 -->
-              <div class="setting-group">
+              <div
+                ref="runtimeDxvkRef"
+                class="setting-group"
+                data-onboarding="game-settings-runtime-dxvk"
+                :class="{ 'runtime-section-attention': runtimeAttention && runtimeFocusTarget === 'dxvk' }"
+              >
                 <div class="setting-label">DXVK (DirectX → Vulkan)</div>
 
                 <!-- 当前安装状态 -->
@@ -1116,6 +1258,65 @@ defineExpose({
 
                 <div class="info-sub" style="margin-top:8px;">
                   如需下载更多 DXVK 版本，请前往「设置 → DXVK 管理」页面。
+                </div>
+              </div>
+
+              <!-- VKD3D 版本管理 -->
+              <div
+                ref="runtimeVkd3dRef"
+                class="setting-group"
+                data-onboarding="game-settings-runtime-vkd3d"
+                :class="{ 'runtime-section-attention': runtimeAttention && runtimeFocusTarget === 'vkd3d' }"
+              >
+                <div class="setting-label">VKD3D-Proton (D3D12 → Vulkan)</div>
+
+                <!-- 当前安装状态 -->
+                <div class="info-card" style="margin-bottom: 10px;">
+                  <div v-if="vkd3dInstalledStatus" class="info-grid" style="grid-template-columns: 100px 1fr;">
+                    <span class="info-key">安装状态</span>
+                    <span :class="vkd3dInstalledStatus.installed ? 'text-ok' : 'text-err'">
+                      {{ vkd3dInstalledStatus.installed ? '✓ 已安装' : '✗ 未安装' }}
+                    </span>
+                    <template v-if="vkd3dInstalledStatus.installed">
+                      <span class="info-key">当前版本</span>
+                      <span class="info-val">{{ vkd3dInstalledStatus.version || '未知' }}</span>
+                      <span class="info-key">DLL 文件</span>
+                      <span class="info-val">{{ vkd3dInstalledStatus.dlls_found.join(', ') }}</span>
+                    </template>
+                  </div>
+                  <div v-else class="text-muted" style="font-size:13px">加载中...</div>
+                </div>
+
+                <div v-if="vkd3dLocalVersions.length > 0">
+                  <div class="flex-row" style="align-items:flex-end; gap:8px; margin-top:8px;">
+                    <div style="flex:1">
+                      <select v-model="vkd3dSelectedVersion" class="custom-input" style="width:100%">
+                        <option value="" disabled>选择本地已缓存的 VKD3D 版本...</option>
+                        <option
+                          v-for="lv in vkd3dLocalVersions"
+                          :key="lv.version"
+                          :value="lv.version"
+                        >
+                          {{ lv.version }}
+                        </option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="button-row" style="margin-top:8px;">
+                    <button class="action-btn highlight" @click="doInstallVkd3d" :disabled="isVkd3dBusy || !vkd3dSelectedVersion">
+                      {{ isVkd3dBusy ? '应用中...' : '应用 / 切换版本' }}
+                    </button>
+                    <button class="action-btn delete" @click="doUninstallVkd3d" :disabled="isVkd3dBusy || !vkd3dInstalledStatus?.installed">
+                      卸载 VKD3D
+                    </button>
+                  </div>
+                </div>
+                <div v-else class="info-sub" style="margin-top:8px;">
+                  本地暂无缓存 VKD3D 版本，请前往「设置 → VKD3D 管理」下载后再应用。
+                </div>
+
+                <div class="info-sub" style="margin-top:8px;">
+                  VKD3D 默认不强制安装，仅在需要 D3D12 转译时建议启用。
                 </div>
               </div>
 
@@ -1201,7 +1402,7 @@ defineExpose({
             </div>
 
             <!-- ==================== Tab 5: 系统选项 ==================== -->
-            <div v-if="activeTab === 'system'" class="tab-pane">
+            <div v-if="activeTab === 'system'" class="tab-pane" data-onboarding="game-settings-system-tab">
 
               <!-- 系统信息 -->
               <div v-if="displayInfo" class="setting-group info-card">
@@ -1221,7 +1422,7 @@ defineExpose({
               </div>
 
               <!-- GPU 选择（多显卡切换） -->
-              <div class="setting-group">
+              <div class="setting-group" data-onboarding="game-settings-system-gpu">
                 <div class="setting-label">指定显卡</div>
                 <div v-if="displayInfo && displayInfo.gpus.length > 0">
                   <select v-model="selectedGpuIndex" class="custom-input" style="width:100%">
@@ -1417,6 +1618,135 @@ defineExpose({
   color: #00f0ff;
   border-left: 3px solid #00f0ff;
   box-shadow: inset 20px 0 20px -20px rgba(0, 240, 255, 0.3);
+}
+
+.sidebar-item.runtime-attention {
+  animation: runtimeTabPulse 0.8s ease-in-out 0s 4;
+  color: #8ffbff;
+}
+
+@keyframes runtimeTabPulse {
+  0% {
+    background: rgba(0, 240, 255, 0.08);
+    box-shadow: inset 20px 0 20px -20px rgba(0, 240, 255, 0.2);
+  }
+  50% {
+    background: rgba(0, 240, 255, 0.32);
+    box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.45), 0 0 18px rgba(0, 240, 255, 0.5);
+  }
+  100% {
+    background: rgba(0, 240, 255, 0.08);
+    box-shadow: inset 20px 0 20px -20px rgba(0, 240, 255, 0.2);
+  }
+}
+
+.runtime-pane-attention {
+  position: relative;
+  isolation: isolate;
+  animation: runtimePaneGlow 0.9s ease-in-out 0s 3;
+}
+
+.runtime-pane-attention::after {
+  content: '';
+  position: absolute;
+  inset: -10px;
+  border-radius: 10px;
+  pointer-events: none;
+  border: 1px solid rgba(0, 240, 255, 0.38);
+  box-shadow: 0 0 0 1px rgba(0, 240, 255, 0.22), 0 0 18px rgba(0, 240, 255, 0.24);
+  animation: runtimePaneOutlinePulse 0.9s ease-in-out 0s 3;
+}
+
+.runtime-pane-attention .setting-group {
+  animation: runtimeGroupPulse 0.9s ease-in-out 0s 3;
+}
+
+.runtime-section-attention {
+  border-radius: 8px;
+  animation: runtimeSectionPulse 0.9s ease-in-out 0s 4;
+}
+
+@keyframes runtimePaneGlow {
+  0% {
+    filter: saturate(1);
+  }
+  50% {
+    filter: saturate(1.22) drop-shadow(0 0 14px rgba(0, 240, 255, 0.38));
+  }
+  100% {
+    filter: saturate(1);
+  }
+}
+
+@keyframes runtimePaneOutlinePulse {
+  0% {
+    opacity: 0.25;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.95;
+    transform: scale(1.01);
+  }
+  100% {
+    opacity: 0.28;
+    transform: scale(1);
+  }
+}
+
+@keyframes runtimeGroupPulse {
+  0% {
+    background: rgba(0, 240, 255, 0.02);
+    box-shadow: 0 0 0 rgba(0, 240, 255, 0);
+  }
+  50% {
+    background: rgba(0, 240, 255, 0.1);
+    box-shadow: 0 0 0 1px rgba(0, 240, 255, 0.26), 0 0 12px rgba(0, 240, 255, 0.22);
+  }
+  100% {
+    background: rgba(0, 240, 255, 0.02);
+    box-shadow: 0 0 0 rgba(0, 240, 255, 0);
+  }
+}
+
+@keyframes runtimeSectionPulse {
+  0% {
+    background: rgba(0, 240, 255, 0.03);
+    box-shadow: 0 0 0 rgba(0, 240, 255, 0);
+  }
+  50% {
+    background: rgba(0, 240, 255, 0.14);
+    box-shadow:
+      0 0 0 1px rgba(0, 240, 255, 0.4),
+      0 0 16px rgba(0, 240, 255, 0.35),
+      inset 0 0 18px rgba(0, 240, 255, 0.12);
+  }
+  100% {
+    background: rgba(0, 240, 255, 0.03);
+    box-shadow: 0 0 0 rgba(0, 240, 255, 0);
+  }
+}
+
+.runtime-guide-banner {
+  margin-bottom: 16px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 240, 255, 0.55);
+  background: rgba(0, 240, 255, 0.16);
+  color: #b2feff;
+  padding: 10px 12px;
+  font-size: 13px;
+  animation: runtimeBannerBlink 0.95s ease-in-out 0s 3;
+}
+
+@keyframes runtimeBannerBlink {
+  0% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.75;
+  }
 }
 
 /* Content */
