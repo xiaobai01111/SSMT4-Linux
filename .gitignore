@@ -44,3 +44,6 @@ scripts/*
 !scripts/build-install-packages.sh
 !scripts/aur/
 !scripts/aur/**
+
+.cache/
+.cache-tauri/

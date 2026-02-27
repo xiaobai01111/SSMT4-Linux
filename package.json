@@ -1,11 +1,12 @@
 {
   "name": "ssmt4",
   "private": true,
-  "version": "0.0.6-beta",
+  "version": "0.0.7",
   "type": "module",
   "scripts": {
     "sync-version": "bash scripts/sync-version.sh",
     "package:linux": "bash scripts/build-install-packages.sh",
+    "package:appimage": "bash scripts/build-install-packages.sh --appimage-only",
     "dev": "bun run sync-version && vite",
     "build": "bun run sync-version && vue-tsc --noEmit && vite build",
     "preview": "vite preview",
