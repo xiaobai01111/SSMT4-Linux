@@ -39,4 +39,8 @@ xm/
 
 aur/
 
-scripts/
+scripts/*
+!scripts/sync-version.sh
+!scripts/build-install-packages.sh
+!scripts/aur/
+!scripts/aur/**

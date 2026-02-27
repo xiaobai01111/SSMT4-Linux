@@ -129,6 +129,9 @@ async function loadSettings() {
     const loaded = await apiLoadSettings()
     console.log('Loaded settings from backend:', loaded);
     Object.assign(appSettings, loaded)
+    if (isLegacyDefaultBackground(appSettings.bgImage || '')) {
+      appSettings.bgImage = '';
+    }
     appSettings.currentConfigName = canonicalGameKey(appSettings.currentConfigName)
     setTimeout(() => {
       isInitialized = true;
@@ -145,13 +148,27 @@ async function loadSettings() {
 // Default background path
 let defaultBgPath = '';
 
+const isLegacyDefaultBackground = (value: string): boolean => {
+  const normalized = (value || '').toLowerCase();
+  if (!normalized) return false;
+  return (
+    normalized.includes('/ssmt4-linux-dev/background.png') ||
+    normalized.includes('%2fssmt4-linux-dev%2fbackground.png')
+  );
+};
+
 async function initDefaultBackground() {
     try {
         const path = await getResourcePath('Background.png');
         defaultBgPath = convertFileSrc(path);
-        // If current bgImage is empty, apply it immediately
-        if (!appSettings.bgImage && appSettings.bgType === BGType.Image) {
-            appSettings.bgImage = defaultBgPath;
+        if (appSettings.bgType === BGType.Image) {
+            const currentBg = appSettings.bgImage || '';
+            const isLegacyBrokenDefault = isLegacyDefaultBackground(currentBg);
+
+            // 兼容旧版本残留的无效默认背景路径，自动迁移到当前有效路径。
+            if (!currentBg || isLegacyBrokenDefault) {
+                appSettings.bgImage = defaultBgPath;
+            }
         }
     } catch (e) {
         console.warn('Failed to get default background:', e);

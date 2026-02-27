@@ -524,6 +524,11 @@ fn normalize_settings(cfg: &mut AppConfig) {
         cfg.content_blur = 0.0;
     }
 
+    // 迁移旧版默认背景路径（历史包名为 SSMT4-Linux-Dev），避免启动后持续 asset 404。
+    if is_legacy_default_background_path(&cfg.bg_image) {
+        cfg.bg_image.clear();
+    }
+
     if !cfg.data_dir.trim().is_empty() {
         cfg.data_dir = app_config::expand_user_path_string(&cfg.data_dir);
     }
@@ -539,6 +544,16 @@ fn normalize_snowbreak_source_policy(value: &str, default: &str) -> String {
         "" => default.to_string(),
         _ => default.to_string(),
     }
+}
+
+fn is_legacy_default_background_path(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+
+    normalized.contains("/ssmt4-linux-dev/background.png")
+        || normalized.contains("%2fssmt4-linux-dev%2fbackground.png")
 }
 
 /// 根据 AppConfig.data_dir 设置或清除全局自定义数据目录

@@ -157,9 +157,12 @@ pub fn init_logger(log_dir: &Path) {
 
     // 级别策略：
     // - 控制台默认 INFO，便于快速定位关键流程
-    // - 文件默认 DEBUG，便于回溯细节
+    // - 文件默认全局 INFO，但保留 ssmt4_lib=DEBUG，避免第三方网络库日志洪泛
     let (console_filter, console_directive) = build_env_filter("SSMT4_LOG_CONSOLE", "info");
-    let (file_filter, file_directive) = build_env_filter("SSMT4_LOG_FILE", "debug");
+    let (file_filter, file_directive) = build_env_filter(
+        "SSMT4_LOG_FILE",
+        "info,ssmt4_lib=debug,reqwest=warn,hyper=warn,h2=warn,rustls=warn",
+    );
 
     let mut file_layer = fmt::layer()
         .event_format(ChineseCompactFormatter)

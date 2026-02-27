@@ -399,11 +399,15 @@ pub async fn fetch_remote_by_catalog(
         .filter(|s| s.enabled)
         .cloned()
         .collect::<Vec<_>>();
-    let tasks = sources
-        .iter()
-        .map(|source| fetch_source_releases(&client, source, &installed_set, github_token));
-
-    let results = join_all(tasks).await;
+    // 限制并发，避免在网络抖动/代理场景下瞬时创建过多连接导致 UI 卡顿感。
+    const MAX_SOURCE_CONCURRENCY: usize = 3;
+    let mut results = Vec::new();
+    for chunk in sources.chunks(MAX_SOURCE_CONCURRENCY) {
+        let tasks = chunk
+            .iter()
+            .map(|source| fetch_source_releases(&client, source, &installed_set, github_token));
+        results.extend(join_all(tasks).await);
+    }
     let mut failures = Vec::new();
     for result in results {
         match result {

@@ -1,5 +1,3 @@
-use tauri::Manager;
-
 /// 允许执行的资源文件白名单（仅文件名，不含路径）
 const ALLOWED_RESOURCE_EXECUTABLES: &[&str] = &["Run.exe", "upx.exe"];
 
@@ -30,11 +28,9 @@ pub fn run_resource_executable(
         ));
     }
 
-    let resource_path = app
-        .path()
-        .resource_dir()
-        .map_err(|e| format!("Failed to get resource dir: {}", e))?
-        .join(&resource_name);
+    let resource_path = crate::commands::common::get_resource_path(app.clone(), &resource_name)
+        .map(std::path::PathBuf::from)
+        .map_err(|e| format!("Resource executable not found: {}", e))?;
 
     if !resource_path.exists() {
         return Err(format!(

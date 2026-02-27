@@ -12,6 +12,12 @@ use std::sync::Mutex;
 use tauri::Manager;
 
 pub fn run() {
+    // 修复 NVIDIA + Wayland 下 WebKitGTK DMABUF 渲染器导致的闪退/黑屏
+    // 参考: https://github.com/nicbarker/clay/issues/145
+    if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
     // Initialize logger
     let log_dir = utils::file_manager::get_logs_dir();
     utils::logger::init_logger(&log_dir);

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "SSMT4-Linux-Dev",
-  "version": "0.0.6-beta",
-  "identifier": "ssmt4-dev",
+  "productName": "SSMT4-Linux",
+  "version": "0.0.7",
+  "identifier": "io.github.xiaobai01111.ssmt4linux",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",

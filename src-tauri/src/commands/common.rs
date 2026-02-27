@@ -1,5 +1,6 @@
 use crate::utils::file_manager;
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use tauri::Manager;
 
 #[tauri::command]
@@ -9,27 +10,64 @@ pub fn greet(name: &str) -> String {
 
 #[tauri::command]
 pub fn get_resource_path(app: tauri::AppHandle, relative: &str) -> Result<String, String> {
-    let resource_path = app
+    let resource_dir = app
         .path()
         .resource_dir()
-        .map_err(|e| format!("Failed to get resource dir: {}", e))?
-        .join(relative);
+        .map_err(|e| format!("Failed to get resource dir: {}", e))?;
 
-    // 生产模式下直接返回
-    if resource_path.exists() {
-        return Ok(resource_path.to_string_lossy().to_string());
+    let mut candidates = collect_resource_candidates(&resource_dir, relative);
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(bin_dir) = exe.parent() {
+            // 兼容不同发行包布局（deb/rpm/pacman/历史版本）
+            for base in [
+                "../lib/ssmt4/resources",
+                "../lib/SSMT4-Linux",
+                "../lib/SSMT4-Linux/resources",
+                "../lib/SSMT4-Linux-Dev",
+                "../lib/SSMT4-Linux-Dev/resources",
+            ] {
+                candidates.push(bin_dir.join(base).join(relative));
+            }
+        }
     }
 
-    // 开发模式回退：resource_dir 指向 target/debug，资源实际在 src-tauri/resources/
-    let dev_fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("resources")
-        .join(relative);
-    if dev_fallback.exists() {
-        return Ok(dev_fallback.to_string_lossy().to_string());
+    for path in &candidates {
+        if path.exists() {
+            return Ok(path.to_string_lossy().to_string());
+        }
     }
 
-    // 都找不到，返回原始路径（让调用方处理错误）
-    Ok(resource_path.to_string_lossy().to_string())
+    Err(format!(
+        "Resource not found: {} (searched {} locations)",
+        relative,
+        candidates.len()
+    ))
+}
+
+pub fn collect_resource_candidates(resource_dir: &Path, relative: &str) -> Vec<PathBuf> {
+    let mut result = Vec::new();
+    let mut seen = HashSet::new();
+
+    let mut push_unique = |path: PathBuf| {
+        let key = path.to_string_lossy().to_string();
+        if seen.insert(key) {
+            result.push(path);
+        }
+    };
+
+    // Tauri 官方资源目录布局
+    push_unique(resource_dir.join(relative));
+    // 兼容某些构建产物将资源放到 resources 子目录
+    push_unique(resource_dir.join("resources").join(relative));
+
+    // 开发模式回退：src-tauri/resources/*
+    push_unique(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join(relative),
+    );
+
+    result
 }
 
 #[tauri::command]
