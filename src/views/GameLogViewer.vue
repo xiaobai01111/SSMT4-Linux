@@ -1,48 +1,56 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick } from 'vue';
-import { readLogFile, getLogDir } from '../api';
+import { nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { readGameLogSnapshot, type GameLogSnapshot } from '../api';
 
-const logContent = ref('');
-const logDir = ref('');
+const snapshot = ref<GameLogSnapshot>({
+  active: false,
+  gameName: '',
+  startedAt: '',
+  lineCount: 0,
+  content: '',
+});
 const autoScroll = ref(true);
 const isLoading = ref(false);
 const logContainer = ref<HTMLElement | null>(null);
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
+const scrollToBottom = () => {
+  if (!logContainer.value) return;
+  logContainer.value.scrollTop = logContainer.value.scrollHeight;
+};
+
 const loadLogs = async () => {
   if (isLoading.value) return;
   try {
     isLoading.value = true;
-    const nextContent = await readLogFile(1200);
+    const next = await readGameLogSnapshot(1800);
+    const prev = snapshot.value;
     const changed =
-      nextContent.length !== logContent.value.length ||
-      nextContent.slice(-120) !== logContent.value.slice(-120);
+      next.active !== prev.active ||
+      next.gameName !== prev.gameName ||
+      next.startedAt !== prev.startedAt ||
+      next.lineCount !== prev.lineCount ||
+      next.content.length !== prev.content.length ||
+      next.content.slice(-120) !== prev.content.slice(-120);
     if (!changed) return;
-    logContent.value = nextContent;
-    if (autoScroll.value) {
+
+    snapshot.value = next;
+    if (autoScroll.value && next.content) {
       await nextTick();
       scrollToBottom();
     }
-  } catch (e) {
-    logContent.value = `读取日志失败: ${e}`;
   } finally {
     isLoading.value = false;
   }
 };
 
-const scrollToBottom = () => {
-  if (logContainer.value) {
-    logContainer.value.scrollTop = logContainer.value.scrollHeight;
-  }
-};
-
 const copyLogs = async () => {
+  const text = snapshot.value.content || '';
   try {
-    await navigator.clipboard.writeText(logContent.value);
+    await navigator.clipboard.writeText(text);
   } catch {
-    // fallback
     const ta = document.createElement('textarea');
-    ta.value = logContent.value;
+    ta.value = text;
     document.body.appendChild(ta);
     ta.select();
     document.execCommand('copy');
@@ -51,10 +59,8 @@ const copyLogs = async () => {
 };
 
 onMounted(async () => {
-  logDir.value = await getLogDir();
   await loadLogs();
-  // 降低刷新频率，避免长日志文本高频重排
-  refreshTimer = setInterval(loadLogs, 2500);
+  refreshTimer = setInterval(loadLogs, 1200);
 });
 
 onUnmounted(() => {
@@ -63,27 +69,30 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="log-viewer">
-    <div class="log-toolbar">
-      <span class="log-title">SSMT4 日志查看器</span>
-      <span class="log-dir">{{ logDir }}</span>
-      <div class="log-actions">
+  <div class="game-log-viewer">
+    <div class="toolbar">
+      <span class="title">游戏日志</span>
+      <span class="meta" v-if="snapshot.active">
+        {{ snapshot.gameName }} | lines={{ snapshot.lineCount }} | started={{ snapshot.startedAt }}
+      </span>
+      <span class="meta" v-else>未开启日志会话</span>
+      <div class="actions">
         <label class="auto-scroll-label">
           <input type="checkbox" v-model="autoScroll" />
           自动滚动
         </label>
-        <button class="log-btn" @click="loadLogs" :disabled="isLoading">刷新</button>
-        <button class="log-btn" @click="copyLogs">复制全部</button>
+        <button class="btn" @click="loadLogs" :disabled="isLoading">刷新</button>
+        <button class="btn" @click="copyLogs">复制全部</button>
       </div>
     </div>
-    <div class="log-content" ref="logContainer">
-      <pre>{{ logContent || '暂无日志...' }}</pre>
+    <div class="content" ref="logContainer">
+      <pre>{{ snapshot.content || '暂无日志...' }}</pre>
     </div>
   </div>
 </template>
 
 <style scoped>
-.log-viewer {
+.game-log-viewer {
   width: 100%;
   height: 100vh;
   display: flex;
@@ -93,7 +102,7 @@ onUnmounted(() => {
   font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
 }
 
-.log-toolbar {
+.toolbar {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -103,22 +112,22 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-.log-title {
+.title {
   font-size: 13px;
   font-weight: 700;
-  color: #F7CE46;
+  color: #f7ce46;
 }
 
-.log-dir {
+.meta {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.45);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
 }
 
-.log-actions {
+.actions {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -127,66 +136,49 @@ onUnmounted(() => {
 
 .auto-scroll-label {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.6);
   display: flex;
   align-items: center;
   gap: 4px;
-  cursor: pointer;
   user-select: none;
 }
 
 .auto-scroll-label input {
-  accent-color: #F7CE46;
+  accent-color: #f7ce46;
 }
 
-.log-btn {
+.btn {
   padding: 4px 12px;
   font-size: 11px;
   border: 1px solid rgba(255, 255, 255, 0.15);
   background: rgba(255, 255, 255, 0.05);
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(255, 255, 255, 0.75);
   border-radius: 4px;
   cursor: pointer;
-  transition: all 0.15s;
 }
 
-.log-btn:hover {
+.btn:hover {
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
 }
 
-.log-btn:disabled {
+.btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
 
-.log-content {
+.content {
   flex: 1;
   overflow: auto;
   padding: 12px 16px;
 }
 
-.log-content pre {
+.content pre {
   margin: 0;
   font-size: 11px;
   line-height: 1.6;
   white-space: pre;
   word-break: normal;
   color: #c8c8c8;
-}
-
-/* 滚动条样式 */
-.log-content::-webkit-scrollbar {
-  width: 6px;
-}
-.log-content::-webkit-scrollbar-track {
-  background: transparent;
-}
-.log-content::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 3px;
-}
-.log-content::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
 }
 </style>

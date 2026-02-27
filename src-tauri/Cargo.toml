@@ -1,6 +1,6 @@
 [package]
 name = "SSMT4-linux"
-version = "0.0.7"
+version = "0.0.7-beta"
 description = "SSMT4 - Linux Game Launcher"
 authors = ["you"]
 edition = "2021"
@@ -8,6 +8,10 @@ edition = "2021"
 [lib]
 name = "ssmt4_lib"
 crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["devtools"]
+devtools = ["tauri/devtools"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -45,3 +49,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 percent-encoding = "2"
 http = "1"
 regex = "1"
+
+[profile.release]
+strip = true
+lto = true

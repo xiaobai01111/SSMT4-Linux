@@ -16,7 +16,11 @@ pub fn load_settings(config: State<'_, Mutex<AppConfig>>) -> Result<AppConfig, S
     } else {
         settings_from_kv(&pairs)
     };
-    normalize_settings(&mut loaded);
+    let normalized_changed = normalize_settings(&mut loaded);
+    if normalized_changed {
+        // 启动时自动回写归一化结果，避免旧值反复触发 asset 404。
+        settings_to_kv(&loaded)?;
+    }
 
     // 仅同步内存中的 dataDir（不创建符号链接，符号链接仅在 save_settings 时创建）
     if loaded.data_dir.is_empty() {
@@ -36,13 +40,20 @@ pub fn save_settings(
     config: State<'_, Mutex<AppConfig>>,
     mut settings: AppConfig,
 ) -> Result<(), String> {
-    normalize_settings(&mut settings);
+    let previous_data_dir = {
+        let state = config.lock().map_err(|e| e.to_string())?;
+        state.data_dir.clone()
+    };
+
+    let _ = normalize_settings(&mut settings);
 
     // 写入 SQLite
     settings_to_kv(&settings)?;
 
-    // 同步全局 dataDir
-    apply_data_dir(&settings);
+    // 仅在 dataDir 发生变化时同步，避免普通设置保存触发昂贵的符号链接/目录操作。
+    if previous_data_dir != settings.data_dir {
+        apply_data_dir(&settings);
+    }
 
     let mut state = config.lock().map_err(|e| e.to_string())?;
     *state = settings;
@@ -225,7 +236,7 @@ fn migrate_json_to_db() -> Result<AppConfig, String> {
         AppConfig::default()
     };
 
-    normalize_settings(&mut cfg);
+    let _ = normalize_settings(&mut cfg);
     settings_to_kv(&cfg)?;
     Ok(cfg)
 }
@@ -505,36 +516,75 @@ fn normalize_locale(value: &str) -> String {
     }
 }
 
-fn normalize_settings(cfg: &mut AppConfig) {
-    cfg.bg_type = normalize_bg_type(&cfg.bg_type);
-    cfg.locale = normalize_locale(&cfg.locale);
-    cfg.snowbreak_source_policy =
+fn normalize_settings(cfg: &mut AppConfig) -> bool {
+    let mut changed = false;
+
+    let normalized_bg_type = normalize_bg_type(&cfg.bg_type);
+    if cfg.bg_type != normalized_bg_type {
+        cfg.bg_type = normalized_bg_type;
+        changed = true;
+    }
+
+    let normalized_locale = normalize_locale(&cfg.locale);
+    if cfg.locale != normalized_locale {
+        cfg.locale = normalized_locale;
+        changed = true;
+    }
+
+    let normalized_source_policy =
         normalize_snowbreak_source_policy(&cfg.snowbreak_source_policy, "official_first");
+    if cfg.snowbreak_source_policy != normalized_source_policy {
+        cfg.snowbreak_source_policy = normalized_source_policy;
+        changed = true;
+    }
+
     if !cfg.current_config_name.trim().is_empty() && cfg.current_config_name != "Default" {
-        cfg.current_config_name =
+        let canonical =
             crate::configs::game_identity::to_canonical_or_keep(&cfg.current_config_name);
+        if cfg.current_config_name != canonical {
+            cfg.current_config_name = canonical;
+            changed = true;
+        }
     }
 
-    if cfg.content_opacity.is_nan() {
-        cfg.content_opacity = 0.0;
+    let mut content_opacity = cfg.content_opacity;
+    if content_opacity.is_nan() {
+        content_opacity = 0.0;
     }
-    cfg.content_opacity = cfg.content_opacity.clamp(0.0, 1.0);
+    content_opacity = content_opacity.clamp(0.0, 1.0);
+    if cfg.content_opacity != content_opacity {
+        cfg.content_opacity = content_opacity;
+        changed = true;
+    }
 
-    if cfg.content_blur.is_nan() || cfg.content_blur < 0.0 {
-        cfg.content_blur = 0.0;
+    let mut content_blur = cfg.content_blur;
+    if content_blur.is_nan() || content_blur < 0.0 {
+        content_blur = 0.0;
+    }
+    if cfg.content_blur != content_blur {
+        cfg.content_blur = content_blur;
+        changed = true;
     }
 
     // 迁移旧版默认背景路径（历史包名为 SSMT4-Linux-Dev），避免启动后持续 asset 404。
     if is_legacy_default_background_path(&cfg.bg_image) {
         cfg.bg_image.clear();
+        changed = true;
     }
 
     if !cfg.data_dir.trim().is_empty() {
-        cfg.data_dir = app_config::expand_user_path_string(&cfg.data_dir);
+        let expanded = app_config::expand_user_path_string(&cfg.data_dir);
+        if cfg.data_dir != expanded {
+            cfg.data_dir = expanded;
+            changed = true;
+        }
     }
     if cfg.onboarding_version > 999 {
         cfg.onboarding_version = 999;
+        changed = true;
     }
+
+    changed
 }
 
 fn normalize_snowbreak_source_policy(value: &str, default: &str) -> String {
@@ -547,13 +597,84 @@ fn normalize_snowbreak_source_policy(value: &str, default: &str) -> String {
 }
 
 fn is_legacy_default_background_path(value: &str) -> bool {
-    let normalized = value.trim().to_ascii_lowercase();
+    let normalized = normalize_background_path_for_match(value);
     if normalized.is_empty() {
         return false;
     }
 
-    normalized.contains("/ssmt4-linux-dev/background.png")
-        || normalized.contains("%2fssmt4-linux-dev%2fbackground.png")
+    // 历史残留路径特征：包名后带后缀（如 -dev）且直接指向 Background.png
+    if normalized.contains("ssmt4-linux-") && normalized.contains("background.png") {
+        return true;
+    }
+
+    // 生产包默认背景（deb/rpm/pacman/AppImage 挂载目录）不应持久化到用户设置。
+    if !normalized.contains("background.png") {
+        return false;
+    }
+    normalized.contains("/usr/lib/ssmt4/resources/background.png")
+        || normalized.contains("/usr/lib/ssmt4-linux/resources/background.png")
+        || normalized.contains("/usr/lib/ssmt4-linux/background.png")
+}
+
+fn normalize_background_path_for_match(value: &str) -> String {
+    let mut normalized = value.trim().to_ascii_lowercase().replace('\\', "/");
+    if let Some((head, _)) = normalized.split_once('?') {
+        normalized = head.to_string();
+    }
+    if let Some((head, _)) = normalized.split_once('#') {
+        normalized = head.to_string();
+    }
+
+    normalized = normalized.replace("%2f", "/");
+    normalized = normalized.replace("%5c", "/");
+    normalized
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_legacy_default_background_path;
+
+    #[test]
+    fn legacy_background_path_plain() {
+        assert!(is_legacy_default_background_path(
+            "/usr/lib/SSMT4-Linux-Dev/Background.png"
+        ));
+    }
+
+    #[test]
+    fn legacy_background_path_encoded() {
+        assert!(is_legacy_default_background_path(
+            "asset://localhost/%2Fusr%2Flib%2FSSMT4-Linux-Dev%2FBackground.png"
+        ));
+    }
+
+    #[test]
+    fn legacy_background_path_windows_style() {
+        assert!(is_legacy_default_background_path(
+            r"C:\Program Files\SSMT4-Linux-Dev\Background.png"
+        ));
+    }
+
+    #[test]
+    fn non_legacy_background_path() {
+        assert!(!is_legacy_default_background_path(
+            "/home/user/Pictures/Background.png"
+        ));
+    }
+
+    #[test]
+    fn appimage_mount_background_path() {
+        assert!(is_legacy_default_background_path(
+            "/tmp/.mount_SSMT4-pagEcf/usr/lib/SSMT4-Linux/resources/Background.png"
+        ));
+    }
+
+    #[test]
+    fn packaged_background_asset_url_path() {
+        assert!(is_legacy_default_background_path(
+            "asset://localhost/%2Ftmp%2F.mount_SSMT4-pagEcf%2Fusr%2Flib%2FSSMT4-Linux%2Fresources%2FBackground.png"
+        ));
+    }
 }
 
 /// 根据 AppConfig.data_dir 设置或清除全局自定义数据目录

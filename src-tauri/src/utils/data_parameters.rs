@@ -230,21 +230,24 @@ fn data_parameter_roots() -> Vec<PathBuf> {
         }
     }
 
-    // 开发模式回退：工作区同级目录
-    if let Ok(cwd) = std::env::current_dir() {
-        push_unique_path(&mut roots, &mut seen, cwd.join("Data-parameters"));
+    // 开发模式回退：工作区同级目录（仅 debug 构建）
+    #[cfg(debug_assertions)]
+    {
+        if let Ok(cwd) = std::env::current_dir() {
+            push_unique_path(&mut roots, &mut seen, cwd.join("Data-parameters"));
+        }
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        push_unique_path(
+            &mut roots,
+            &mut seen,
+            manifest_dir.join("..").join("Data-parameters"),
+        );
+        push_unique_path(
+            &mut roots,
+            &mut seen,
+            manifest_dir.join("..").join("..").join("Data-parameters"),
+        );
     }
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    push_unique_path(
-        &mut roots,
-        &mut seen,
-        manifest_dir.join("..").join("Data-parameters"),
-    );
-    push_unique_path(
-        &mut roots,
-        &mut seen,
-        manifest_dir.join("..").join("..").join("Data-parameters"),
-    );
 
     roots
 }
@@ -260,8 +263,12 @@ fn legacy_resource_roots() -> Vec<PathBuf> {
         }
     }
 
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    push_unique_path(&mut roots, &mut seen, manifest_dir.join("resources"));
+    // 开发模式回退：src-tauri/resources（仅 debug 构建）
+    #[cfg(debug_assertions)]
+    {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        push_unique_path(&mut roots, &mut seen, manifest_dir.join("resources"));
+    }
 
     roots
 }

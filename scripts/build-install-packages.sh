@@ -41,10 +41,13 @@ fi
 run_tauri_bundle_build() {
   local bundles="$1"
   mkdir -p "$TAURI_CACHE_HOME"
+  local -a tauri_args
+  tauri_args=(--bundles "$bundles")
   if command -v bun >/dev/null 2>&1; then
-    XDG_CACHE_HOME="$TAURI_CACHE_HOME" npm run tauri build -- --bundles "$bundles"
+    XDG_CACHE_HOME="$TAURI_CACHE_HOME" npm run tauri build -- "${tauri_args[@]}" -- --no-default-features
   else
-    XDG_CACHE_HOME="$TAURI_CACHE_HOME" npm run tauri build -- --bundles "$bundles" --config '{"build":{"beforeBuildCommand":"npx vue-tsc --noEmit && npx vite build"}}'
+    tauri_args+=(--config '{"build":{"beforeBuildCommand":"npx vue-tsc --noEmit && npx vite build"}}')
+    XDG_CACHE_HOME="$TAURI_CACHE_HOME" npm run tauri build -- "${tauri_args[@]}" -- --no-default-features
   fi
 }
 
@@ -178,6 +181,8 @@ manual_build_appimage_from_appdir() {
   for appdir in "$appimage_root"/*.AppDir; do
     [[ -d "$appdir" ]] || continue
     ensure_appdir_root_icon_alias "$appdir"
+    # 修复 NVIDIA + Wayland: 注入 WEBKIT_DISABLE_DMABUF_RENDERER=1
+    find "$appdir" -name '*.desktop' -exec sed -i 's|^Exec=SSMT4-linux|Exec=env WEBKIT_DISABLE_DMABUF_RENDERER=1 SSMT4-linux|' {} +
     app_name="$(basename "$appdir" .AppDir)"
     output_file="$appimage_root/${app_name}_${VERSION}_amd64.AppImage"
     echo "==> 使用 appimagetool 手动封装: $(basename "$output_file")"
@@ -452,7 +457,7 @@ package() {
 [Desktop Entry]
 Categories=Game;
 Comment=SSMT4 Linux Launcher
-Exec=SSMT4-linux
+Exec=env WEBKIT_DISABLE_DMABUF_RENDERER=1 SSMT4-linux
 StartupWMClass=SSMT4-linux
 Icon=SSMT4-linux
 Name=SSMT4 Linux

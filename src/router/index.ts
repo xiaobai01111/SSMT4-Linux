@@ -9,6 +9,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/settings', name: 'Settings', component: () => import('../views/Settings.vue') },
   { path: '/documents', name: 'Documents', component: () => import('../views/Documents.vue') },
   { path: '/log-viewer', name: 'LogViewer', component: () => import('../views/LogViewer.vue') },
+  { path: '/game-log-viewer', name: 'GameLogViewer', component: () => import('../views/GameLogViewer.vue') },
 ]
 
 const router = createRouter({
@@ -19,7 +20,7 @@ const router = createRouter({
 // 首次启动导航守卫：等待设置加载完成后，未完成初始化或未确认风险时跳转到向导页
 router.beforeEach(async (to) => {
   // 日志查看器窗口不受初始化/风险确认限制
-  if (to.name === 'LogViewer') return;
+  if (to.name === 'LogViewer' || to.name === 'GameLogViewer') return;
   await settingsLoaded;
   if ((!appSettings.initialized || !appSettings.tosRiskAcknowledged) && to.name !== 'Setup') {
     return { name: 'Setup' };

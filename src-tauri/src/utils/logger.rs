@@ -1,11 +1,12 @@
 use chrono::Local;
+use std::io::{self, Write};
 use std::path::Path;
 use tracing::{Event, Level, Subscriber};
-use tracing_appender::rolling;
 use tracing_subscriber::{
     fmt::{
         self,
         format::{FmtSpan, Writer},
+        writer::MakeWriter,
         FormatEvent, FormatFields, FmtContext,
     },
     layer::SubscriberExt,
@@ -17,6 +18,14 @@ use tracing_subscriber::{
 
 #[derive(Clone, Copy, Debug, Default)]
 struct ChineseCompactFormatter;
+
+#[derive(Clone, Copy, Debug, Default)]
+struct TeeMakeWriter;
+
+struct TeeWriter {
+    stderr: io::Stderr,
+    buffer: Vec<u8>,
+}
 
 #[derive(Default)]
 struct EventVisitor {
@@ -124,6 +133,42 @@ where
     }
 }
 
+impl<'a> MakeWriter<'a> for TeeMakeWriter {
+    type Writer = TeeWriter;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        TeeWriter {
+            stderr: io::stderr(),
+            buffer: Vec::with_capacity(1_024),
+        }
+    }
+}
+
+impl Write for TeeWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.stderr.write_all(buf)?;
+        self.buffer.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.stderr.flush()
+    }
+}
+
+impl Drop for TeeWriter {
+    fn drop(&mut self) {
+        if self.buffer.is_empty() {
+            return;
+        }
+
+        let text = String::from_utf8_lossy(&self.buffer);
+        for line in text.lines() {
+            crate::utils::runtime_log::append_runtime_log_line(line);
+        }
+    }
+}
+
 fn build_env_filter(var_name: &str, default_directive: &str) -> (EnvFilter, String) {
     let value = std::env::var(var_name)
         .ok()
@@ -146,45 +191,44 @@ fn build_env_filter(var_name: &str, default_directive: &str) -> (EnvFilter, Stri
     }
 }
 
+fn cleanup_legacy_log_files(log_dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(log_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if name.starts_with("ssmt4.log") {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
 pub fn init_logger(log_dir: &Path) {
-    std::fs::create_dir_all(log_dir).ok();
+    // 迁移策略：新版本不再写入持久化日志，启动时清理历史 ssmt4.log* 残留文件。
+    if log_dir.exists() {
+        cleanup_legacy_log_files(log_dir);
+    }
 
-    let file_appender = rolling::daily(log_dir, "ssmt4.log");
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-
-    // Leak the guard so it lives for the entire program
-    Box::leak(Box::new(_guard));
-
-    // 级别策略：
-    // - 控制台默认 INFO，便于快速定位关键流程
-    // - 文件默认全局 INFO，但保留 ssmt4_lib=DEBUG，避免第三方网络库日志洪泛
-    let (console_filter, console_directive) = build_env_filter("SSMT4_LOG_CONSOLE", "info");
-    let (file_filter, file_directive) = build_env_filter(
-        "SSMT4_LOG_FILE",
-        "info,ssmt4_lib=debug,reqwest=warn,hyper=warn,h2=warn,rustls=warn",
-    );
-
-    let mut file_layer = fmt::layer()
-        .event_format(ChineseCompactFormatter)
-        .with_writer(non_blocking)
-        .with_ansi(false);
-    file_layer.set_span_events(FmtSpan::NONE);
+    // 仅保留控制台输出，避免本地磁盘日志在会话结束后残留。
+    let (console_filter, console_directive) =
+        build_env_filter("SSMT4_LOG_CONSOLE", "info,ssmt4_lib=info");
 
     let mut console_layer = fmt::layer()
         .event_format(ChineseCompactFormatter)
-        .with_writer(std::io::stderr)
+        .with_writer(TeeMakeWriter)
         .with_ansi(true);
     console_layer.set_span_events(FmtSpan::NONE);
 
     tracing_subscriber::registry()
-        .with(file_layer.with_filter(file_filter))
         .with(console_layer.with_filter(console_filter))
         .init();
 
     tracing::info!(
-        "日志系统已启动: 目录={}, 控制台级别={}, 文件级别={}",
-        log_dir.display(),
+        "日志系统已启动: 持久化=禁用, 控制台级别={}, 历史日志目录={}",
         console_directive,
-        file_directive
+        log_dir.display(),
     );
 }

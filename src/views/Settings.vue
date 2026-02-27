@@ -34,7 +34,7 @@ import {
 } from '../api';
 import { useI18n } from 'vue-i18n';
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const route = useRoute();
 
 const activeMenu = ref('basic')
@@ -97,10 +97,7 @@ type EditableProtonFamily = ProtonFamily & { detect_patterns_text: string };
 const editableFamilies = ref<EditableProtonFamily[]>([]);
 const editableSources = ref<ProtonSource[]>([]);
 
-const tr = (key: string, fallback: string) => {
-  const value = t(key);
-  return value === key ? fallback : value;
-};
+const tr = (key: string, fallback: string) => (te(key) ? t(key) : fallback);
 
 const checkVersionInfo = async () => {
   if (isVersionChecking.value) return;
@@ -834,7 +831,7 @@ watch(
     <!-- 右侧内容区 -->
     <div class="settings-content">
       <!-- 基础设置 -->
-      <div v-show="activeMenu === 'basic'" class="settings-panel" data-onboarding="settings-basic-panel">
+      <div v-if="activeMenu === 'basic'" class="settings-panel" data-onboarding="settings-basic-panel">
         <div class="panel-title">{{ t('settings.basicsettings') }}</div>
         <el-form label-width="140px">
           <el-form-item :label="t('settings.language')">
@@ -896,7 +893,7 @@ watch(
       </div>
 
       <!-- 外观设置 -->
-      <div v-show="activeMenu === 'appearance'" class="settings-panel">
+      <div v-if="activeMenu === 'appearance'" class="settings-panel">
         <div class="panel-title">{{ t('settings.appearance') }}</div>
         <el-form label-width="140px">
           <div class="settings-divider">{{ t('settings.content_style') }}</div>
@@ -910,7 +907,7 @@ watch(
       </div>
 
       <!-- 页面显示设置 -->
-      <div v-show="activeMenu === 'display'" class="settings-panel" data-onboarding="settings-display-panel">
+      <div v-if="activeMenu === 'display'" class="settings-panel" data-onboarding="settings-display-panel">
         <div class="panel-title">{{ t('settings.page_display') }}</div>
         <el-form label-width="140px">
           <el-form-item :label="t('settings.websitepage')">
@@ -923,7 +920,7 @@ watch(
       </div>
 
       <!-- 版本检查 -->
-      <div v-show="activeMenu === 'version'" class="settings-panel version-panel" data-onboarding="settings-version-panel">
+      <div v-if="activeMenu === 'version'" class="settings-panel version-panel" data-onboarding="settings-version-panel">
         <div class="panel-title">{{ tr('settings.version_check_title', '版本检查') }}</div>
 
         <div class="section-block">
@@ -972,7 +969,7 @@ watch(
       </div>
 
       <!-- 资源检查 -->
-      <div v-show="activeMenu === 'resource'" class="settings-panel version-panel" data-onboarding="settings-resource-panel">
+      <div v-if="activeMenu === 'resource'" class="settings-panel version-panel" data-onboarding="settings-resource-panel">
         <div class="panel-title">资源更新</div>
 
         <div class="section-block">
@@ -1024,7 +1021,7 @@ watch(
       </div>
 
       <!-- Proton 管理 -->
-      <div v-show="activeMenu === 'proton'" class="settings-panel proton-panel" data-onboarding="settings-proton-panel">
+      <div v-if="activeMenu === 'proton'" class="settings-panel proton-panel" data-onboarding="settings-proton-panel">
         <div class="panel-title">{{ tr('settings.proton_manage_title', 'Proton 管理') }}</div>
         <div v-if="guideMenu === 'proton'" class="settings-guide-banner">
           请先在此下载并安装至少一个 Proton 版本，然后回到主页启动游戏。
@@ -1203,7 +1200,7 @@ watch(
       </div>
 
       <!-- DXVK 管理 -->
-      <div v-show="activeMenu === 'dxvk'" class="settings-panel dxvk-panel" data-onboarding="settings-dxvk-panel">
+      <div v-if="activeMenu === 'dxvk'" class="settings-panel dxvk-panel" data-onboarding="settings-dxvk-panel">
         <div class="panel-title">{{ tr('settings.dxvk_manage_title', 'DXVK 管理') }}</div>
         <div v-if="guideMenu === 'dxvk'" class="settings-guide-banner">
           请先在此下载 DXVK 版本；下载后可在“游戏设置 -> 运行环境”里应用到当前 Prefix。
@@ -1313,7 +1310,7 @@ watch(
       </div>
 
       <!-- VKD3D 管理 -->
-      <div v-show="activeMenu === 'vkd3d'" class="settings-panel dxvk-panel" data-onboarding="settings-vkd3d-panel">
+      <div v-if="activeMenu === 'vkd3d'" class="settings-panel dxvk-panel" data-onboarding="settings-vkd3d-panel">
         <div class="panel-title">{{ tr('settings.vkd3d_manage_title', 'VKD3D 管理') }}</div>
 
         <div class="section-block">

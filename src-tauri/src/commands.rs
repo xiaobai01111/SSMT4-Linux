@@ -2,6 +2,7 @@ pub mod common;
 pub mod game_config;
 pub mod game_downloader;
 pub mod game_launcher;
+pub mod game_log;
 pub mod game_scanner;
 pub mod jadeite;
 pub mod log_viewer;

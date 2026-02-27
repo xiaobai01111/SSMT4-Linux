@@ -1,15 +1,7 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, provide, watch } from "vue";
+import { computed, onMounted, onUnmounted, provide } from "vue";
 import { useRoute } from "vue-router";
 import { appSettings, BGType } from "./store";
-
-// Debug: 监控视频背景 URL 变化
-watch(() => appSettings.bgVideo, (url) => {
-  if (url) console.log('[BG] Video URL:', url);
-});
-watch(() => appSettings.bgType, (t) => {
-  console.log('[BG] Type changed to:', t);
-});
 import TitleBar from "./components/TitleBar.vue";
 import FeatureOnboarding from "./components/FeatureOnboarding.vue";
 import { ElMessage, ElNotification } from "element-plus";
@@ -18,6 +10,12 @@ import { ElMessage, ElNotification } from "element-plus";
 
 
 const route = useRoute();
+const blurEnabledRoutes = new Set(['/', '/websites']);
+const isBlurRoute = computed(() => blurEnabledRoutes.has(route.path));
+const effectiveContentBlur = computed(() => {
+  if (!isBlurRoute.value) return 0;
+  return Math.min(Math.max(appSettings.contentBlur || 0, 0), 3);
+});
 
 /**
  * =========================================================================
@@ -106,7 +104,7 @@ onUnmounted(() => {
 
 <template>
   <!-- 日志查看器独立窗口：无 TitleBar、无背景层 -->
-  <template v-if="route.path === '/log-viewer'">
+  <template v-if="route.path === '/log-viewer' || route.path === '/game-log-viewer'">
     <router-view />
   </template>
 
@@ -118,37 +116,28 @@ onUnmounted(() => {
 
     <!-- Background Layer -->
     <div class="bg-layer">
-      <transition-group name="bg-trans">
-        <!-- Image Background -->
-        <div 
-          v-if="appSettings.bgType === BGType.Image && appSettings.bgImage"
-          :key="appSettings.bgImage"
-          class="bg-item"
-          :style="{ backgroundImage: `url(${appSettings.bgImage})` }"
-        ></div>
-      </transition-group>
+      <!-- Image Background -->
+      <div
+        v-if="appSettings.bgType === BGType.Image && appSettings.bgImage"
+        class="bg-item"
+        :style="{ backgroundImage: `url(${appSettings.bgImage})` }"
+      ></div>
     </div>
     
     <!-- Home & Websites & Settings Ambient Shadow Layer -->
     <div class="home-shadow-layer" v-if="route.path === '/' || route.path === '/websites'"></div>
 
     <!-- Global Mask Layer for Game Library Page -->
-    <transition name="fade">
-      <div v-if="route.path === '/games' || route.path === '/settings'" class="global-dim-layer"></div>
-    </transition>
+    <div v-if="route.path === '/games'" class="global-dim-layer"></div>
 
     <el-config-provider>
       <div class="app-container">
         <main class="app-main" :style="{
           '--content-bg-opacity': appSettings.contentOpacity,
-          '--content-blur': `${appSettings.contentBlur}px`
-        }">
+          '--content-blur': `${effectiveContentBlur}px`
+        }" :class="{ 'enable-content-blur': effectiveContentBlur > 0.1 }">
           <div class="content-scroll-wrapper" :class="{ 'no-scroll': route.path === '/' }">
-            <router-view v-slot="{ Component }">
-              <transition name="page-blur" mode="out-in">
-                <component :is="Component" />
-              </transition>
-            </router-view>
+            <router-view />
           </div>
         </main>
       </div>
@@ -293,12 +282,18 @@ input, textarea {
   position: relative;
   /* Content area: Configurable */
   background-color: rgba(255, 255, 255, var(--content-bg-opacity, 0.55)); 
-  backdrop-filter: blur(var(--content-blur, 3px)); 
-  transition: opacity 0.5s ease;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  transition: opacity 0.3s ease;
   
   /* Dark Glass Style Overrides */
   background-color: rgba(0, 0, 0, var(--content-bg-opacity, 0.4)); 
   color: #ffffff;
+}
+
+.app-main.enable-content-blur {
+  backdrop-filter: blur(var(--content-blur, 3px));
+  -webkit-backdrop-filter: blur(var(--content-blur, 3px));
 }
 
 .content-scroll-wrapper {

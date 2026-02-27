@@ -84,6 +84,108 @@ struct LaunchCommandSpec {
     effective_prefix_dir: PathBuf,
 }
 
+fn append_game_log(game_name: &str, level: &str, source: &str, message: impl AsRef<str>) {
+    crate::commands::game_log::append_game_log_line(game_name, level, source, message.as_ref());
+}
+
+fn append_sorted_env_snapshot(game_name: &str, source: &str, env_map: &HashMap<String, String>) {
+    let mut entries: Vec<(&String, &String)> = env_map.iter().collect();
+    entries.sort_by(|a, b| a.0.cmp(b.0));
+    for (key, value) in entries {
+        append_game_log(game_name, "DEBUG", source, format!("{}={}", key, value));
+    }
+}
+
+fn append_host_env_snapshot(game_name: &str) {
+    let mut entries: Vec<(String, String)> = std::env::vars().collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    for (key, value) in entries {
+        append_game_log(game_name, "DEBUG", "host-env", format!("{}={}", key, value));
+    }
+}
+
+fn detect_external_log_level(stream: &str, line: &str) -> &'static str {
+    let normalized = line.to_ascii_lowercase();
+    if normalized.contains(" fatal:") || normalized.contains("panic") {
+        return "ERROR";
+    }
+    if normalized.contains(" error:") || normalized.starts_with("error:") {
+        return "ERROR";
+    }
+    if normalized.contains(" warn:") || normalized.contains(" warning:") {
+        return "WARN";
+    }
+    if normalized.contains(" info:") {
+        return "INFO";
+    }
+    if normalized.contains(" debug:") || normalized.contains(" trace:") {
+        return "DEBUG";
+    }
+    if normalized.contains("unimplemented function") && normalized.contains("aborting") {
+        return "ERROR";
+    }
+    if stream == "stderr" { "WARN" } else { "DEBUG" }
+}
+
+fn detect_external_log_source(stream: &str, line: &str) -> String {
+    if let Some(rest) = line.strip_prefix('[') {
+        if let Some((source, _)) = rest.split_once(']') {
+            return source.trim().to_string();
+        }
+    }
+    if line.starts_with("ProtonFixes[") {
+        return "ProtonFixes".to_string();
+    }
+    if line.starts_with("Proton:") {
+        return "Proton".to_string();
+    }
+    if line.starts_with("wine:") {
+        return "wine".to_string();
+    }
+    stream.to_string()
+}
+
+fn append_external_runtime_hints(game_name: &str, line: &str) {
+    if !line.contains("ProtonFixes") {
+        let lower = line.to_ascii_lowercase();
+        if lower.contains("unimplemented function")
+            && lower.contains("ntoskrnl.exe.psgetprocessexitstatus")
+            && lower.contains("aborting")
+        {
+            append_game_log(
+                game_name,
+                "ERROR",
+                "wine-health",
+                "检测到 Wine 致命错误：ntoskrnl.exe.PsGetProcessExitStatus 未实现，进程已中止",
+            );
+        }
+        return;
+    }
+
+    if line.contains("No global protonfix found") {
+        append_game_log(
+            game_name,
+            "WARN",
+            "protonfixes",
+            "ProtonFixes 未匹配到全局规则（No global protonfix found）",
+        );
+    } else if line.contains("Using global defaults") {
+        append_game_log(
+            game_name,
+            "INFO",
+            "protonfixes",
+            "ProtonFixes 使用全局默认规则（Using global defaults）",
+        );
+    } else if line.contains("All checks successful") {
+        append_game_log(
+            game_name,
+            "INFO",
+            "protonfixes",
+            "ProtonFixes 预检查通过（All checks successful）",
+        );
+    }
+}
+
 #[tauri::command]
 pub async fn start_game(
     app: tauri::AppHandle,
@@ -140,6 +242,16 @@ async fn start_game_internal(
     region_override: Option<String>,
 ) -> Result<String, String> {
     let game_name = crate::configs::game_identity::to_canonical_or_keep(&game_name);
+    crate::commands::game_log::ensure_game_log_session(&game_name);
+    append_game_log(
+        &game_name,
+        "INFO",
+        "session",
+        format!(
+            "launch request: game={}, game_exe_path={}, wine_version_id={}, region_override={:?}",
+            game_name, game_exe_path, wine_version_id, region_override
+        ),
+    );
     debug!(
         "启动请求参数: game={}, game_exe_path={}, wine_version_id={}, region_override={:?}",
         game_name, game_exe_path, wine_version_id, region_override
@@ -149,6 +261,12 @@ async fn start_game_internal(
     // 检查游戏是否已在运行
     if process_monitor::is_game_running(&game_name).await {
         warn!("游戏 {} 已在运行，拒绝重复启动", game_name);
+        append_game_log(
+            &game_name,
+            "WARN",
+            "session",
+            "detected running instance; launch rejected",
+        );
         return Err("游戏已在运行中，请勿重复启动".to_string());
     }
 
@@ -157,10 +275,22 @@ async fn start_game_internal(
 
     let game_exe = PathBuf::from(&game_exe_path);
     if !game_exe.exists() {
+        append_game_log(
+            &game_name,
+            "ERROR",
+            "session",
+            format!("configured executable not found: {}", game_exe_path),
+        );
         return Err(format!("Game executable not found: {}", game_exe_path));
     }
 
     if !is_tos_risk_acknowledged() {
+        append_game_log(
+            &game_name,
+            "ERROR",
+            "session",
+            "launch blocked because risk acknowledgement is missing",
+        );
         return Err(
             "未完成风险确认，禁止启动。请先在首次向导完成风险确认后再启动游戏。".to_string(),
         );
@@ -188,6 +318,19 @@ async fn start_game_internal(
     info!(
         "启动目标: game={}, preset={}, region={}, write_scope_region={}",
         game_name, game_preset, launch_region, write_scope_region
+    );
+    append_game_log(
+        &game_name,
+        "INFO",
+        "session",
+        format!(
+            "launch target: preset={}, region={}, write_scope_region={}, launcher_api={}, biz_prefix={}",
+            game_preset,
+            launch_region,
+            write_scope_region,
+            launch_launcher_api.as_deref().unwrap_or(""),
+            launch_biz_prefix.as_deref().unwrap_or("")
+        ),
     );
     let launch_exe = resolve_preferred_launch_exe(&game_preset, &game_exe);
     let game_root = infer_game_root_from_exe(&launch_exe)
@@ -292,6 +435,15 @@ async fn start_game_internal(
             format!(" 详情：{}", missing_items)
         };
 
+        append_game_log(
+            &game_name,
+            "ERROR",
+            "session",
+            format!(
+                "protection check failed: enforce=true, enabled=false, missing={}",
+                missing_items
+            ),
+        );
         return Err(format!(
             "未启用应用防护，已阻止启动。请先在“下载/安装游戏”中应用安全防护。{}",
             detail
@@ -334,6 +486,38 @@ async fn start_game_internal(
     prefix::ensure_cjk_fonts(&game_name);
 
     let dxvk_status = crate::wine::graphics::detect_installed_dxvk(&pfx_dir);
+    let vkd3d_status = crate::wine::graphics::detect_installed_vkd3d(&pfx_dir);
+    append_game_log(
+        &game_name,
+        "INFO",
+        "runtime",
+        format!(
+            "prefix config: dxvk_enabled={}, dxvk_version_hint={:?}, vkd3d_enabled={}, vkd3d_version_hint={:?}, installed_runtimes={:?}",
+            prefix_config.dxvk.enabled,
+            prefix_config.dxvk.version,
+            prefix_config.vkd3d.enabled,
+            prefix_config.vkd3d.version,
+            prefix_config.installed_runtimes
+        ),
+    );
+    append_game_log(
+        &game_name,
+        "INFO",
+        "runtime",
+        format!(
+            "runtime detect: dxvk_installed={}, dxvk_detected_version={:?}, dxvk_dlls={:?}",
+            dxvk_status.installed, dxvk_status.version, dxvk_status.dlls_found
+        ),
+    );
+    append_game_log(
+        &game_name,
+        "INFO",
+        "runtime",
+        format!(
+            "runtime detect: vkd3d_installed={}, vkd3d_detected_version={:?}, vkd3d_dlls={:?}",
+            vkd3d_status.installed, vkd3d_status.version, vkd3d_status.dlls_found
+        ),
+    );
     debug!(
         "DXVK 启动前检测: installed={}, version={:?}, dlls={:?}, prefix={}",
         dxvk_status.installed,
@@ -377,6 +561,56 @@ async fn start_game_internal(
         ));
     }
     let settings = &prefix_config.proton_settings;
+    append_game_log(
+        &game_name,
+        "INFO",
+        "runtime",
+        format!(
+            "proton settings: use_umu_run={}, use_pressure_vessel={}, sandbox_enabled={}, sandbox_isolate_home={}, steam_app_id={}, media_gst={}, wayland={}, no_d3d12={}, mangohud={}, steamdeck={}, steamos={}, custom_env_count={}",
+            settings.use_umu_run,
+            settings.use_pressure_vessel,
+            settings.sandbox_enabled,
+            settings.sandbox_isolate_home,
+            settings.steam_app_id,
+            settings.proton_media_use_gst,
+            settings.proton_enable_wayland,
+            settings.proton_no_d3d12,
+            settings.mangohud,
+            settings.steam_deck_compat,
+            settings.steamos_compat,
+            settings.custom_env.len()
+        ),
+    );
+
+    let steam_runtime = detector::find_steam_linux_runtime();
+    append_game_log(
+        &game_name,
+        if steam_runtime.is_some() { "INFO" } else { "WARN" },
+        "container",
+        format!(
+            "pressure-vessel runtime path: {}",
+            steam_runtime
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "(not found)".to_string())
+        ),
+    );
+    if let Ok(home) = std::env::var("HOME") {
+        let umu_runtime_dir = PathBuf::from(&home).join(".local/share/umu/steamrt3");
+        let umu_lock = PathBuf::from(&home).join(".local/share/umu/umu.lock");
+        append_game_log(
+            &game_name,
+            "INFO",
+            "container",
+            format!(
+                "umu runtime preflight: runtime_dir_exists={}, runtime_dir={}, lock_exists={}, lock_file={}, update_check=delegated_to_umu_run",
+                umu_runtime_dir.exists(),
+                umu_runtime_dir.display(),
+                umu_lock.exists(),
+                umu_lock.display()
+            ),
+        );
+    }
 
     // Build environment variables
     let mut env: HashMap<String, String> = HashMap::new();
@@ -584,8 +818,23 @@ async fn start_game_internal(
         "启动可执行文件: 配置路径={}, 识别主程序={}, 实际执行器={}",
         configured_exe_path, launch_exe_path, runner_exe_path
     );
+    append_game_log(
+        &game_name,
+        "INFO",
+        "session",
+        format!(
+            "target executable: configured={}, launch_exe={}, runner_exe={}",
+            configured_exe_path, launch_exe_path, runner_exe_path
+        ),
+    );
     if !extra_args.is_empty() {
         info!("启动附加参数: {:?}", extra_args);
+        append_game_log(
+            &game_name,
+            "INFO",
+            "session",
+            format!("extra args: {:?}", extra_args),
+        );
     }
 
     let force_direct_proton = preset_meta.map(|p| p.force_direct_proton).unwrap_or(false);
@@ -663,6 +912,10 @@ async fn start_game_internal(
         launch_profile.runtime_flags.region = launch_region.clone();
     }
 
+    append_game_log(&game_name, "DEBUG", "host-env", "---- host environment begin ----");
+    append_host_env_snapshot(&game_name);
+    append_game_log(&game_name, "DEBUG", "host-env", "---- host environment end ----");
+
     let command_spec = resolve_launch_command(
         &game_preset,
         settings,
@@ -675,6 +928,32 @@ async fn start_game_internal(
 
     let runner_name = command_spec.runner.as_str().to_string();
     let command_program_path = command_spec.program.to_string_lossy().to_string();
+    append_game_log(
+        &game_name,
+        "DEBUG",
+        "launch-env",
+        "---- launch environment begin ----",
+    );
+    append_sorted_env_snapshot(&game_name, "launch-env", &launch_profile.env);
+    append_game_log(
+        &game_name,
+        "DEBUG",
+        "launch-env",
+        "---- launch environment end ----",
+    );
+    crate::commands::game_log::append_game_log_line(
+        &game_name,
+        "DEBUG",
+        "launcher",
+        &format!(
+            "runner={}, program={}, args={:?}, use_umu_runtime={}, effective_prefix_dir={}",
+            runner_name,
+            command_program_path,
+            command_spec.args,
+            command_spec.use_umu_runtime,
+            command_spec.effective_prefix_dir.display()
+        ),
+    );
     debug!(
         "启动命令解析: runner={}, program={}, args={:?}, use_umu_runtime={}, effective_prefix_dir={}",
         runner_name,
@@ -690,6 +969,16 @@ async fn start_game_internal(
         launch_profile.runtime_flags.use_pressure_vessel,
         launch_profile.working_dir,
         command_program_path
+    );
+    append_game_log(
+        &game_name,
+        "INFO",
+        "session",
+        format!(
+            "launch command: {} {}",
+            command_program_path,
+            command_spec.args.join(" ")
+        ),
     );
     let required_env_keys = [
         "WINEPREFIX",
@@ -711,10 +1000,22 @@ async fn start_game_internal(
         .collect();
     if missing_env_keys.is_empty() {
         debug!("启动环境变量检查通过: required={:?}", required_env_keys);
+        crate::commands::game_log::append_game_log_line(
+            &game_name,
+            "DEBUG",
+            "launcher",
+            &format!("required env ok: {:?}", required_env_keys),
+        );
     } else {
         warn!(
             "启动环境变量缺失，可能导致启动异常: missing={:?}",
             missing_env_keys
+        );
+        crate::commands::game_log::append_game_log_line(
+            &game_name,
+            "WARN",
+            "launcher",
+            &format!("missing required env: {:?}", missing_env_keys),
         );
     }
 
@@ -775,6 +1076,23 @@ async fn start_game_internal(
     let pid = child.id().unwrap_or(0);
     let launched_at = chrono::Utc::now().to_rfc3339();
     info!("Game launched with PID {}", pid);
+    crate::commands::game_log::append_game_log_line(
+        &game_name,
+        "INFO",
+        "session",
+        &format!(
+            "Started initial process {} from {} {}",
+            pid,
+            command_program_path,
+            command_spec.args.join(" ")
+        ),
+    );
+    crate::commands::game_log::append_game_log_line(
+        &game_name,
+        "INFO",
+        "session",
+        "Start monitoring process.",
+    );
 
     process_monitor::register_game_process(game_name.clone(), pid, launch_exe_path.clone()).await;
 
@@ -797,20 +1115,14 @@ async fn start_game_internal(
 
     if let Some(stdout) = child.stdout.take() {
         spawn_launch_log_pipe(
-            app.clone(),
             game_name.clone(),
-            launch_profile.runtime_flags.region.clone(),
-            runner_name.clone(),
             "stdout",
             stdout,
         );
     }
     if let Some(stderr) = child.stderr.take() {
         spawn_launch_log_pipe(
-            app.clone(),
             game_name.clone(),
-            launch_profile.runtime_flags.region.clone(),
-            runner_name.clone(),
             "stderr",
             stderr,
         );
@@ -831,6 +1143,7 @@ async fn start_game_internal(
         let _write_guard = write_guard;
         let mut exit_code: Option<i32> = None;
         let mut signal: Option<i32> = None;
+        let mut monitor_timed_out = false;
         let crashed: bool;
 
         match child.wait().await {
@@ -843,16 +1156,40 @@ async fn start_game_internal(
                     "子进程退出诊断: game={}, runner={}, exit_code={:?}, signal={:?}",
                     game_name_for_monitor, runner_for_monitor, exit_code, signal
                 );
+                crate::commands::game_log::append_game_log_line(
+                    &game_name_for_monitor,
+                    "DEBUG",
+                    "session",
+                    &format!(
+                        "child wait done: exit_code={:?}, signal={:?}",
+                        exit_code, signal
+                    ),
+                );
             }
             Err(e) => {
                 crashed = true;
                 error!("Failed to wait for child process: {}", e);
+                crate::commands::game_log::append_game_log_line(
+                    &game_name_for_monitor,
+                    "ERROR",
+                    "session",
+                    &format!("failed to wait child process: {}", e),
+                );
             }
         }
 
         info!("检查游戏 {} 的子进程是否仍在运行...", game_name_for_monitor);
         let mut check_count = 0;
         let max_checks = 30;
+        append_game_log(
+            &game_name_for_monitor,
+            "INFO",
+            "monitor",
+            format!(
+                "monitor start: exe_name={}, max_checks={}, interval=1s",
+                exe_name, max_checks
+            ),
+        );
 
         loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -860,12 +1197,25 @@ async fn start_game_internal(
 
             if processes.is_empty() {
                 info!("游戏 {} 的所有进程已退出", game_name_for_monitor);
+                append_game_log(
+                    &game_name_for_monitor,
+                    "INFO",
+                    "monitor",
+                    "health check: no related process remains",
+                );
                 break;
             }
 
             check_count += 1;
             if check_count >= max_checks {
                 info!("游戏 {} 进程检查超时，假定已退出", game_name_for_monitor);
+                monitor_timed_out = true;
+                append_game_log(
+                    &game_name_for_monitor,
+                    "WARN",
+                    "monitor",
+                    format!("health check timeout: still alive pids={:?}", processes),
+                );
                 break;
             }
 
@@ -875,10 +1225,73 @@ async fn start_game_internal(
                     game_name_for_monitor,
                     processes.len()
                 );
+                append_game_log(
+                    &game_name_for_monitor,
+                    "DEBUG",
+                    "monitor",
+                    format!(
+                        "health check #{}: alive_count={}, pids={:?}",
+                        check_count,
+                        processes.len(),
+                        processes
+                    ),
+                );
             }
         }
 
         process_monitor::unregister_game_process(&game_name_for_monitor).await;
+
+        let return_code_text = exit_code
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| "none".to_string());
+
+        crate::commands::game_log::append_game_log_line(
+            &game_name_for_monitor,
+            "INFO",
+            "session",
+            "Monitored process exited.",
+        );
+        crate::commands::game_log::append_game_log_line(
+            &game_name_for_monitor,
+            "INFO",
+            "session",
+            &format!(
+                "Initial process has exited (return code: {}, signal: {:?})",
+                return_code_text, signal
+            ),
+        );
+        crate::commands::game_log::append_game_log_line(
+            &game_name_for_monitor,
+            "INFO",
+            "session",
+            "All processes have quit",
+        );
+        crate::commands::game_log::append_game_log_line(
+            &game_name_for_monitor,
+            if crashed || monitor_timed_out {
+                "WARN"
+            } else {
+                "INFO"
+            },
+            "session",
+            &format!(
+                "Exit with return code {} (signal: {:?})",
+                return_code_text, signal
+            ),
+        );
+        append_game_log(
+            &game_name_for_monitor,
+            if crashed || monitor_timed_out {
+                "WARN"
+            } else {
+                "INFO"
+            },
+            "session",
+            format!(
+                "health summary: crashed={}, monitor_timed_out={}, exit_code={:?}, signal={:?}",
+                crashed, monitor_timed_out, exit_code, signal
+            ),
+        );
 
         app_clone
             .emit(
@@ -963,6 +1376,11 @@ fn apply_umu_env_defaults(
         }
     }
 
+    // 默认开启 umu 详细日志，便于追踪容器与运行时初始化细节。
+    if !env.contains_key("UMU_LOG") {
+        env.insert("UMU_LOG".to_string(), "1".to_string());
+    }
+
     if env
         .get("SteamAppId")
         .is_none_or(|v| v.trim().is_empty() || v.trim() == "0")
@@ -994,7 +1412,7 @@ fn apply_umu_env_defaults(
     }
 
     info!(
-        "umu-run env: PROTONPATH={}, GAMEID={}, UMU_ID={}, STORE={}, UMU_USE_STEAM={}, SteamAppId={}, STEAM_COMPAT_APP_ID={}",
+        "umu-run env: PROTONPATH={}, GAMEID={}, UMU_ID={}, STORE={}, UMU_USE_STEAM={}, SteamAppId={}, STEAM_COMPAT_APP_ID={}, UMU_LOG={}",
         env.get("PROTONPATH").cloned().unwrap_or_default(),
         env.get("GAMEID").cloned().unwrap_or_default(),
         env.get("UMU_ID").cloned().unwrap_or_default(),
@@ -1002,6 +1420,7 @@ fn apply_umu_env_defaults(
         env.get("UMU_USE_STEAM").cloned().unwrap_or_default(),
         env.get("SteamAppId").cloned().unwrap_or_default(),
         env.get("STEAM_COMPAT_APP_ID").cloned().unwrap_or_default(),
+        env.get("UMU_LOG").cloned().unwrap_or_default(),
     );
 }
 
@@ -1335,10 +1754,7 @@ fn build_pressure_vessel_command(
 }
 
 fn spawn_launch_log_pipe<R>(
-    app: tauri::AppHandle,
     game_name: String,
-    region: String,
-    runner: String,
     stream: &'static str,
     pipe: R,
 ) where
@@ -1360,20 +1776,26 @@ fn spawn_launch_log_pipe<R>(
                     }
                     // 使用 lossy 解码，避免非 UTF-8 导致停止读取管道。
                     let line = String::from_utf8_lossy(&buf).to_string();
-                    app.emit(
-                        "game-launch-log",
-                        serde_json::json!({
-                            "game": game_name,
-                            "region": region,
-                            "runner": runner,
-                            "stream": stream,
-                            "line": line
-                        }),
-                    )
-                    .ok();
+                    let level = detect_external_log_level(stream, &line);
+                    let source = detect_external_log_source(stream, &line);
+                    append_game_log(&game_name, level, &source, &line);
+                    append_external_runtime_hints(&game_name, &line);
+                    // 同步写入应用日志输出与会话缓冲，便于排查启动失败
+                    match level {
+                        "ERROR" => error!("[{}] [{}] {}", game_name, source, line),
+                        "WARN" => warn!("[{}] [{}] {}", game_name, source, line),
+                        "INFO" => info!("[{}] [{}] {}", game_name, source, line),
+                        _ => debug!("[{}] [{}] {}", game_name, source, line),
+                    }
                 }
                 Err(err) => {
                     warn!("读取 {} 输出失败: {}", stream, err);
+                    crate::commands::game_log::append_game_log_line(
+                        &game_name,
+                        "WARN",
+                        "session",
+                        &format!("读取 {} 输出失败: {}", stream, err),
+                    );
                     break;
                 }
             }

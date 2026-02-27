@@ -1069,3 +1069,19 @@ export async function readLogFile(maxLines?: number): Promise<string> {
 export async function openLogWindow(): Promise<void> {
   return invoke('open_log_window');
 }
+
+export interface GameLogSnapshot {
+  active: boolean;
+  gameName: string;
+  startedAt: string;
+  lineCount: number;
+  content: string;
+}
+
+export async function openGameLogWindow(gameName: string): Promise<void> {
+  return invoke('open_game_log_window', { gameName });
+}
+
+export async function readGameLogSnapshot(maxLines?: number): Promise<GameLogSnapshot> {
+  return invoke<GameLogSnapshot>('read_game_log_snapshot', { maxLines: maxLines ?? null });
+}

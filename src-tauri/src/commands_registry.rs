@@ -8,6 +8,8 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         commands::common::get_resource_path,
         commands::common::ensure_directory,
         commands::common::open_in_explorer,
+        #[cfg(feature = "devtools")]
+        commands::common::toggle_devtools,
         // Settings
         commands::settings::load_settings,
         commands::settings::save_settings,
@@ -46,6 +48,9 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         // Game launcher (pressure-vessel + Wine/Proton)
         commands::game_launcher::start_game,
         commands::game_launcher::launch_game,
+        // Game log viewer
+        commands::game_log::open_game_log_window,
+        commands::game_log::read_game_log_snapshot,
         // Wine manager
         commands::wine_manager::scan_wine_versions,
         commands::wine_manager::get_game_wine_config,

@@ -15,6 +15,7 @@ import {
   scanLocalDxvk,
   detectDxvkStatus,
   resolveDownloadedGameExecutable,
+  openGameLogWindow,
 } from '../api'
 import GameSettingsModal from '../components/GameSettingsModal.vue'
 import GameDownloadModal from '../components/GameDownloadModal.vue'
@@ -391,17 +392,29 @@ const ensureRuntimeReady = async (gameName: string, gameConfig: any, wineVersion
 
 // 检查当前游戏是否已配置可执行文件
 const gameHasExe = ref(false);
+const gameExeCache = new Map<string, boolean>();
+let checkGameExeToken = 0;
 
-const checkGameExe = async () => {
+const checkGameExe = async (force = false) => {
   const gameName = appSettings.currentConfigName;
   if (!gameName || gameName === 'Default') {
     gameHasExe.value = false;
     return;
   }
+  if (!force && gameExeCache.has(gameName)) {
+    gameHasExe.value = !!gameExeCache.get(gameName);
+    return;
+  }
+  const token = ++checkGameExeToken;
   try {
     const data = await loadGameConfig(gameName);
-    gameHasExe.value = !!(data.other?.gamePath);
+    if (token !== checkGameExeToken) return;
+    const hasExe = !!(data.other?.gamePath);
+    gameExeCache.set(gameName, hasExe);
+    gameHasExe.value = hasExe;
   } catch {
+    if (token !== checkGameExeToken) return;
+    gameExeCache.set(gameName, false);
     gameHasExe.value = false;
   }
 };
@@ -588,8 +601,21 @@ const launchGame = async () => {
   }
 }
 
+const openCurrentGameLog = async () => {
+  const gameName = appSettings.currentConfigName;
+  if (!gameName || gameName === 'Default') {
+    await showMessage('请先选择一个游戏配置', { title: '提示', kind: 'info' });
+    return;
+  }
+  try {
+    await openGameLogWindow(gameName);
+  } catch (e: any) {
+    await showMessage(`打开游戏日志窗口失败: ${e}`, { title: '错误', kind: 'error' });
+  }
+}
+
 watch(() => appSettings.currentConfigName, () => {
-  checkGameExe();
+  checkGameExe(false);
 });
 
 let unlistenLifecycle: (() => void) | null = null;
@@ -607,13 +633,11 @@ onMounted(async () => {
       isGameRunning.value = true;
       runningGameName.value = data.game || '';
       isLaunching.value = false;
-      console.log(`游戏 ${data.game} 已启动 (PID: ${data.pid})`);
     } else if (data.event === 'exited') {
       // 游戏退出，重置所有状态
       isGameRunning.value = false;
       runningGameName.value = '';
       isLaunching.value = false;
-      console.log(`游戏 ${data.game} 已退出`);
     }
   });
   unlistenComponentDl = await listenEvent('component-download-progress', (event: any) => {
@@ -723,6 +747,12 @@ onUnmounted(() => {
                     下载/防护管理
                   </span>
                 </el-dropdown-item>
+                <el-dropdown-item divided @click="openCurrentGameLog" :disabled="!hasCurrentGame">
+                  <span style="display: flex; align-items: center; gap: 8px;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20v-6"></path><path d="M9 20h6"></path><path d="M5 8a7 7 0 1 1 14 0v6a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z"></path></svg>
+                    打开游戏日志窗口
+                  </span>
+                </el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -775,12 +805,18 @@ onUnmounted(() => {
     </div>
 
     <!-- Modals -->
-    <GameSettingsModal ref="settingsModalRef" v-model="showSettings" :game-name="appSettings.currentConfigName" />
+    <GameSettingsModal
+      v-if="showSettings"
+      ref="settingsModalRef"
+      v-model="showSettings"
+      :game-name="appSettings.currentConfigName"
+    />
     <GameDownloadModal
+      v-if="showDownload"
       v-model="showDownload"
       :game-name="appSettings.currentConfigName"
       :display-name="currentDisplayName"
-      @game-configured="checkGameExe"
+      @game-configured="checkGameExe(true)"
     />
 
   </div>
@@ -817,14 +853,13 @@ onUnmounted(() => {
   height: 100%;
   background-size: cover;
   background-position: center;
-  transition: all 0.5s ease-in-out;
+  transition: opacity 0.35s ease-in-out;
   opacity: 0; /* Hidden by default if no image to let global BG show */
 }
 
 .hero-image.has-image {
-  opacity: 1;
-  filter: blur(20px) brightness(0.8) contrast(1.1);
-  transform: scale(1.05);
+  opacity: 0.92;
+  filter: none;
 }
 
 .tech-grid-overlay {
@@ -866,15 +901,15 @@ onUnmounted(() => {
   align-items: center;
   gap: 24px;
   background: rgba(255, 255, 255, 0.08); /* Light translucent base */
-  backdrop-filter: blur(20px) saturate(150%);
-  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border: 1px solid rgba(0, 240, 255, 0.4); /* Bright cyan border */
   border-radius: 12px; /* Sharper corners for tech feel */
   padding: 8px 24px;
   box-shadow: 0 10px 40px rgba(0, 240, 255, 0.1), 
               inset 0 0 20px rgba(255, 255, 255, 0.05);
   position: relative;
-  animation: slideUpFade 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: none;
 }
 
 /* Tech Brackets (HUD Corners) */
@@ -898,7 +933,7 @@ onUnmounted(() => {
 .dashboard-panel::after {
   bottom: -2px; right: -2px;
   border-left: none; border-top: none;
-  box-shadow: 2px 2px 10px rgba(0, 240, 255, 0.5);
+  box-shadow: none;
 }
 
 @keyframes slideUpFade {
@@ -979,8 +1014,8 @@ onUnmounted(() => {
   z-index: 4;
   pointer-events: none;
   background: linear-gradient(to bottom, transparent 40%, rgba(255, 255, 255, 0.4) 50%, transparent 60%);
-  background-size: 100% 200%;
-  animation: techScan 2s linear infinite;
+  background-size: 100% 100%;
+  animation: none;
 }
 
 @keyframes techScan {
@@ -1062,12 +1097,13 @@ onUnmounted(() => {
 
 .btn-background-fx {
   position: absolute;
-  top: 0; left: -100%;
+  top: 0; left: -35%;
   width: 50%; height: 100%;
   background: linear-gradient(90deg, transparent, rgba(255,255,255,0.8), transparent);
   transform: skewX(-20deg);
+  opacity: 0.35;
   transition: none;
-  animation: pulseSweep 3s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  animation: none;
 }
 
 @keyframes pulseSweep {
@@ -1149,7 +1185,7 @@ onUnmounted(() => {
   background: #4CAF50;
   border-radius: 50%;
   box-shadow: 0 0 10px #4CAF50;
-  animation: pulse-green 1.5s infinite;
+  animation: none;
 }
 
 @keyframes pulse-green {
@@ -1194,8 +1230,8 @@ onUnmounted(() => {
 
 .glass-panel {
   background: rgba(20, 20, 22, 0.6);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
@@ -1300,7 +1336,7 @@ onUnmounted(() => {
 /* Global Settings Dropdown Overrides */
 .settings-dropdown.el-popper {
   background: rgba(20, 20, 22, 0.85) !important;
-  backdrop-filter: blur(20px) !important;
+  backdrop-filter: blur(8px) !important;
   border: 1px solid rgba(255, 255, 255, 0.1) !important;
   border-radius: 16px !important;
   box-shadow: 0 10px 40px rgba(0,0,0,0.5) !important;

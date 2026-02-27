@@ -195,6 +195,10 @@ pub fn get_recent_logs(lines: Option<usize>) -> Result<Vec<String>, String> {
     let log_dir = crate::utils::file_manager::get_logs_dir();
     let max_lines = lines.unwrap_or(100);
 
+    if !log_dir.exists() {
+        return Ok(Vec::new());
+    }
+
     // Find the most recent log file
     let mut log_files: Vec<_> = std::fs::read_dir(&log_dir)
         .map_err(|e| format!("Failed to read log dir: {}", e))?

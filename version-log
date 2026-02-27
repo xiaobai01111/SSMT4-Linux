@@ -1,13 +1,83 @@
 2026-02-27 0.0.7
 
 新增
-- 恢复并标准化 Linux 打包脚本 `scripts/build-install-packages.sh`，统一输出 `.deb` / `.rpm` / `.pkg.tar.zst` 到 `Installation package/`。
-- 恢复版本同步脚本 `scripts/sync-version.sh`，并纳入仓库跟踪。
+- 新增独立路由与窗口：`/game-log-viewer`（游戏会话日志查看器）。
+- 新增游戏级日志会话管理（`start/ensure/append/clear/read snapshot`）。
+- 新增游戏日志窗口关闭即销毁会话，重新打开重新记录（与 Lutris 窗口会话模式一致）。
+- 新增运行日志内存环形缓冲区（runtime in-memory log session）。
+- 新增日志查看器内存地址标识：`in-memory://runtime-log-session`。
+- 新增启动阶段依赖探测日志（`umu-run`、`bwrap`、`wine`、`vulkaninfo` 等）。
+- 新增 Data-parameters 托管仓库自愈流程（校验、修复工作区、损坏重命名、重克隆）。
+- 新增游戏模板体系命令：模板目录查询、模板扫描、模板导入。
+- 新增 AUR 发布脚本套件（初始化、同步、元数据更新、发布、依赖安装）。
+- 新增统一版本同步脚本 `scripts/sync-version.sh`。
 
-修复
-- 修复生产包仍使用 Dev 标识的问题：`productName` 调整为 `SSMT4-Linux`，`identifier` 调整为 `io.github.xiaobai01111.ssmt4linux`。
-- 修复历史默认背景路径残留导致的 `Background.png` 资产报错：前后端加载设置时自动迁移旧路径。
-- 修复资源路径兼容性：补充 deb/rpm/pacman 及历史目录结构回退查找，降低生产环境资源丢失概率。
+日志与可观测性增强
+- 运行日志改为“仅控制台 + 内存会话”，不再落地持久化文件。
+- 启动时自动清理历史 `ssmt4.log*` 遗留文件。
+- 游戏启动链路新增完整日志上下文：启动命令、目标 EXE、运行器、工作目录、前缀目录、关键环境变量。
+- 新增主机环境变量快照日志与启动环境变量快照日志（排序输出）。
+- 新增 UMU/Proton/Wine 运行输出按行归档并识别来源（stdout/stderr、ProtonFixes、wine 等）。
+- 新增 ProtonFixes 关键事件提示（全局规则命中/未命中、预检查结果）。
+- 新增 Wine 致命错误识别提示（`ntoskrnl.exe.PsGetProcessExitStatus` 等）。
+- 新增游戏进程生命周期日志与事件（started/exited）联动。
+- 日志查看器前端加入变更检测与自动滚动开关，避免无变化重复重排。
 
-工程
-- 调整 `.gitignore`，避免脚本目录被整段忽略导致发布包缺失关键脚本。
+下载与启动链路增强
+- 下载状态统一进入下载中心状态机（`idle/downloading/verifying/paused/done/error`）。
+- 下载任务增强暂停/继续/取消协同处理，支持恢复任务重入。
+- 下载完成后自动触发校验，并根据结果提示异常文件清单。
+- 组件下载进度（运行时组件）新增主页迷你进度条显示。
+- 启动前新增运行环境就绪检查链路（Proton、Wine、DXVK 可用性引导）。
+- 启动前新增可执行文件路径偏差检查与引导提示。
+- 鸣潮可执行文件自动识别优先改为 UE Shipping 路径，降低误选启动器壳程序概率。
+
+界面与交互优化
+- 下载安装弹窗重构：服务器选择、安装目录、状态卡片、主操作区交互优化。
+- 主页快速设置流程增强：可一键跳转到全局 Proton/DXVK 管理或游戏运行环境页。
+- 设置页加入导览高亮锚点（菜单、基础、显示、版本、资源、Proton、DXVK、VKD3D）。
+- 游戏设置弹窗中运行环境配置流程简化与分区梳理。
+- 路由守卫放行日志窗口（日志窗口不受初始化向导拦截）。
+
+兼容性与稳定性修复
+- 修复生产包仍带 Dev 身份：`productName` 改为 `SSMT4-Linux`，`identifier` 改为 `io.github.xiaobai01111.ssmt4linux`。
+- 修复历史默认背景路径残留（`SSMT4-Linux-Dev/Background.png`）导致资产报错，启动时自动迁移。
+- 修复资源路径在不同包布局下命中率低问题，补充多级回退路径（deb/rpm/pacman/历史目录）。
+- 修复资源路径 `../`/非规范路径导致 asset 协议拒绝，资源路径返回前统一 `canonicalize`。
+- 修复静态 asset scope 难覆盖真实资源路径问题，改为动态 `allow_asset_file` 放行。
+- 修复 AppImage FUSE 挂载路径下资源访问被拒绝，asset scope 补充 `/tmp/**`。
+- 修复 NVIDIA + Wayland 下 WebKitGTK DMABUF 导致黑屏/闪退，默认注入 `WEBKIT_DISABLE_DMABUF_RENDERER=1`。
+- 修复生产环境可能引用开发机路径问题（开发回退路径限定仅 `debug_assertions`）。
+- 修复 `get_recent_logs` 在日志目录不存在时异常，目录缺失返回空列表。
+- 修复保存设置时不必要的数据目录重应用，`data_dir` 不变时跳过符号链接变更。
+- 修复设置页多面板同时挂载造成的布局压力，改为按需挂载。
+- 修复 i18n 缺失 key 重复告警导致控制台噪音，改为开发环境去重输出。
+- 修复构建命令参数透传错误：`--no-default-features` 改为通过 `tauri build -- ... -- --no-default-features` 传给 Cargo。
+
+性能优化
+- 移除全局页面切换重型动画包装（`router-view` 过渡、背景 transition-group），降低切页阻塞。
+- 全局模糊效果改为按路由启用（仅主页/网站页），并限制最大 blur 强度。
+- 设置页由 `v-show` 改为 `v-if` 按需渲染，减少初始 DOM/布局/绘制负担。
+- 主页游戏 EXE 检查增加缓存与并发保护，减少重复 IPC。
+- 游戏设置/下载弹窗改为按需挂载（lazy mount），降低首次切页成本。
+- 自动保存策略细化：按关键字段分级防抖，减少高频写入。
+- 运行日志与游戏日志视图改为“变化检测后再刷新 DOM”，降低长文本重排频率。
+
+打包与发布体系
+- 恢复并标准化 `scripts/build-install-packages.sh`，统一产出 `.deb` / `.rpm` / `.pkg.tar.zst` / `.AppImage`。
+- 打包脚本新增 AppImage 自动重试、缓存策略、AppDir 手动封装兜底。
+- 打包脚本自动修补 `.desktop` 的 `Exec`，注入 NVIDIA Wayland 兼容环境变量。
+- 新增 Linux 打包缓存目录规范（`TAURI_CACHE_HOME`）与离线可复用策略。
+- 统一产物收集到 `Installation package/` 并清理中间产物逻辑。
+- Release 配置增强：`strip = true`、`lto = true`，减小体积并优化发布构建。
+
+行为变更与移除
+- 移除原神（`GenshinImpact`）相关支持链路与入口。
+- 移除旧版手柄模块命令与前端手柄监控/修复面板（0.7 不再暴露该能力链路）。
+- VKD3D 版本模型从“多变体参数”简化为统一 VKD3D-Proton 版本链路。
+- 若资源仓库可用，游戏支持列表优先来自 Data-parameters，用户目录作为覆盖与回退层。
+
+工程维护
+- `.gitignore` 调整，避免发布关键脚本被误忽略。
+- 清理过时脚本与产物（旧兼容脚本、过时 pyc、旧 tracing 文档等）。
+- 统一日志实现从旧宏迁移到 `tracing` 结构化输出，便于后续扩展与筛选。

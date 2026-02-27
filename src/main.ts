@@ -1,4 +1,5 @@
 import { createApp, type Plugin } from "vue";
+import { invoke } from "@tauri-apps/api/core";
 import App from "./App.vue";
 import router from "./router";
 import * as ElementPlusIconsVue from '@element-plus/icons-vue';
@@ -7,6 +8,14 @@ import 'element-plus/theme-chalk/dark/css-vars.css';
 import { i18n } from "./i18n";
 import { watch } from "vue";
 import { appSettings } from "./store";
+
+// F12 开发者工具快捷键（仅 devtools feature 编译时后端可用）
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'F12') {
+    e.preventDefault();
+    invoke('toggle_devtools').catch(() => {});
+  }
+});
 
 const app = createApp(App);
 
@@ -26,8 +35,6 @@ i18n.global.locale.value = appSettings.locale || 'zhs';
 watch(
   () => appSettings.locale,  // 监听 appSettings.locale
   (newLocale) => {
-    console.log('[i18n] locale changed to:', newLocale);
-    console.log('[国际化] 本地语言切换为了:', newLocale);
     if (newLocale && i18n.global.locale.value !== newLocale) {
       i18n.global.locale.value = newLocale;
     }

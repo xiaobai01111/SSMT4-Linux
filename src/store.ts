@@ -127,12 +127,10 @@ export const settingsLoaded = new Promise<void>((resolve) => {
 async function loadSettings() {
   try {
     const loaded = await apiLoadSettings()
-    console.log('Loaded settings from backend:', loaded);
     Object.assign(appSettings, loaded)
-    if (isLegacyDefaultBackground(appSettings.bgImage || '')) {
-      appSettings.bgImage = '';
-    }
     appSettings.currentConfigName = canonicalGameKey(appSettings.currentConfigName)
+    lastSavedSettingsJson = JSON.stringify({ ...appSettings })
+    lastSavedSettingsSnapshot = { ...appSettings }
     setTimeout(() => {
       isInitialized = true;
     }, 100);
@@ -148,25 +146,14 @@ async function loadSettings() {
 // Default background path
 let defaultBgPath = '';
 
-const isLegacyDefaultBackground = (value: string): boolean => {
-  const normalized = (value || '').toLowerCase();
-  if (!normalized) return false;
-  return (
-    normalized.includes('/ssmt4-linux-dev/background.png') ||
-    normalized.includes('%2fssmt4-linux-dev%2fbackground.png')
-  );
-};
-
 async function initDefaultBackground() {
     try {
         const path = await getResourcePath('Background.png');
         defaultBgPath = convertFileSrc(path);
         if (appSettings.bgType === BGType.Image) {
             const currentBg = appSettings.bgImage || '';
-            const isLegacyBrokenDefault = isLegacyDefaultBackground(currentBg);
-
-            // 兼容旧版本残留的无效默认背景路径，自动迁移到当前有效路径。
-            if (!currentBg || isLegacyBrokenDefault) {
+            // 默认背景迁移由后端 settings 归一化负责，前端仅在为空时补默认值。
+            if (!currentBg) {
                 appSettings.bgImage = defaultBgPath;
             }
         }
@@ -178,7 +165,6 @@ async function initDefaultBackground() {
 export async function loadGames() {
   try {
     const games = await apiScanGames();
-    console.log('Scanned games:', games);
 
     // 简化转换逻辑，直接使用后端返回的字段
     const processed = games.map((g: any) => {
@@ -237,18 +223,73 @@ import { initDlListeners } from './downloadStore';
 initDlListeners();
 
 // Auto-save behavior
-watch(appSettings, async (newVal) => {
-  if (!isInitialized) {
-    console.log('Skipping save because store is not yet initialized');
+let saveSettingsTimer: ReturnType<typeof setTimeout> | null = null;
+let isSavingSettings = false;
+let hasPendingSave = false;
+let lastSavedSettingsJson = '';
+let lastSavedSettingsSnapshot: AppSettings | null = null;
+const NON_CRITICAL_SAVE_KEYS = new Set<keyof AppSettings>(['currentConfigName', 'bgImage', 'bgType']);
+
+const saveSettingsNow = async () => {
+  if (!isInitialized) return;
+
+  const payload = { ...appSettings };
+  const currentJson = JSON.stringify(payload);
+  if (!hasPendingSave && currentJson === lastSavedSettingsJson) {
     return;
   }
-  console.log('Saving settings:', newVal);
-  try {
-    await apiSaveSettings(newVal)
-  } catch (e) {
-    console.error('Failed to save settings:', e)
+
+  if (isSavingSettings) {
+    hasPendingSave = true;
+    return;
   }
-}, { deep: true })
+
+  isSavingSettings = true;
+  hasPendingSave = false;
+  try {
+    await apiSaveSettings(payload);
+    lastSavedSettingsJson = currentJson;
+    lastSavedSettingsSnapshot = payload;
+  } catch (e) {
+    console.error('Failed to save settings:', e);
+  } finally {
+    isSavingSettings = false;
+    if (hasPendingSave) {
+      hasPendingSave = false;
+      void scheduleSettingsSave();
+    }
+  }
+};
+
+const scheduleSettingsSave = async () => {
+  if (!isInitialized) return;
+  const current = { ...appSettings };
+  const baseline = lastSavedSettingsSnapshot;
+  const changedKeys: (keyof AppSettings)[] = baseline
+    ? (Object.keys(current) as (keyof AppSettings)[]).filter((key) => current[key] !== baseline[key])
+    : (Object.keys(current) as (keyof AppSettings)[]);
+
+  if (changedKeys.length === 0) return;
+  const onlyNonCriticalChanges = changedKeys.every((key) => NON_CRITICAL_SAVE_KEYS.has(key));
+  const debounceMs = onlyNonCriticalChanges ? 2400 : 900;
+
+  if (saveSettingsTimer) {
+    clearTimeout(saveSettingsTimer);
+  }
+  saveSettingsTimer = setTimeout(() => {
+    saveSettingsTimer = null;
+    void saveSettingsNow();
+  }, debounceMs);
+};
+
+watch(
+  appSettings,
+  () => {
+    if (!isInitialized) return;
+    void scheduleSettingsSave();
+  },
+  { deep: true },
+)
 
 watch(
   () => [

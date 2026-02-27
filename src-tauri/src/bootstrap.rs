@@ -7,7 +7,10 @@ use tauri::Manager;
 /// 关键目录创建失败会直接终止启动（返回 Err），避免进入半初始化状态。
 pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     if let Ok(resource_dir) = app.path().resource_dir() {
+        tracing::info!("资源目录: {}", resource_dir.display());
         utils::data_parameters::set_resource_dir(resource_dir);
+    } else {
+        tracing::warn!("无法获取 resource_dir，后续将使用回退路径解析资源");
     }
 
     // 1. 从 SQLite 读取 dataDir（优先），回退到 settings.json 兼容旧数据
@@ -66,6 +69,17 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         cache_dir.display(),
         prefixes_dir.display()
     );
+    log_dependency_status();
 
     Ok(())
+}
+
+fn log_dependency_status() {
+    // 启动阶段输出关键外部依赖探测结果，便于日志查看器快速定位环境问题。
+    for dep in ["umu-run", "bwrap", "wine", "wine64", "vulkaninfo"] {
+        match which::which(dep) {
+            Ok(path) => tracing::info!("依赖可用: {} -> {}", dep, path.display()),
+            Err(_) => tracing::warn!("依赖缺失: {}（PATH 未找到）", dep),
+        }
+    }
 }

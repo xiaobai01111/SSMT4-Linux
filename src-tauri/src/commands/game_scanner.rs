@@ -276,16 +276,27 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
         // Find background video (mp4, webm)
         let bg_video_path = find_background_video(&game_path);
 
+        // 动态放行资源路径，确保前端 convertFileSrc 可访问
+        let icon_str = if is_readable_file(&icon_path) {
+            crate::commands::common::allow_asset_file(&app, &icon_path)
+        } else {
+            String::new()
+        };
+        let bg_str = if !bg_path.is_empty() {
+            crate::commands::common::allow_asset_file(&app, Path::new(&bg_path))
+        } else {
+            String::new()
+        };
+        let bg_video_str = bg_video_path.as_deref().map(|p| {
+            crate::commands::common::allow_asset_file(&app, Path::new(p))
+        });
+
         games.push(GameInfo {
             name: game_id.clone(),
             display_name,
-            icon_path: if is_readable_file(&icon_path) {
-                icon_path.to_string_lossy().to_string()
-            } else {
-                String::new()
-            },
-            bg_path,
-            bg_video_path,
+            icon_path: icon_str,
+            bg_path: bg_str,
+            bg_video_path: bg_video_str,
             bg_type,
             show_sidebar: !is_hidden,
         });
