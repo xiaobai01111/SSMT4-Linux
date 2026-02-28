@@ -572,7 +572,6 @@ const spawnLoveExplosion = (e: MouseEvent) => {
 }
 .search-input:focus {
   border-color: #00f0ff;
-  box-shadow: 0 0 10px rgba(0, 240, 255, 0.3);
 }
 
 .tech-btn {
@@ -591,17 +590,14 @@ const spawnLoveExplosion = (e: MouseEvent) => {
 .tech-btn:hover {
   background: #00f0ff;
   color: #000;
-  box-shadow: 0 0 15px rgba(0, 240, 255, 0.5);
 }
 
 /* Context Menu */
 .context-menu {
   position: fixed;
   z-index: 10000;
-  background: rgba(15, 15, 20, 0.95);
+  background: rgba(15, 15, 20, 0.98);
   border: 1px solid rgba(0, 240, 255, 0.5); /* bright border */
-  backdrop-filter: blur(8px);
-  box-shadow: 0 4px 20px rgba(0, 240, 255, 0.2);
   border-radius: 4px; /* sharp */
   padding: 4px;
   min-width: 140px;
@@ -648,7 +644,6 @@ const spawnLoveExplosion = (e: MouseEvent) => {
   max-height: 70vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 0 30px rgba(0, 240, 255, 0.2), inset 0 0 20px rgba(255,255,255,0.02);
 }
 .import-header {
   display: flex;
@@ -764,7 +759,7 @@ const spawnLoveExplosion = (e: MouseEvent) => {
   letter-spacing: 1px;
   transition: all 0.2s;
 }
-.import-open-folder:hover { background: #00f0ff; color: #000; box-shadow: 0 0 10px rgba(0,240,255,0.5); }
+.import-open-folder:hover { background: #00f0ff; color: #000; }
 
 /* Meteor Star CSS */
 .meteor-layer {
@@ -856,6 +851,7 @@ const spawnLoveExplosion = (e: MouseEvent) => {
     padding: 24px 60px 60px 60px;
     margin: 0 auto;
     max-width: 1400px;
+    contain: layout style;
 }
 
 /* --- Bright Tech Sci-Fi Game Cards --- */
@@ -872,25 +868,25 @@ const spawnLoveExplosion = (e: MouseEvent) => {
     /* 
       Staggered Entrance Animation 
     */
-    animation: cardEntranceFade 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation: cardEntranceFade 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
-.game-card:nth-child(1)  { animation-delay: 0.05s; }
-.game-card:nth-child(2)  { animation-delay: 0.10s; }
-.game-card:nth-child(3)  { animation-delay: 0.15s; }
-.game-card:nth-child(4)  { animation-delay: 0.20s; }
-.game-card:nth-child(5)  { animation-delay: 0.25s; }
-.game-card:nth-child(6)  { animation-delay: 0.30s; }
-.game-card:nth-child(7)  { animation-delay: 0.35s; }
-.game-card:nth-child(8)  { animation-delay: 0.40s; }
-.game-card:nth-child(9)  { animation-delay: 0.45s; }
-.game-card:nth-child(10) { animation-delay: 0.50s; }
-.game-card:nth-child(11) { animation-delay: 0.55s; }
-.game-card:nth-child(12) { animation-delay: 0.60s; }
-.game-card:nth-child(n+13) { animation-delay: 0.65s; }
+.game-card:nth-child(1)  { animation-delay: 0.02s; }
+.game-card:nth-child(2)  { animation-delay: 0.04s; }
+.game-card:nth-child(3)  { animation-delay: 0.06s; }
+.game-card:nth-child(4)  { animation-delay: 0.08s; }
+.game-card:nth-child(5)  { animation-delay: 0.10s; }
+.game-card:nth-child(6)  { animation-delay: 0.12s; }
+.game-card:nth-child(7)  { animation-delay: 0.14s; }
+.game-card:nth-child(8)  { animation-delay: 0.16s; }
+.game-card:nth-child(9)  { animation-delay: 0.18s; }
+.game-card:nth-child(10) { animation-delay: 0.20s; }
+.game-card:nth-child(11) { animation-delay: 0.22s; }
+.game-card:nth-child(12) { animation-delay: 0.24s; }
+.game-card:nth-child(n+13) { animation-delay: 0.26s; }
 
 @keyframes cardEntranceFade {
-    0% { opacity: 0; transform: translateY(20px); }
-    100% { opacity: 1; transform: translateY(0); }
+    0% { opacity: 0; }
+    100% { opacity: 1; }
 }
 
 .game-icon-wrapper {
@@ -899,16 +895,14 @@ const spawnLoveExplosion = (e: MouseEvent) => {
     /* 1:1 Aspect ratio based on width */
     aspect-ratio: 1 / 1;
     
-    background: rgba(255, 255, 255, 0.05);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
+    background: rgba(20, 22, 28, 0.6);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 12px; /* Sharper Tech Corners */
     padding: 6px;
+    will-change: transform;
+    contain: layout style;
 
     /* Base depth */
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-    
     transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
     display: flex;
     flex-direction: column;
@@ -918,15 +912,11 @@ const spawnLoveExplosion = (e: MouseEvent) => {
 .game-card:hover .game-icon-wrapper {
     transform: translateY(-6px) scale(1.05); /* Snappy scale */
     border-color: #00f0ff; /* Bright cyan hover */
-    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4), 
-                0 0 15px rgba(0, 240, 255, 0.6);
 }
 
 .game-card.active .game-icon-wrapper {
     transform: translateY(-4px) scale(1.08); /* Snappy scale */
     border-color: #fff; /* Crisp white active state */
-    box-shadow: 0 8px 15px rgba(0, 0, 0, 0.5), 
-                0 0 20px rgba(255, 255, 255, 0.8);
     background: rgba(255, 255, 255, 0.1);
 }
 
@@ -979,18 +969,15 @@ const spawnLoveExplosion = (e: MouseEvent) => {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    transition: color 0.3s ease, text-shadow 0.3s ease;
 }
 
 /* Hover effect on Label: Reveal text completely if previously hidden? 
    Actually, just slightly highlighting the text works better. */
 .game-card:hover .game-label {
     color: #fff;
-    text-shadow: 0 0 8px rgba(255, 255, 255, 0.6);
 }
 .game-card.active .game-label {
     color: #00f0ff; /* Tech cyan instead of yellow */
-    text-shadow: 0 0 8px rgba(0, 240, 255, 0.6);
 }
 
 /* Active breathing light removed to favor the sleek border and shadow */

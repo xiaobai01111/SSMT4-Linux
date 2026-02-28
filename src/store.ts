@@ -131,9 +131,6 @@ async function loadSettings() {
     appSettings.currentConfigName = canonicalGameKey(appSettings.currentConfigName)
     lastSavedSettingsJson = JSON.stringify({ ...appSettings })
     lastSavedSettingsSnapshot = { ...appSettings }
-    setTimeout(() => {
-      isInitialized = true;
-    }, 100);
   } catch (e) {
     console.error('Failed to load settings:', e)
     await showMessage(`加载设置失败: ${e}`, { title: '错误', kind: 'error' });
@@ -164,40 +161,33 @@ async function initDefaultBackground() {
 
 export async function loadGames() {
   try {
-    const games = await apiScanGames();
+    // scanGames 和 initDefaultBackground 并行执行（均有缓存）
+    const [games] = await Promise.all([
+      apiScanGames(),
+      initDefaultBackground(),
+    ]);
 
-    // 简化转换逻辑，直接使用后端返回的字段
-    const processed = games.map((g: any) => {
-      const timestamp = Date.now();
-
-      return {
-        name: g.name,
-        displayName: g.displayName || g.name,
-        iconPath: g.iconPath ? convertFileSrc(g.iconPath) + `?t=${timestamp}` : '',
-        bgPath: g.bgPath ? convertFileSrc(g.bgPath) + `?t=${timestamp}` : '',
-        bgVideoPath: undefined,  // 视频不再通过 asset 协议，由 switchToGame 按需加载 Blob URL
-        bgVideoRawPath: g.bgVideoPath || undefined,
-        bgType: g.bgType || BGType.Image,
-        showSidebar: g.showSidebar,
-      } as GameInfo;
-    });
+    const timestamp = Date.now();
+    const processed = games.map((g: any) => ({
+      name: g.name,
+      displayName: g.displayName || g.name,
+      iconPath: g.iconPath ? convertFileSrc(g.iconPath) + `?t=${timestamp}` : '',
+      bgPath: g.bgPath ? convertFileSrc(g.bgPath) + `?t=${timestamp}` : '',
+      bgVideoPath: undefined,
+      bgVideoRawPath: g.bgVideoPath || undefined,
+      bgType: g.bgType || BGType.Image,
+      showSidebar: g.showSidebar,
+    } as GameInfo));
 
     gamesList.splice(0, gamesList.length, ...processed);
-    
-    // Ensure default background is loaded
-    await initDefaultBackground();
 
-    // Refresh current game background if it exists
     if (appSettings.currentConfigName) {
       const current = gamesList.find(g => g.name === appSettings.currentConfigName);
       if (current) {
         switchToGame(current);
       }
-    } else {
-        // If no game selected, ensure default background is shown
-         if (!appSettings.bgImage && appSettings.bgType === BGType.Image) {
-            appSettings.bgImage = defaultBgPath;
-        }
+    } else if (!appSettings.bgImage && appSettings.bgType === BGType.Image) {
+      appSettings.bgImage = defaultBgPath;
     }
   } catch (e) {
     console.error('Failed to scan games:', e);
@@ -212,8 +202,40 @@ export function switchToGame(game: GameInfo) {
 
 // Initial load
 async function initStore() {
-  await loadSettings();
-  await loadGames();
+  // 并行启动：settings 加载 + games 扫描 + 默认背景，互不依赖
+  const [, games] = await Promise.all([
+    loadSettings(),
+    apiScanGames().catch(e => { console.error('Failed to scan games:', e); return [] as any[]; }),
+    initDefaultBackground(),
+  ]);
+  // settings 已加载完毕，用扫描结果填充 gamesList
+  if (games && games.length > 0) {
+    const timestamp = Date.now();
+    const processed = games.map((g: any) => ({
+      name: g.name,
+      displayName: g.displayName || g.name,
+      iconPath: g.iconPath ? convertFileSrc(g.iconPath) + `?t=${timestamp}` : '',
+      bgPath: g.bgPath ? convertFileSrc(g.bgPath) + `?t=${timestamp}` : '',
+      bgVideoPath: undefined,
+      bgVideoRawPath: g.bgVideoPath || undefined,
+      bgType: g.bgType || BGType.Image,
+      showSidebar: g.showSidebar,
+    } as GameInfo));
+    gamesList.splice(0, gamesList.length, ...processed);
+
+    if (appSettings.currentConfigName) {
+      const current = gamesList.find(g => g.name === appSettings.currentConfigName);
+      if (current) {
+        switchToGame(current);
+      }
+    } else if (!appSettings.bgImage && appSettings.bgType === BGType.Image) {
+      appSettings.bgImage = defaultBgPath;
+    }
+  }
+  // 初始化完成后更新快照，避免 switchToGame 的属性变更被视为用户修改
+  lastSavedSettingsJson = JSON.stringify({ ...appSettings });
+  lastSavedSettingsSnapshot = { ...appSettings };
+  isInitialized = true;
   tryAutoStartFeatureOnboarding();
 }
 initStore();

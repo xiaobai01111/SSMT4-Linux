@@ -129,11 +129,12 @@ const gameLinks = computed(() =>
 <style scoped>
 .websites-page {
   padding: 32px 40px 60px 40px;
-  animation: fadeIn 0.4s ease-out;
+  animation: fadeIn 0.15s ease-out;
 
   /* Tech Glass Wrapper for Readability */
-  background: rgba(10, 15, 20, 0.75);
-  backdrop-filter: blur(12px);
+  background: rgba(10, 15, 20, 0.92);
+  will-change: transform;
+  contain: layout style;
   width: 100%;
   height: 100%;
   overflow-y: auto;
@@ -141,8 +142,8 @@ const gameLinks = computed(() =>
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .websites-header {
@@ -158,7 +159,6 @@ const gameLinks = computed(() =>
   color: #00f0ff;
   letter-spacing: 1px;
   text-transform: uppercase;
-  text-shadow: 0 0 12px rgba(0, 240, 255, 0.4);
 }
 
 .desc {
@@ -174,13 +174,14 @@ const gameLinks = computed(() =>
 /* Deep customize search input for Tech HUD */
 :deep(.search-input .el-input__wrapper) {
   background-color: rgba(10, 15, 20, 0.6) !important;
-  box-shadow: 0 0 0 1px rgba(0, 240, 255, 0.3) inset !important;
-  border-radius: 4px; /* Sharp corners */
-  transition: all 0.2s;
+  border: 1px solid rgba(0, 240, 255, 0.3) !important;
+  box-shadow: none !important;
+  border-radius: 4px;
 }
 
 :deep(.search-input .el-input__wrapper.is-focus) {
-  box-shadow: 0 0 0 1px #00f0ff inset, 0 0 12px rgba(0, 240, 255, 0.4) !important;
+  border-color: #00f0ff !important;
+  box-shadow: none !important;
   background-color: rgba(0, 240, 255, 0.05) !important;
 }
 
@@ -214,7 +215,6 @@ const gameLinks = computed(() =>
   height: 16px;
   background-color: #00f0ff;
   margin-right: 8px;
-  box-shadow: 0 0 8px rgba(0, 240, 255, 0.8);
 }
 
 .link-grid {
@@ -228,14 +228,12 @@ const gameLinks = computed(() =>
   background: rgba(10, 15, 20, 0.5) !important;
   border-radius: 4px !important;
   transition: all 0.2s ease !important;
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3) !important;
   cursor: default;
 }
 
 :deep(.link-card:hover) {
   border-color: #00f0ff !important;
   transform: translateY(-2px) scale(1.02);
-  box-shadow: 0 8px 25px rgba(0, 240, 255, 0.2), inset 0 0 15px rgba(0, 240, 255, 0.05) !important;
   background: rgba(15, 20, 25, 0.8) !important;
 }
 
@@ -251,7 +249,6 @@ const gameLinks = computed(() =>
   color: #fff;
   font-size: 15px;
   font-weight: 600;
-  text-shadow: 0 0 8px rgba(255, 255, 255, 0.2);
 }
 
 :deep(.el-tag) {
@@ -282,7 +279,6 @@ const gameLinks = computed(() =>
 
 .link-url:hover {
   text-decoration: underline;
-  text-shadow: 0 0 8px rgba(0, 240, 255, 0.8);
 }
 
 .server-row {

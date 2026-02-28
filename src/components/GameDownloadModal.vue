@@ -254,10 +254,13 @@ const refreshProtectionStatus = async () => {
       return;
     }
 
-    const status = await checkGameProtectionStatus(preset, gameFolder.value || undefined);
+    const [status, channel] = await Promise.all([
+      checkGameProtectionStatus(preset, gameFolder.value || undefined),
+      getChannelProtectionStatus(preset, gameFolder.value || undefined),
+    ]);
     protectionApplied.value = !!status?.enabled;
     protectionEnforceAtLaunch.value = status?.enforceAtLaunch !== false;
-    channelProtection.value = await getChannelProtectionStatus(preset, gameFolder.value || undefined);
+    channelProtection.value = channel;
   } catch (e) {
     console.warn('[防护] 刷新状态失败:', e);
     protectionInfo.value = null;
@@ -318,11 +321,12 @@ const loadState = async () => {
   if (isStale()) return;
   gamePreset.value = preset;
   console.log('[GameDownload] gameName =', props.gameName, ', preset =', preset);
-  await refreshProtectionStatus();
-  if (isStale()) return;
 
-  // 2. 检测是否支持自动下载
-  const launcherInfo = await getGameLauncherApi(preset);
+  // 2. 并行：刷新防护状态 + 检测是否支持自动下载
+  const [, launcherInfo] = await Promise.all([
+    refreshProtectionStatus(),
+    getGameLauncherApi(preset),
+  ]);
   if (isStale()) return;
   const knownApi: LauncherApiConfig | null = launcherInfo.supported
     ? {
@@ -1129,16 +1133,15 @@ watch(launcherApi, (api) => {
 <style scoped>
 .dl-overlay {
   position: fixed; inset: 0;
-  background: rgba(0,0,0,0.5); backdrop-filter: blur(4px);
+  background: rgba(0,0,0,0.7); will-change: transform;
   z-index: 2000; display: flex; align-items: center; justify-content: center;
 }
 .dl-window {
   width: 100%; max-width: 900px;
   height: 80vh; max-height: 700px;
-  background: rgba(10, 15, 20, 0.85); backdrop-filter: blur(16px);
+  background: rgba(10, 15, 20, 0.97); contain: layout style;
   border: 1px solid rgba(0, 240, 255, 0.3);
-  box-shadow: 0 0 30px rgba(0, 240, 255, 0.1), inset 0 0 20px rgba(0, 240, 255, 0.05);
-  border-radius: 8px; display: flex; flex-direction: column; animation: slideUp 0.3s ease-out;
+  border-radius: 8px; display: flex; flex-direction: column; animation: slideUp 0.15s ease-out;
 }
 @keyframes slideUp {
   from { opacity:0; transform:translateY(20px); }
@@ -1148,7 +1151,7 @@ watch(launcherApi, (api) => {
   display: flex; align-items: center; justify-content: space-between;
   padding: 0 30px; height: 60px; border-bottom: 1px solid rgba(255,255,255,0.05);
 }
-.dl-title { font-size:18px; font-weight:600; color:#00f0ff; text-transform: uppercase; letter-spacing: 1px; text-shadow: 0 0 8px rgba(0, 240, 255, 0.4); }
+.dl-title { font-size:18px; font-weight:600; color:#00f0ff; text-transform: uppercase; letter-spacing: 1px; }
 .dl-close {
   width:32px; height:32px; display:flex; align-items:center; justify-content:center;
   border-radius:4px; cursor:pointer; color:rgba(255,255,255,0.6); transition:all 0.2s;
@@ -1158,7 +1161,7 @@ watch(launcherApi, (api) => {
 
 /* 游戏信息 */
 .game-info { margin-bottom:20px; display:flex; align-items:center; gap:10px; }
-.game-name { font-size:18px; font-weight:600; color:#00f0ff; text-shadow: 0 0 8px rgba(0, 240, 255, 0.4); }
+.game-name { font-size:18px; font-weight:600; color:#00f0ff; }
 .badge {
   font-size:11px; padding:2px 8px; border-radius:4px; white-space:nowrap;
 }
@@ -1194,11 +1197,9 @@ watch(launcherApi, (api) => {
   background:rgba(0,0,0,0.25); border:1px solid rgba(255,255,255,0.06);
   border-radius:10px; padding:18px 20px; margin-bottom:24px;
   transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 .state-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
 }
 .state-card.state-ok { border-color:rgba(103,194,58,0.4); background: rgba(103,194,58,0.05); }
 .state-card.state-install { border-color:rgba(247,206,70,0.4); background: rgba(247,206,70,0.05); }
@@ -1296,7 +1297,6 @@ watch(launcherApi, (api) => {
 .install-dir-row .dl-input:focus {
   background: rgba(0, 0, 0, 0.4);
   border-color: rgba(0, 240, 255, 0.5);
-  box-shadow: 0 0 10px rgba(0, 240, 255, 0.15);
 }
 .install-dir-row .dir-btn {
   display:flex; align-items:center; justify-content:center;
@@ -1389,7 +1389,6 @@ watch(launcherApi, (api) => {
 .action-btn:hover:not(:disabled) { 
   background:rgba(255,255,255,0.2); 
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 .action-btn:active:not(:disabled) {
   transform: translateY(0);
@@ -1401,7 +1400,6 @@ watch(launcherApi, (api) => {
 }
 .action-btn.primary:hover:not(:disabled) { 
   background:rgba(0, 240, 255, 0.25); 
-  box-shadow: 0 4px 16px rgba(0, 240, 255, 0.2);
 }
 .action-btn.primary.large { padding:0 24px; font-size:15px; font-weight:600; flex: 2; height: 44px; }
 .action-btn.warning-soft {
@@ -1428,19 +1426,16 @@ watch(launcherApi, (api) => {
 .progress-section {
   background:rgba(0,0,0,0.25); border:1px solid rgba(255,255,255,0.08);
   border-radius:10px; padding:20px; margin-bottom:16px;
-  box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.2);
 }
 .progress-phase {
   font-size:14px; font-weight:600; color:rgba(255,255,255,0.9); margin-bottom:12px;
 }
 .progress-bar-track {
   width:100%; height:12px; background:rgba(255,255,255,0.08); border-radius:6px; overflow:hidden;
-  box-shadow: inset 0 1px 3px rgba(0,0,0,0.5);
 }
 .progress-bar-fill {
   height:100%; background:linear-gradient(90deg, #00f0ff, #00a0ff); border-radius:6px;
   transition: width 0.3s ease;
-  box-shadow: 0 0 12px rgba(0, 240, 255, 0.5);
 }
 .progress-bar-fill.verify-fill {
   background:linear-gradient(90deg, #67c23a, #4caf50);
@@ -1505,7 +1500,6 @@ watch(launcherApi, (api) => {
 }
 .dl-input:focus {
   border-color: #00f0ff;
-  box-shadow: 0 0 8px rgba(0, 240, 255, 0.2);
 }
 .input-row { display:flex; gap:6px; }
 .input-row .dl-input { flex:1; }
@@ -1538,6 +1532,6 @@ watch(launcherApi, (api) => {
 }
 
 /* 过渡 */
-.modal-fade-enter-active, .modal-fade-leave-active { transition:opacity 0.25s; }
+.modal-fade-enter-active, .modal-fade-leave-active { transition:opacity 0.15s; }
 .modal-fade-enter-from, .modal-fade-leave-to { opacity:0; }
 </style>

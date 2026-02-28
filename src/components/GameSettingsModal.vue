@@ -211,15 +211,26 @@ const selectedGpuIndex = ref(-1); // -1 = 自动
 const gameLang = ref(''); // '' = 跟随系统
 
 const loadWineState = async () => {
+  const gameName = String(props.gameName || '').trim();
+  if (!gameName || gameName === 'Default') {
+    wineVersions.value = [];
+    selectedWineVersionId.value = '';
+    return;
+  }
   try {
-    wineVersions.value = await scanWineVersions();
-    const wineConfig = await getGameWineConfig(props.gameName);
+    const [wines, wineConfig, vulkan, display] = await Promise.all([
+      scanWineVersions(),
+      getGameWineConfig(gameName),
+      checkVulkan(),
+      getDisplayInfo(),
+    ]);
+    wineVersions.value = wines;
     if (wineConfig.wine_version_id) {
       selectedWineVersionId.value = wineConfig.wine_version_id;
     }
     Object.assign(protonSettings, wineConfig.proton_settings);
-    vulkanInfo.value = await checkVulkan();
-    displayInfo.value = await getDisplayInfo();
+    vulkanInfo.value = vulkan;
+    displayInfo.value = display;
   } catch (e) {
     console.error('Failed to load wine state:', e);
   }
@@ -318,12 +329,22 @@ const doInstallJadeite = async () => {
 };
 
 const loadPrefixState = async () => {
-  if (!props.gameName) return;
+  const gameName = String(props.gameName || '').trim();
+  if (!gameName || gameName === 'Default') {
+    prefixInfo.value = null;
+    return;
+  }
   try {
-    prefixInfo.value = await getPrefixInfo(props.gameName);
+    prefixInfo.value = await getPrefixInfo(gameName);
   } catch (e) {
     console.warn('[prefix] 获取状态失败:', e);
-    prefixInfo.value = null;
+    prefixInfo.value = {
+      game_id: gameName,
+      exists: false,
+      path: '',
+      size_bytes: 0,
+      config: null,
+    };
   }
 };
 
@@ -364,12 +385,24 @@ const dxvkGroupedLocalVersions = computed(() => {
     }));
 });
 
+const buildEmptyDxvkStatus = (): DxvkInstalledStatus => ({
+  installed: false,
+  version: null,
+  dlls_found: [],
+});
+
 const loadDxvkState = async () => {
-  if (!props.gameName) return;
+  const gameName = String(props.gameName || '').trim();
+  if (!gameName || gameName === 'Default') {
+    dxvkLocalVersions.value = [];
+    dxvkInstalledStatus.value = buildEmptyDxvkStatus();
+    dxvkSelectedKey.value = '';
+    return;
+  }
   try {
     const [local, status] = await Promise.all([
       scanLocalDxvk(),
-      detectDxvkStatus(props.gameName),
+      detectDxvkStatus(gameName),
     ]);
     dxvkLocalVersions.value = local;
     dxvkInstalledStatus.value = status;
@@ -385,6 +418,9 @@ const loadDxvkState = async () => {
     }
   } catch (e) {
     console.warn('[dxvk] 加载状态失败:', e);
+    dxvkLocalVersions.value = [];
+    dxvkInstalledStatus.value = buildEmptyDxvkStatus();
+    dxvkSelectedKey.value = '';
   }
 };
 
@@ -428,12 +464,24 @@ const vkd3dInstalledStatus = ref<Vkd3dInstalledStatus | null>(null);
 const vkd3dSelectedVersion = ref('');
 const isVkd3dBusy = ref(false);
 
+const buildEmptyVkd3dStatus = (): Vkd3dInstalledStatus => ({
+  installed: false,
+  version: null,
+  dlls_found: [],
+});
+
 const loadVkd3dState = async () => {
-  if (!props.gameName) return;
+  const gameName = String(props.gameName || '').trim();
+  if (!gameName || gameName === 'Default') {
+    vkd3dLocalVersions.value = [];
+    vkd3dInstalledStatus.value = buildEmptyVkd3dStatus();
+    vkd3dSelectedVersion.value = '';
+    return;
+  }
   try {
     const [local, status] = await Promise.all([
       scanLocalVkd3d(),
-      detectVkd3dStatus(props.gameName),
+      detectVkd3dStatus(gameName),
     ]);
     vkd3dLocalVersions.value = local;
     vkd3dInstalledStatus.value = status;
@@ -445,6 +493,9 @@ const loadVkd3dState = async () => {
     }
   } catch (e) {
     console.warn('[vkd3d] 加载状态失败:', e);
+    vkd3dLocalVersions.value = [];
+    vkd3dInstalledStatus.value = buildEmptyVkd3dStatus();
+    vkd3dSelectedVersion.value = '';
   }
 };
 
@@ -623,7 +674,7 @@ const infoReadonlyWarning = computed(() => {
     code: infoConfig.value.warningCode,
   });
 });
-const infoPageReadOnly = true;
+const infoPageReadOnly = false;
 const infoAssetsEditable = true;
 
 const localGameVersion = ref('');
@@ -683,10 +734,13 @@ const refreshGameVersion = async () => {
     versionLoading.value = true;
     versionError.value = '';
     localGameVersion.value = '';
-    for (const folder of probeFolders) {
-      const version = await getLocalVersion(folder);
-      if (version) {
-        localGameVersion.value = version;
+    // 并行探测所有目录，取第一个有效版本
+    const results = await Promise.allSettled(
+      probeFolders.map(folder => getLocalVersion(folder))
+    );
+    for (const r of results) {
+      if (r.status === 'fulfilled' && r.value) {
+        localGameVersion.value = r.value;
         break;
       }
     }
@@ -745,17 +799,22 @@ const resetToDefault = async () => {
 
   try {
     isLoading.value = true;
-    await apiResetGameIcon(props.gameName);
-    // 删除自定义背景文件
-    await apiResetGameBackground(props.gameName);
+    // 并行重置图标和背景
+    await Promise.all([
+      apiResetGameIcon(props.gameName),
+      apiResetGameBackground(props.gameName),
+    ]);
     // 重置配置为默认值
     await apiSaveGameConfig(props.gameName, {
       basic: { gamePreset: props.gameName || 'WutheringWaves', runtimeEnv: 'wine' },
       other: {}
     } as any);
-    await loadConfig();
-    await loadInfoConfig();
-    await loadGames();
+    // 并行重新加载
+    await Promise.all([
+      loadConfig(),
+      loadInfoConfig(),
+      loadGames(),
+    ]);
     notify?.success('重置成功', '游戏配置已恢复默认');
   } catch (e) {
     console.error('Reset failed:', e);
@@ -774,8 +833,7 @@ const selectIcon = async () => {
 
     if (file) {
       await apiSetGameIcon(props.gameName, file);
-      await loadInfoConfig();
-      await loadGames();
+      await Promise.all([loadInfoConfig(), loadGames()]);
       notify?.success('图标已更新', '游戏图标设置成功');
     }
   } catch (e) {
@@ -790,8 +848,7 @@ const selectBackground = async () => {
     const file = await openFileDialog({ multiple: false, filters });
     if (file) {
       await apiSetGameBackground(props.gameName, file, infoConfig.value.assets.backgroundType);
-      await loadInfoConfig();
-      await loadGames();
+      await Promise.all([loadInfoConfig(), loadGames()]);
       notify?.success('背景已更新', '背景图片设置成功');
     }
   } catch (e) {
@@ -803,10 +860,14 @@ const selectBackground = async () => {
 const resetBackgroundToDefault = async () => {
   if (!props.gameName) return;
   try {
-    await apiResetGameIcon(props.gameName);
-    await apiResetGameBackground(props.gameName);
-    await loadInfoConfig();
-    await loadGames();
+    await Promise.all([
+      apiResetGameIcon(props.gameName),
+      apiResetGameBackground(props.gameName),
+    ]);
+    await Promise.all([
+      loadInfoConfig(),
+      loadGames(),
+    ]);
     notify?.success('恢复成功', '图标和背景已恢复默认');
   } catch (e) {
     console.error('[GameInfoV2] reset background failed:', e);
@@ -906,19 +967,24 @@ const deleteCurrentConfig = async () => {
   }
 };
 
+const loadAllSections = () => {
+  if (!props.gameName) return;
+  configName.value = props.gameName;
+  hasLoadedConfig.value = false;
+  void loadConfig();
+  void loadInfoConfig();
+  void loadWineState();
+  void loadJadeiteState();
+  void loadPrefixState();
+  void loadDxvkState();
+  void loadVkd3dState();
+};
+
 // Open/Close
 watch(() => props.modelValue, async (val) => {
   if (val) {
     activeTab.value = 'info'; // Reset to first tab
-    configName.value = props.gameName;
-    hasLoadedConfig.value = false;
-    loadConfig();
-    loadInfoConfig();
-    loadWineState();
-    loadJadeiteState();
-    loadPrefixState();
-    loadDxvkState();
-    loadVkd3dState();
+    loadAllSections();
   } else {
     clearRuntimeAttention();
     // Only save when current modal session loaded successfully.
@@ -927,7 +993,7 @@ watch(() => props.modelValue, async (val) => {
       await saveWineConfig();
     }
   }
-});
+}, { immediate: true });
 
 // 切换游戏时重新加载配置，确保每个游戏的设置独立
 watch(() => props.gameName, async (newGame, oldGame) => {
@@ -939,15 +1005,7 @@ watch(() => props.gameName, async (newGame, oldGame) => {
   }
   // 加载新游戏的配置
   if (props.modelValue) {
-    configName.value = newGame;
-    hasLoadedConfig.value = false;
-    loadConfig();
-    loadInfoConfig();
-    loadWineState();
-    loadJadeiteState();
-    loadPrefixState();
-    loadDxvkState();
-    loadVkd3dState();
+    loadAllSections();
   }
 });
 
@@ -1012,7 +1070,7 @@ defineExpose({
 
           <div class="scroll-content">
             <!-- ==================== Tab 1: 游戏信息 ==================== -->
-            <div v-if="activeTab === 'info'" class="tab-pane" data-onboarding="game-settings-info-tab">
+            <div v-show="activeTab === 'info'" class="tab-pane" data-onboarding="game-settings-info-tab">
               <div v-if="infoConfig.readOnly || infoPageReadOnly" class="info-readonly-banner">
                 <template v-if="infoPageReadOnly">
                   游戏信息页当前为只读展示模式（仅背景资源可修改）。
@@ -1075,7 +1133,7 @@ defineExpose({
             </div>
 
             <!-- ==================== Tab 2: 游戏选项 ==================== -->
-            <div v-if="activeTab === 'game'" class="tab-pane" data-onboarding="game-settings-game-tab">
+            <div v-show="activeTab === 'game'" class="tab-pane" data-onboarding="game-settings-game-tab">
               <div class="setting-group" data-onboarding="game-settings-game-exe">
                 <div class="setting-label">主程序</div>
                 <input v-model="config.other.gamePath" type="text" class="custom-input" placeholder="选择游戏可执行文件（如 StarRail.exe）..." />
@@ -1130,7 +1188,7 @@ defineExpose({
 
             <!-- ==================== Tab 3: 运行环境 ==================== -->
             <div
-              v-if="activeTab === 'runtime'"
+              v-show="activeTab === 'runtime'"
               class="tab-pane"
               data-onboarding="game-settings-runtime-tab"
               :class="{ 'runtime-pane-attention': runtimeAttention && runtimeFocusTarget === 'all' }"
@@ -1403,7 +1461,7 @@ defineExpose({
             </div>
 
             <!-- ==================== Tab 5: 系统选项 ==================== -->
-            <div v-if="activeTab === 'system'" class="tab-pane" data-onboarding="game-settings-system-tab">
+            <div v-show="activeTab === 'system'" class="tab-pane" data-onboarding="game-settings-system-tab">
 
               <!-- 系统信息 -->
               <div v-if="displayInfo" class="setting-group info-card">
@@ -1510,9 +1568,9 @@ defineExpose({
   left: 0;
   width: 100%;
   height: 100%;
-  background-color: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(4px);
+  background-color: rgba(0, 0, 0, 0.7);
   z-index: 2000;
+  will-change: transform;
   /* High z-index */
   display: flex;
   align-items: center;
@@ -1524,14 +1582,14 @@ defineExpose({
   max-width: 900px;
   height: 80vh;
   max-height: 700px;
-  background: rgba(10, 15, 20, 0.85);
-  backdrop-filter: blur(16px);
+  background: rgba(10, 15, 20, 0.97);
   border: 1px solid rgba(0, 240, 255, 0.3);
-  box-shadow: 0 0 30px rgba(0, 240, 255, 0.1), inset 0 0 20px rgba(0, 240, 255, 0.05);
   border-radius: 8px;
   display: flex;
   overflow: hidden;
-  animation: slideUp 0.3s ease-out;
+  animation: slideUp 0.15s ease-out;
+  will-change: transform;
+  contain: layout style;
 }
 
 @keyframes slideUp {
@@ -1618,7 +1676,6 @@ defineExpose({
   background: rgba(0, 240, 255, 0.1);
   color: #00f0ff;
   border-left: 3px solid #00f0ff;
-  box-shadow: inset 20px 0 20px -20px rgba(0, 240, 255, 0.3);
 }
 
 .sidebar-item.runtime-attention {
@@ -1629,15 +1686,12 @@ defineExpose({
 @keyframes runtimeTabPulse {
   0% {
     background: rgba(0, 240, 255, 0.08);
-    box-shadow: inset 20px 0 20px -20px rgba(0, 240, 255, 0.2);
   }
   50% {
     background: rgba(0, 240, 255, 0.32);
-    box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.45), 0 0 18px rgba(0, 240, 255, 0.5);
   }
   100% {
     background: rgba(0, 240, 255, 0.08);
-    box-shadow: inset 20px 0 20px -20px rgba(0, 240, 255, 0.2);
   }
 }
 
@@ -1654,7 +1708,6 @@ defineExpose({
   border-radius: 10px;
   pointer-events: none;
   border: 1px solid rgba(0, 240, 255, 0.38);
-  box-shadow: 0 0 0 1px rgba(0, 240, 255, 0.22), 0 0 18px rgba(0, 240, 255, 0.24);
   animation: runtimePaneOutlinePulse 0.9s ease-in-out 0s 3;
 }
 
@@ -1697,33 +1750,24 @@ defineExpose({
 @keyframes runtimeGroupPulse {
   0% {
     background: rgba(0, 240, 255, 0.02);
-    box-shadow: 0 0 0 rgba(0, 240, 255, 0);
   }
   50% {
     background: rgba(0, 240, 255, 0.1);
-    box-shadow: 0 0 0 1px rgba(0, 240, 255, 0.26), 0 0 12px rgba(0, 240, 255, 0.22);
   }
   100% {
     background: rgba(0, 240, 255, 0.02);
-    box-shadow: 0 0 0 rgba(0, 240, 255, 0);
   }
 }
 
 @keyframes runtimeSectionPulse {
   0% {
     background: rgba(0, 240, 255, 0.03);
-    box-shadow: 0 0 0 rgba(0, 240, 255, 0);
   }
   50% {
     background: rgba(0, 240, 255, 0.14);
-    box-shadow:
-      0 0 0 1px rgba(0, 240, 255, 0.4),
-      0 0 16px rgba(0, 240, 255, 0.35),
-      inset 0 0 18px rgba(0, 240, 255, 0.12);
   }
   100% {
     background: rgba(0, 240, 255, 0.03);
-    box-shadow: 0 0 0 rgba(0, 240, 255, 0);
   }
 }
 
@@ -1772,7 +1816,6 @@ defineExpose({
   color: #00f0ff;
   text-transform: uppercase;
   letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
 }
 
 .close-btn {
@@ -1834,7 +1877,6 @@ defineExpose({
 
 .custom-input:focus {
   border-color: #00f0ff;
-  box-shadow: 0 0 8px rgba(0, 240, 255, 0.2);
 }
 
 .button-row {
@@ -1867,7 +1909,6 @@ defineExpose({
 
 .action-btn.create:hover {
   background: rgba(0, 240, 255, 0.3);
-  box-shadow: 0 0 10px rgba(0, 240, 255, 0.3);
 }
 
 .action-btn.highlight {
@@ -1878,7 +1919,6 @@ defineExpose({
 
 .action-btn.highlight:hover {
   background: rgba(0, 240, 255, 0.3);
-  box-shadow: 0 0 10px rgba(0, 240, 255, 0.4);
 }
 
 .action-btn.delete {
@@ -2070,7 +2110,7 @@ defineExpose({
 /* Transitions */
 .modal-fade-enter-active,
 .modal-fade-leave-active {
-  transition: opacity 0.3s ease;
+  transition: opacity 0.15s ease;
 }
 
 .modal-fade-enter-from,
@@ -2090,7 +2130,6 @@ defineExpose({
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  backdrop-filter: blur(2px);
   border-radius: 12px;
 }
 

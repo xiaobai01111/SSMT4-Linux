@@ -12,6 +12,66 @@ import { listen } from '@tauri-apps/api/event'
 import { join } from '@tauri-apps/api/path'
 
 // ============================================================
+// IPC 缓存层 —— 避免重复调用重型后端命令
+// ============================================================
+
+interface CacheEntry<T> {
+  data: T;
+  timestamp: number;
+  pending?: Promise<T>;
+}
+
+const _ipcCache = new Map<string, CacheEntry<any>>();
+
+/**
+ * 带 TTL 缓存的 invoke 封装。相同 cacheKey 在 ttlMs 内只调用一次后端。
+ * 并发请求自动去重（共享同一个 Promise）。
+ */
+async function cachedInvoke<T>(cacheKey: string, ttlMs: number, cmd: string, args?: Record<string, any>): Promise<T> {
+  const now = Date.now();
+  const entry = _ipcCache.get(cacheKey);
+
+  // 缓存命中
+  if (entry && (now - entry.timestamp) < ttlMs) {
+    return entry.data as T;
+  }
+
+  // 去重：如果已有相同请求在飞行中，共享 Promise
+  if (entry?.pending) {
+    return entry.pending as Promise<T>;
+  }
+
+  const t0 = performance.now();
+  const pending = invoke<T>(cmd, args).then(result => {
+    console.debug(`[IPC] ${cmd} ${Math.round(performance.now() - t0)}ms`);
+    _ipcCache.set(cacheKey, { data: result, timestamp: Date.now() });
+    return result;
+  }).catch(err => {
+    // 请求失败时清除 pending 状态，允许重试
+    const current = _ipcCache.get(cacheKey);
+    if (current?.pending === pending) {
+      _ipcCache.delete(cacheKey);
+    }
+    throw err;
+  });
+
+  _ipcCache.set(cacheKey, { ...(entry || { data: null, timestamp: 0 }), pending });
+  return pending;
+}
+
+/** 使指定缓存失效（数据变更后调用） */
+export function invalidateCache(...keys: string[]) {
+  for (const key of keys) {
+    _ipcCache.delete(key);
+  }
+}
+
+/** 使所有缓存失效 */
+export function invalidateAllCache() {
+  _ipcCache.clear();
+}
+
+// ============================================================
 // Types
 // ============================================================
 
@@ -485,7 +545,7 @@ export async function pullResourceUpdates(): Promise<string> {
 // ============================================================
 
 export async function getResourcePath(relative: string): Promise<string> {
-  return invoke<string>('get_resource_path', { relative });
+  return cachedInvoke<string>(`get_resource_path:${relative}`, 300_000, 'get_resource_path', { relative });
 }
 
 export async function ensureDirectory(path: string): Promise<void> {
@@ -513,11 +573,13 @@ export async function runResourceExecutable(resourceName: string, args: string[]
 // ============================================================
 
 export async function scanGames(): Promise<GameInfo[]> {
-  return invoke<GameInfo[]>('scan_games');
+  return cachedInvoke<GameInfo[]>('scan_games', 10_000, 'scan_games');
 }
 
 export async function setGameVisibility(gameName: string, hidden: boolean): Promise<void> {
-  return invoke('set_game_visibility', { gameName, hidden });
+  const result = invoke<void>('set_game_visibility', { gameName, hidden });
+  result.then(() => invalidateCache('scan_games'));
+  return result;
 }
 
 // ============================================================
@@ -525,15 +587,17 @@ export async function setGameVisibility(gameName: string, hidden: boolean): Prom
 // ============================================================
 
 export async function loadGameConfig(gameName: string): Promise<GameConfig> {
-  return invoke<GameConfig>('load_game_config', { gameName });
+  return cachedInvoke<GameConfig>(`load_game_config:${gameName}`, 5_000, 'load_game_config', { gameName });
 }
 
 export async function saveGameConfig(gameName: string, config: GameConfig): Promise<void> {
-  return invoke('save_game_config', { gameName, config });
+  const result = invoke<void>('save_game_config', { gameName, config });
+  result.then(() => invalidateCache(`load_game_config:${gameName}`, 'scan_games'));
+  return result;
 }
 
 export async function listGamePresetsForInfo(): Promise<PresetCatalogItem[]> {
-  return invoke<PresetCatalogItem[]>('list_game_presets_for_info');
+  return cachedInvoke<PresetCatalogItem[]>('list_game_presets_for_info', 60_000, 'list_game_presets_for_info');
 }
 
 export async function loadGameInfoV2(gameName: string): Promise<GameInfoConfigV2> {
@@ -579,11 +643,15 @@ export async function executeGameKeyMigration(): Promise<GameKeyMigrationResult>
 }
 
 export async function createNewConfig(newName: string, config: GameConfig): Promise<void> {
-  return invoke('create_new_config', { newName, config });
+  const result = invoke<void>('create_new_config', { newName, config });
+  result.then(() => invalidateCache('scan_games'));
+  return result;
 }
 
 export async function deleteGameConfigFolder(gameName: string): Promise<void> {
-  return invoke('delete_game_config_folder', { gameName });
+  const result = invoke<void>('delete_game_config_folder', { gameName });
+  result.then(() => invalidateCache('scan_games', `load_game_config:${gameName}`));
+  return result;
 }
 
 // 游戏配置模板
@@ -605,25 +673,35 @@ export async function listGameTemplates(): Promise<GameTemplateInfo[]> {
 }
 
 export async function importGameTemplate(templateName: string, overwrite: boolean = false): Promise<void> {
-  return invoke('import_game_template', { templateName, overwrite });
+  const result = invoke<void>('import_game_template', { templateName, overwrite });
+  result.then(() => invalidateCache('scan_games'));
+  return result;
 }
 
 export async function setGameBackground(
   gameName: string, filePath: string, bgType: string
 ): Promise<void> {
-  return invoke('set_game_background', { gameName, filePath, bgType });
+  const result = invoke<void>('set_game_background', { gameName, filePath, bgType });
+  result.then(() => invalidateCache('scan_games'));
+  return result;
 }
 
 export async function setGameIcon(gameName: string, filePath: string): Promise<void> {
-  return invoke('set_game_icon', { gameName, filePath });
+  const result = invoke<void>('set_game_icon', { gameName, filePath });
+  result.then(() => invalidateCache('scan_games'));
+  return result;
 }
 
 export async function resetGameIcon(gameName: string): Promise<void> {
-  return invoke('reset_game_icon', { gameName });
+  const result = invoke<void>('reset_game_icon', { gameName });
+  result.then(() => invalidateCache('scan_games'));
+  return result;
 }
 
 export async function resetGameBackground(gameName: string): Promise<void> {
-  return invoke('reset_game_background', { gameName });
+  const result = invoke<void>('reset_game_background', { gameName });
+  result.then(() => invalidateCache('scan_games'));
+  return result;
 }
 
 export async function updateGameBackground(
@@ -651,7 +729,7 @@ export async function launchGame(gameName: string, region?: string): Promise<str
 // ============================================================
 
 export async function scanWineVersions(): Promise<WineVersion[]> {
-  return invoke<WineVersion[]>('scan_wine_versions');
+  return cachedInvoke<WineVersion[]>('scan_wine_versions', 15_000, 'scan_wine_versions');
 }
 
 export async function getProtonCatalog(): Promise<ProtonCatalog> {
@@ -675,7 +753,9 @@ export async function fetchRemoteProton(): Promise<RemoteWineVersion[]> {
 }
 
 export async function downloadProton(downloadUrl: string, tag: string, variant: string): Promise<string> {
-  return invoke<string>('download_proton', { downloadUrl, tag, variant });
+  const result = invoke<string>('download_proton', { downloadUrl, tag, variant });
+  result.then(() => invalidateCache('scan_wine_versions'));
+  return result;
 }
 
 export async function getGameWineConfig(gameId: string): Promise<GameWineConfig> {
@@ -701,16 +781,20 @@ export async function getPrefixInfo(gameId: string): Promise<PrefixInfo> {
 }
 
 export async function installDxvk(gameId: string, version: string, variant: string): Promise<string> {
-  return invoke<string>('install_dxvk', { gameId, version, variant });
+  const result = invoke<string>('install_dxvk', { gameId, version, variant });
+  result.then(() => invalidateCache('scan_local_dxvk'));
+  return result;
 }
 
 export async function uninstallDxvk(gameId: string): Promise<string> {
-  return invoke<string>('uninstall_dxvk', { gameId });
+  const result = invoke<string>('uninstall_dxvk', { gameId });
+  result.then(() => invalidateCache('scan_local_dxvk'));
+  return result;
 }
 
 // DXVK 版本管理
 export async function scanLocalDxvk(): Promise<DxvkLocalVersion[]> {
-  return invoke<DxvkLocalVersion[]>('scan_local_dxvk');
+  return cachedInvoke<DxvkLocalVersion[]>('scan_local_dxvk', 15_000, 'scan_local_dxvk');
 }
 
 export async function detectDxvkStatus(gameId: string): Promise<DxvkInstalledStatus> {
@@ -722,19 +806,25 @@ export async function fetchDxvkVersions(): Promise<DxvkRemoteVersion[]> {
 }
 
 export async function downloadDxvk(version: string, variant: string): Promise<string> {
-  return invoke<string>('download_dxvk', { version, variant });
+  const result = invoke<string>('download_dxvk', { version, variant });
+  result.then(() => invalidateCache('scan_local_dxvk'));
+  return result;
 }
 
 export async function installVkd3d(gameId: string, version: string): Promise<string> {
-  return invoke<string>('install_vkd3d', { gameId, version });
+  const result = invoke<string>('install_vkd3d', { gameId, version });
+  result.then(() => invalidateCache('scan_local_vkd3d'));
+  return result;
 }
 
 export async function uninstallVkd3d(gameId: string): Promise<string> {
-  return invoke<string>('uninstall_vkd3d', { gameId });
+  const result = invoke<string>('uninstall_vkd3d', { gameId });
+  result.then(() => invalidateCache('scan_local_vkd3d'));
+  return result;
 }
 
 export async function scanLocalVkd3d(): Promise<Vkd3dLocalVersion[]> {
-  return invoke<Vkd3dLocalVersion[]>('scan_local_vkd3d');
+  return cachedInvoke<Vkd3dLocalVersion[]>('scan_local_vkd3d', 15_000, 'scan_local_vkd3d');
 }
 
 export async function detectVkd3dStatus(gameId: string): Promise<Vkd3dInstalledStatus> {
@@ -746,11 +836,13 @@ export async function fetchVkd3dVersions(): Promise<Vkd3dRemoteVersion[]> {
 }
 
 export async function downloadVkd3d(version: string): Promise<string> {
-  return invoke<string>('download_vkd3d', { version });
+  const result = invoke<string>('download_vkd3d', { version });
+  result.then(() => invalidateCache('scan_local_vkd3d'));
+  return result;
 }
 
 export async function checkVulkan(): Promise<VulkanInfo> {
-  return invoke<VulkanInfo>('check_vulkan');
+  return cachedInvoke<VulkanInfo>('check_vulkan', 120_000, 'check_vulkan');
 }
 
 export async function installRuntime(gameId: string, component: string): Promise<string> {
@@ -766,7 +858,7 @@ export async function getInstalledRuntimes(gameId: string): Promise<string[]> {
 }
 
 export async function getDisplayInfo(): Promise<DisplayInfo> {
-  return invoke<DisplayInfo>('get_display_info');
+  return cachedInvoke<DisplayInfo>('get_display_info', 120_000, 'get_display_info');
 }
 
 export async function getRecentLogs(lines?: number): Promise<string[]> {

@@ -89,6 +89,7 @@ const isDownloading = ref(false);
 const downloadingFamilyKey = ref('');
 const downloadingTag = ref('');
 const protonLoaded = ref(false);
+const showProtonCatalogEditor = ref(false);
 
 const selectedLocalByFamily = reactive<Record<string, string>>({});
 const selectedRemoteByFamily = reactive<Record<string, string>>({});
@@ -611,8 +612,8 @@ const doDownloadDxvk = async () => {
     const result = await downloadDxvk(item.version, item.variant);
     dlDialogStatus.value = 'success';
     dlDialogMessage.value = result;
-    await refreshDxvkLocal();
-    dxvkRemoteVersions.value = await fetchDxvkVersions();
+    const [, remDxvk] = await Promise.all([refreshDxvkLocal(), fetchDxvkVersions()]);
+    dxvkRemoteVersions.value = remDxvk;
   } catch (e) {
     dlDialogStatus.value = 'error';
     dlDialogMessage.value = `下载失败: ${e}`;
@@ -710,8 +711,8 @@ const doDownloadVkd3d = async () => {
     const result = await downloadVkd3d(item.version);
     dlDialogStatus.value = 'success';
     dlDialogMessage.value = result;
-    await refreshVkd3dLocal();
-    vkd3dRemoteVersions.value = await fetchVkd3dVersions();
+    const [, remVkd3d] = await Promise.all([refreshVkd3dLocal(), fetchVkd3dVersions()]);
+    vkd3dRemoteVersions.value = remVkd3d;
   } catch (e) {
     dlDialogStatus.value = 'error';
     dlDialogMessage.value = `下载失败: ${e}`;
@@ -757,18 +758,19 @@ watch(
     }
     if (menu === 'proton' && !protonLoaded.value) {
       await loadCatalog();
-      await refreshLocalGrouped();
-      await refreshRemoteGrouped();
+      await Promise.all([refreshLocalGrouped(), refreshRemoteGrouped()]);
       protonLoaded.value = true;
     }
+    if (menu === 'proton') {
+      // 默认折叠重型编辑器，避免滚动时大量表单常驻渲染
+      showProtonCatalogEditor.value = false;
+    }
     if (menu === 'dxvk' && !dxvkLoaded.value) {
-      await refreshDxvkLocal();
-      await refreshDxvkRemote();
+      await Promise.all([refreshDxvkLocal(), refreshDxvkRemote()]);
       dxvkLoaded.value = true;
     }
     if (menu === 'vkd3d' && !vkd3dLoaded.value) {
-      await refreshVkd3dLocal();
-      await refreshVkd3dRemote();
+      await Promise.all([refreshVkd3dLocal(), refreshVkd3dRemote()]);
       vkd3dLoaded.value = true;
     }
   },
@@ -1133,68 +1135,78 @@ watch(
               <div class="section-hint">{{ tr('settings.proton_catalog_hint', '修改家族/来源后保存即可生效，无需改代码。') }}</div>
             </div>
             <div class="toolbar-actions">
-              <el-button size="small" @click="reloadCatalogEditor" :loading="isCatalogLoading">
-                {{ tr('settings.proton_reload_catalog', '重载目录') }}
+              <el-button size="small" @click="showProtonCatalogEditor = !showProtonCatalogEditor">
+                {{ showProtonCatalogEditor ? '收起目录编辑器' : '展开目录编辑器' }}
               </el-button>
-              <el-button type="primary" size="small" @click="saveCatalogChanges" :loading="isCatalogSaving">
-                {{ tr('settings.proton_save_catalog', '保存目录') }}
-              </el-button>
+              <template v-if="showProtonCatalogEditor">
+                <el-button size="small" @click="reloadCatalogEditor" :loading="isCatalogLoading">
+                  {{ tr('settings.proton_reload_catalog', '重载目录') }}
+                </el-button>
+                <el-button type="primary" size="small" @click="saveCatalogChanges" :loading="isCatalogSaving">
+                  {{ tr('settings.proton_save_catalog', '保存目录') }}
+                </el-button>
+              </template>
             </div>
           </div>
 
-          <div class="editor-subtitle">{{ tr('settings.proton_families', '家族定义') }}</div>
-          <div class="editor-list">
-            <div v-for="(family, idx) in editableFamilies" :key="`${family.family_key}-${idx}`" class="editor-row family-editor-row">
-              <el-input v-model="family.family_key" :placeholder="tr('settings.proton_family_key', 'family_key')" />
-              <el-input v-model="family.display_name" :placeholder="tr('settings.proton_family_name', '显示名称')" />
-              <el-input-number v-model="family.sort_order" :min="0" :max="9999" :step="10" controls-position="right" />
-              <el-switch v-model="family.enabled" :active-text="tr('settings.proton_enabled', '启用')" />
-              <el-switch v-model="family.builtin" :active-text="tr('settings.proton_builtin', '内置')" />
-              <el-button text type="danger" @click="removeFamily(idx)">
-                {{ tr('settings.proton_remove', '删除') }}
-              </el-button>
-              <el-input
-                v-model="family.detect_patterns_text"
-                type="textarea"
-                :rows="2"
-                :placeholder="tr('settings.proton_detect_patterns', '检测规则，每行一个（支持 regex）')"
-                class="patterns-input"
-              />
-            </div>
-            <el-button size="small" @click="addFamily">{{ tr('settings.proton_add_family', '新增家族') }}</el-button>
-          </div>
-
-          <div class="editor-subtitle" style="margin-top: 14px;">{{ tr('settings.proton_sources', '来源定义') }}</div>
-          <div class="editor-list">
-            <div v-for="(source, idx) in editableSources" :key="`${source.repo}-${idx}`" class="editor-row source-editor-row">
-              <el-select v-model="source.family_key" class="source-family-select" filterable>
-                <el-option
-                  v-for="family in editableFamilies"
-                  :key="family.family_key"
-                  :label="`${family.display_name || family.family_key} (${family.family_key || '-'})`"
-                  :value="family.family_key"
+          <div v-if="showProtonCatalogEditor" class="proton-editor-wrap">
+            <div class="editor-subtitle">{{ tr('settings.proton_families', '家族定义') }}</div>
+            <div class="editor-list">
+              <div v-for="(family, idx) in editableFamilies" :key="`${family.family_key}-${idx}`" class="editor-row family-editor-row">
+                <el-input v-model="family.family_key" :placeholder="tr('settings.proton_family_key', 'family_key')" />
+                <el-input v-model="family.display_name" :placeholder="tr('settings.proton_family_name', '显示名称')" />
+                <el-input-number v-model="family.sort_order" :min="0" :max="9999" :step="10" controls-position="right" />
+                <el-switch v-model="family.enabled" :active-text="tr('settings.proton_enabled', '启用')" />
+                <el-switch v-model="family.builtin" :active-text="tr('settings.proton_builtin', '内置')" />
+                <el-button text type="danger" @click="removeFamily(idx)">
+                  {{ tr('settings.proton_remove', '删除') }}
+                </el-button>
+                <el-input
+                  v-model="family.detect_patterns_text"
+                  type="textarea"
+                  :rows="2"
+                  :placeholder="tr('settings.proton_detect_patterns', '检测规则，每行一个（支持 regex）')"
+                  class="patterns-input"
                 />
-              </el-select>
-              <el-select v-model="source.provider" class="provider-select" filterable>
-                <el-option label="github_releases" value="github_releases" />
-                <el-option label="forgejo_releases" value="forgejo_releases" />
-                <el-option label="github_actions" value="github_actions" />
-              </el-select>
-              <el-input v-model="source.repo" :placeholder="tr('settings.proton_source_repo', 'owner/repo')" />
-              <el-input v-model="source.endpoint" :placeholder="tr('settings.proton_source_endpoint', '完整 API endpoint（可选）')" />
-              <el-input v-model="source.url_template" :placeholder="tr('settings.proton_source_url_template', '下载 URL 模板（actions 用，含 {id}）')" />
-              <el-input-number v-model="source.asset_index" :min="-1" :max="100" controls-position="right" />
-              <el-input v-model="source.asset_pattern" :placeholder="tr('settings.proton_source_asset_pattern', '资产匹配 regex')" />
-              <el-input v-model="source.tag_pattern" :placeholder="tr('settings.proton_source_tag_pattern', 'tag 匹配 regex')" />
-              <el-input-number v-model="source.max_count" :min="1" :max="100" controls-position="right" />
-              <el-switch v-model="source.include_prerelease" :active-text="tr('settings.proton_source_prerelease', '预发布')" />
-              <el-switch v-model="source.enabled" :active-text="tr('settings.proton_enabled', '启用')" />
-              <el-input v-model="source.note" :placeholder="tr('settings.proton_source_note', '备注')" />
-              <el-button text type="danger" @click="removeSource(idx)">
-                {{ tr('settings.proton_remove', '删除') }}
-              </el-button>
+              </div>
+              <el-button size="small" @click="addFamily">{{ tr('settings.proton_add_family', '新增家族') }}</el-button>
             </div>
-            <el-button size="small" @click="addSource">{{ tr('settings.proton_add_source', '新增来源') }}</el-button>
+
+            <div class="editor-subtitle" style="margin-top: 14px;">{{ tr('settings.proton_sources', '来源定义') }}</div>
+            <div class="editor-list">
+              <div v-for="(source, idx) in editableSources" :key="`${source.repo}-${idx}`" class="editor-row source-editor-row">
+                <el-select v-model="source.family_key" class="source-family-select" filterable>
+                  <el-option
+                    v-for="family in editableFamilies"
+                    :key="family.family_key"
+                    :label="`${family.display_name || family.family_key} (${family.family_key || '-'})`"
+                    :value="family.family_key"
+                  />
+                </el-select>
+                <el-select v-model="source.provider" class="provider-select" filterable>
+                  <el-option label="github_releases" value="github_releases" />
+                  <el-option label="forgejo_releases" value="forgejo_releases" />
+                  <el-option label="github_actions" value="github_actions" />
+                </el-select>
+                <el-input v-model="source.repo" :placeholder="tr('settings.proton_source_repo', 'owner/repo')" />
+                <el-input v-model="source.endpoint" :placeholder="tr('settings.proton_source_endpoint', '完整 API endpoint（可选）')" />
+                <el-input v-model="source.url_template" :placeholder="tr('settings.proton_source_url_template', '下载 URL 模板（actions 用，含 {id}）')" />
+                <el-input-number v-model="source.asset_index" :min="-1" :max="100" controls-position="right" />
+                <el-input v-model="source.asset_pattern" :placeholder="tr('settings.proton_source_asset_pattern', '资产匹配 regex')" />
+                <el-input v-model="source.tag_pattern" :placeholder="tr('settings.proton_source_tag_pattern', 'tag 匹配 regex')" />
+                <el-input-number v-model="source.max_count" :min="1" :max="100" controls-position="right" />
+                <el-switch v-model="source.include_prerelease" :active-text="tr('settings.proton_source_prerelease', '预发布')" />
+                <el-switch v-model="source.enabled" :active-text="tr('settings.proton_enabled', '启用')" />
+                <el-input v-model="source.note" :placeholder="tr('settings.proton_source_note', '备注')" />
+                <el-button text type="danger" @click="removeSource(idx)">
+                  {{ tr('settings.proton_remove', '删除') }}
+                </el-button>
+              </div>
+              <el-button size="small" @click="addSource">{{ tr('settings.proton_add_source', '新增来源') }}</el-button>
+            </div>
+          </div>
+          <div v-else class="row-sub" style="margin-top: 10px;">
+            目录编辑器已折叠（推荐保持折叠以提升滚动性能）。
           </div>
         </div>
       </div>
@@ -1443,8 +1455,9 @@ watch(
   overflow: hidden;
   position: relative;
   /* Tech Glass Wrapper */
-  background: rgba(10, 15, 20, 0.75);
-  backdrop-filter: blur(12px);
+  background: rgba(10, 15, 20, 0.92);
+  will-change: transform;
+  contain: layout style;
 }
 
 .settings-menu {
@@ -1485,7 +1498,6 @@ watch(
   margin-top: -4px;
   border-radius: 999px;
   background: #f59e0b;
-  box-shadow: 0 0 10px rgba(245, 158, 11, 0.8);
   animation: menuGuideBlink 0.7s ease-in-out 0s 6;
 }
 
@@ -1504,24 +1516,24 @@ watch(
   background-color: rgba(0, 240, 255, 0.15);
   color: #00f0ff; /* Glowing cyan text */
   font-weight: 600;
-  text-shadow: 0 0 10px rgba(0, 240, 255, 0.5);
-  box-shadow: inset 4px 0 0 #00f0ff; /* Sharp cyan left marker */
+  border-left: 4px solid #00f0ff;
 }
 
 .settings-content {
   flex: 1;
   overflow-y: auto;
   padding: 32px 40px 60px 40px;
+  will-change: scroll-position;
 }
 
 .settings-panel {
   max-width: 800px;
-  animation: fadeIn 0.4s ease-out;
+  animation: fadeIn 0.15s ease-out;
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .panel-title {
@@ -1533,7 +1545,6 @@ watch(
   border-bottom: 1px solid rgba(0, 240, 255, 0.3);
   letter-spacing: 1px;
   text-transform: uppercase;
-  text-shadow: 0 0 12px rgba(0, 240, 255, 0.4);
 }
 
 .settings-guide-banner {
@@ -1594,14 +1605,11 @@ watch(
   border: 1px solid rgba(0, 240, 255, 0.2);
   border-radius: 4px; /* Sharper */
   background: rgba(10, 15, 20, 0.6); /* Solid translucent */
-  box-shadow: 0 4px 20px rgba(0, 240, 255, 0.05), inset 0 0 10px rgba(0, 240, 255, 0.02);
   padding: 20px;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .section-block:hover, .family-card:hover {
   background: rgba(15, 20, 25, 0.8);
-  box-shadow: 0 8px 30px rgba(0, 240, 255, 0.1), inset 0 1px 0 rgba(0, 240, 255, 0.2);
 }
 
 .section-header {
@@ -1683,11 +1691,20 @@ watch(
   gap: 12px;
 }
 
+.family-card {
+  content-visibility: auto;
+  contain-intrinsic-size: 240px;
+}
+
+.proton-editor-wrap {
+  content-visibility: auto;
+  contain-intrinsic-size: 720px;
+}
+
 .family-title {
   font-size: 16px;
   color: #fff;
   font-weight: 600;
-  text-shadow: 0 0 8px rgba(255, 255, 255, 0.2);
 }
 
 .family-key {
@@ -1795,12 +1812,8 @@ watch(
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
   background: rgba(0, 0, 0, 0.2);
-  transition: background 0.2s;
 }
 
-.dxvk-local-item:hover {
-  background: rgba(255, 255, 255, 0.05);
-}
 
 .dxvk-local-ver {
   font-size: 15px;
@@ -1869,7 +1882,6 @@ watch(
   font-size: 40px;
   color: #fff;
   animation: dl-spin 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
-  text-shadow: 0 0 15px rgba(255,255,255,0.5);
 }
 
 @keyframes dl-spin {
@@ -1912,17 +1924,19 @@ watch(
 
 :deep(.el-input__wrapper), :deep(.el-select__wrapper) {
   background-color: rgba(0, 0, 0, 0.5) !important;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2) inset !important;
-  border-radius: 4px; /* Sharp corners */
-  transition: all 0.2s;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  box-shadow: none !important;
+  border-radius: 4px;
 }
 
 :deep(.el-input__wrapper:hover), :deep(.el-select__wrapper:hover) {
-  box-shadow: 0 0 0 1px rgba(0, 240, 255, 0.5) inset !important;
+  border-color: rgba(0, 240, 255, 0.5) !important;
+  box-shadow: none !important;
 }
 
 :deep(.el-input__wrapper.is-focus), :deep(.el-select__wrapper.is-focus) {
-  box-shadow: 0 0 0 1px #00f0ff inset, 0 0 10px rgba(0, 240, 255, 0.3) !important;
+  border-color: #00f0ff !important;
+  box-shadow: none !important;
   background-color: rgba(0, 240, 255, 0.05) !important;
 }
 
@@ -1939,7 +1953,6 @@ watch(
 :deep(.el-switch.is-checked .el-switch__core) {
   background-color: #00f0ff;
   border-color: #00f0ff;
-  box-shadow: 0 0 10px rgba(0, 240, 255, 0.4);
 }
 :deep(.el-switch.is-checked .el-switch__core .el-switch__action) {
   background-color: #000;
@@ -1955,7 +1968,6 @@ watch(
   border: 1px solid rgba(0, 240, 255, 0.5);
   color: #00f0ff;
   border-radius: 4px;
-  transition: all 0.2s ease;
   text-transform: uppercase;
   font-size: 13px;
   font-weight: 600;
@@ -1965,7 +1977,6 @@ watch(
 :deep(.el-button:hover:not(.is-disabled)) {
   background-color: #00f0ff;
   color: #000;
-  box-shadow: 0 0 15px rgba(0, 240, 255, 0.6);
   border-color: #00f0ff;
 }
 
@@ -1973,13 +1984,11 @@ watch(
   background-color: rgba(0, 240, 255, 0.2);
   color: #00f0ff;
   border: 1px solid #00f0ff;
-  box-shadow: inset 0 0 8px rgba(0, 240, 255, 0.3);
 }
 
 :deep(.el-button--primary:hover:not(.is-disabled)) {
   background-color: #00f0ff;
   color: #000;
-  box-shadow: 0 0 20px rgba(0, 240, 255, 0.8);
 }
 
 :deep(.el-button.is-disabled) {

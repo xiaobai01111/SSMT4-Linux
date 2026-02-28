@@ -228,7 +228,6 @@ onUnmounted(() => {
             rgba(255, 255, 255, 0.15) 0%,
             rgba(255, 255, 255, 0.05) 40%,
             rgba(255, 255, 255, 0.02) 100%);
-    backdrop-filter: blur(3px);
 
     /* Delicate but distinct border */
     border: 1px solid rgba(255, 255, 255, 0.25);
@@ -242,11 +241,7 @@ onUnmounted(() => {
     justify-content: center;
 
     /* Constant radiating light (Flowing Light Overflowing) */
-    box-shadow:
-        0 0 12px rgba(130, 200, 255, 0.15),
-        inset 0 0 15px rgba(255, 255, 255, 0.1);
-
-    transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+    transition: transform 0.2s, border-color 0.2s;
     overflow: hidden;
 
     /* Breathing light effect */
@@ -257,16 +252,10 @@ onUnmounted(() => {
 
     0%,
     100% {
-        box-shadow:
-            0 0 12px rgba(130, 200, 255, 0.15),
-            inset 0 0 15px rgba(255, 255, 255, 0.1);
         border-color: rgba(255, 255, 255, 0.25);
     }
 
     50% {
-        box-shadow:
-            0 0 20px rgba(130, 210, 255, 0.3),
-            inset 0 0 20px rgba(255, 255, 255, 0.2);
         border-color: rgba(255, 255, 255, 0.45);
     }
 }
@@ -351,13 +340,11 @@ onUnmounted(() => {
     transform: translateY(-4px);
     /* Brighter crystal effect on hover */
     border-color: rgba(255, 255, 255, 0.5);
-    box-shadow: inset 0 0 20px rgba(255, 255, 255, 0.2);
 }
 
 .game-card.active .game-icon-wrapper {
     /* Bright glossy border for active state */
     border-color: rgba(255, 255, 255, 0.9);
-    box-shadow: inset 0 0 15px rgba(255, 255, 255, 0.3), 0 0 10px rgba(255, 255, 255, 0.3);
 }
 
 .game-icon {
@@ -381,10 +368,8 @@ onUnmounted(() => {
     font-size: 11px;
     font-weight: 600;
     color: #fff;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
     background: rgba(0, 0, 0, 0.65);
     /* Dark semi-transparent bar */
-    backdrop-filter: blur(2px);
 
     padding: 2px 0;
     /* Minimal vertical padding */

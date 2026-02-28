@@ -125,10 +125,10 @@ onUnmounted(() => {
     </div>
     
     <!-- Home & Websites & Settings Ambient Shadow Layer -->
-    <div class="home-shadow-layer" v-if="route.path === '/' || route.path === '/websites'"></div>
+    <div class="home-shadow-layer" v-show="route.path === '/' || route.path === '/websites'"></div>
 
     <!-- Global Mask Layer for Game Library Page -->
-    <div v-if="route.path === '/games'" class="global-dim-layer"></div>
+    <div v-show="route.path === '/games'" class="global-dim-layer"></div>
 
     <el-config-provider>
       <div class="app-container">
@@ -207,6 +207,7 @@ input, textarea {
   background-size: cover;
   background-position: center;
   will-change: opacity;
+  contain: strict;
 }
 
 /* Transition Classes */
@@ -218,10 +219,6 @@ input, textarea {
 .bg-trans-enter-from,
 .bg-trans-leave-to {
   opacity: 0;
-}
-
-.bg-video {
-  /* Removed, replaced by .bg-item */
 }
 
 .home-shadow-layer {
@@ -280,6 +277,7 @@ input, textarea {
   padding: 0;
   overflow: hidden;
   position: relative;
+  contain: layout style;
   /* Content area: Configurable */
   background-color: rgba(255, 255, 255, var(--content-bg-opacity, 0.55)); 
   backdrop-filter: none;
@@ -343,16 +341,11 @@ input, textarea {
 /* Page Transition Effects */
 .page-blur-enter-active,
 .page-blur-leave-active {
-  transition: opacity 0.25s ease, transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity 0.2s ease;
 }
 
-.page-blur-enter-from {
-  opacity: 0;
-  transform: translateY(15px);
-}
-
+.page-blur-enter-from,
 .page-blur-leave-to {
   opacity: 0;
-  transform: translateY(-15px);
 }
 </style>

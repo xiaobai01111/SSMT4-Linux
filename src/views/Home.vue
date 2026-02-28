@@ -30,7 +30,8 @@ const router = useRouter()
 const getGameName = (game: any) => te(`games.${game.name}`) ? t(`games.${game.name}`) : (game.displayName || game.name)
 const hasCurrentGame = computed(() => {
   const gameName = appSettings.currentConfigName;
-  return !!gameName && gameName !== 'Default';
+  if (!gameName || gameName === 'Default') return false;
+  return gamesList.some((g) => g.name === gameName);
 });
 
 
@@ -97,6 +98,22 @@ const currentDisplayName = computed(() => {
 });
 const settingsModalRef = ref<InstanceType<typeof GameSettingsModal> | null>(null);
 
+const ensureSettingsGameSelected = async (): Promise<boolean> => {
+  const current = String(appSettings.currentConfigName || '').trim();
+  if (current && current !== 'Default' && gamesList.some((g) => g.name === current)) {
+    return true;
+  }
+
+  const fallback = sidebarGames.value[0] || gamesList[0];
+  if (fallback) {
+    switchToGame(fallback);
+    return true;
+  }
+
+  await showMessage('请先在游戏库添加并选择一个游戏配置。', { title: '提示', kind: 'info' });
+  return false;
+};
+
 type RuntimeFocusTarget = 'all' | 'wine_version' | 'dxvk' | 'vkd3d';
 type GlobalSettingsMenu = 'proton' | 'dxvk' | 'vkd3d';
 type OnboardingSettingsTab = 'info' | 'game' | 'runtime' | 'system';
@@ -122,6 +139,7 @@ const openGlobalSettingsMenu = async (
 };
 
 const openRuntimeSettings = async (reason?: string, focusTarget: RuntimeFocusTarget = 'all') => {
+  if (!(await ensureSettingsGameSelected())) return;
   showSettings.value = true;
   await nextTick();
   settingsModalRef.value?.switchTab?.('runtime');
@@ -135,6 +153,7 @@ const openRuntimeSettings = async (reason?: string, focusTarget: RuntimeFocusTar
 };
 
 const openGameSettingsGameTab = async () => {
+  if (!(await ensureSettingsGameSelected())) return;
   showSettings.value = true;
   await nextTick();
   settingsModalRef.value?.switchTab?.('game');
@@ -144,6 +163,7 @@ const openGameSettingsGameTab = async () => {
 };
 
 const openGameSettingsTab = async (tab: OnboardingSettingsTab, runtimeFocus: RuntimeFocusTarget = 'all') => {
+  if (!(await ensureSettingsGameSelected())) return;
   showDownload.value = false;
   showSettings.value = true;
   await nextTick();
@@ -167,6 +187,7 @@ const applyOnboardingHomeAction = async (detail?: OnboardingHomeAction) => {
     return;
   }
   if (detail.type === 'open_download_modal') {
+    if (!(await ensureSettingsGameSelected())) return;
     showSettings.value = false;
     showDownload.value = true;
     return;
@@ -268,18 +289,16 @@ const checkExecutablePathMismatch = async (gameName: string, gameConfig: any) =>
   const roots = buildExecutableCheckRoots(preset, configuredPath, configuredGameFolder);
   if (roots.length === 0) return;
 
+  // 并行探测所有根目录，取第一个有效结果
+  const probeResults = await Promise.allSettled(
+    roots.map(root => resolveDownloadedGameExecutable(presetRaw, root, launcherApi || undefined))
+  );
   let detectedPath: string | null = null;
-  for (const root of roots) {
-    try {
-      detectedPath = await resolveDownloadedGameExecutable(
-        presetRaw,
-        root,
-        launcherApi || undefined,
-      );
-    } catch {
-      detectedPath = null;
+  for (const r of probeResults) {
+    if (r.status === 'fulfilled' && r.value) {
+      detectedPath = r.value;
+      break;
     }
-    if (detectedPath) break;
   }
 
   const detected = normalizePathForCompare(String(detectedPath || ''));
@@ -304,29 +323,35 @@ const ensureRuntimeReady = async (gameName: string, gameConfig: any, wineVersion
   let localDxvk: any[] = [];
   let dxvkInstalledInPrefix = false;
   let dxvkStatusCached: any | null = null;
-  try {
-    versions = await scanWineVersions();
-  } catch (e: any) {
-    await showMessage(`运行环境扫描失败，请在“游戏设置 -> 运行环境”检查 Proton 配置：${e}`, {
+
+  // 并行执行 3 个独立 IPC 调用
+  const [wineResult, dxvkLocalResult, dxvkStatusResult] = await Promise.allSettled([
+    scanWineVersions(),
+    scanLocalDxvk(),
+    detectDxvkStatus(gameName),
+  ]);
+
+  if (wineResult.status === 'rejected') {
+    await showMessage(`运行环境扫描失败，请在"游戏设置 -> 运行环境"检查 Proton 配置：${wineResult.reason}`, {
       title: '运行环境检查失败',
       kind: 'error',
     });
     await openGlobalSettingsMenu('proton', '运行环境扫描失败，请先配置 Proton');
     return false;
   }
+  versions = wineResult.value;
 
-  try {
-    localDxvk = await scanLocalDxvk();
-  } catch (e) {
-    console.warn('[launch] DXVK 本地缓存扫描失败:', e);
+  if (dxvkLocalResult.status === 'fulfilled') {
+    localDxvk = dxvkLocalResult.value;
+  } else {
+    console.warn('[launch] DXVK 本地缓存扫描失败:', dxvkLocalResult.reason);
   }
 
-  try {
-    const dxvkStatus = await detectDxvkStatus(gameName);
-    dxvkStatusCached = dxvkStatus;
-    dxvkInstalledInPrefix = !!dxvkStatus.installed;
-  } catch (e) {
-    console.warn('[launch] DXVK 安装状态检测失败:', e);
+  if (dxvkStatusResult.status === 'fulfilled') {
+    dxvkStatusCached = dxvkStatusResult.value;
+    dxvkInstalledInPrefix = !!dxvkStatusResult.value.installed;
+  } else {
+    console.warn('[launch] DXVK 安装状态检测失败:', dxvkStatusResult.reason);
   }
 
   if (versions.length === 0) {
@@ -735,7 +760,7 @@ onUnmounted(() => {
             </div>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item @click="showSettings = true" :disabled="!hasCurrentGame">
+                <el-dropdown-item @click="openGameSettingsTab('info')" :disabled="!hasCurrentGame">
                   <span style="display: flex; align-items: center; gap: 8px;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
                     {{ t('home.dropdown.gamesettings') }}
@@ -900,16 +925,14 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 24px;
-  background: rgba(255, 255, 255, 0.08); /* Light translucent base */
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(20, 25, 30, 0.85); /* Light translucent base */
   border: 1px solid rgba(0, 240, 255, 0.4); /* Bright cyan border */
   border-radius: 12px; /* Sharper corners for tech feel */
   padding: 8px 24px;
-  box-shadow: 0 10px 40px rgba(0, 240, 255, 0.1), 
-              inset 0 0 20px rgba(255, 255, 255, 0.05);
   position: relative;
   animation: none;
+  will-change: transform;
+  contain: layout style;
 }
 
 /* Tech Brackets (HUD Corners) */
@@ -992,16 +1015,12 @@ onUnmounted(() => {
 .dock-icon:hover {
   transform: translateY(-6px) scale(1.1);
   border-color: #00f0ff;
-  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.4),
-              0 0 15px rgba(0, 240, 255, 0.6);
 }
 
 /* Active Game State */
 .dock-icon.active {
   transform: translateY(-4px) scale(1.15);
   border-color: #fff;
-  box-shadow: 0 8px 15px rgba(0,0,0,0.5),
-              0 0 20px #fff;
   z-index: 10;
 }
 
@@ -1086,7 +1105,6 @@ onUnmounted(() => {
   cursor: pointer;
   overflow: hidden;
   transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
-  box-shadow: 0 5px 15px rgba(0, 240, 255, 0.4), inset 0 2px 0 rgba(255,255,255,0.6);
   transform: skewX(-10deg); /* Tech slant */
 }
 
@@ -1115,12 +1133,10 @@ onUnmounted(() => {
 .start-game-btn:hover {
   background: #fff; /* Flashes white on hover */
   transform: translateY(-2px) skewX(-10deg);
-  box-shadow: 0 10px 30px rgba(0, 240, 255, 0.8), inset 0 2px 0 rgba(255,255,255,1);
 }
 
 .start-game-btn:active {
   transform: translateY(2px) skewX(-10deg);
-  box-shadow: 0 2px 8px rgba(0, 240, 255, 0.3);
 }
 
 .icon-wrapper {
@@ -1133,8 +1149,6 @@ onUnmounted(() => {
   justify-content: center;
   color: #00f0ff;
   z-index: 2;
-  box-shadow: inset 0 0 10px rgba(0, 240, 255, 0.5);
-  transition: all 0.2s;
 }
 
 .start-game-btn:hover .icon-wrapper {
@@ -1171,7 +1185,6 @@ onUnmounted(() => {
   pointer-events: none;
   background: linear-gradient(135deg, #2E7D32 0%, #1B5E20 100%);
   color: #A5D6A7;
-  box-shadow: 0 8px 16px rgba(46, 125, 50, 0.3), inset 0 2px 0 rgba(255,255,255,0.1);
 }
 
 .start-game-btn.running .icon-wrapper {
@@ -1184,14 +1197,13 @@ onUnmounted(() => {
   height: 14px;
   background: #4CAF50;
   border-radius: 50%;
-  box-shadow: 0 0 10px #4CAF50;
   animation: none;
 }
 
 @keyframes pulse-green {
-  0% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.7); }
-  70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(76, 175, 80, 0); }
-  100% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(76, 175, 80, 0); }
+  0% { transform: scale(0.8); opacity: 0.7; }
+  70% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(0.8); opacity: 0.7; }
 }
 
 /* Settings Button */
@@ -1229,12 +1241,10 @@ onUnmounted(() => {
 }
 
 .glass-panel {
-  background: rgba(20, 20, 22, 0.6);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(20, 20, 22, 0.92);
+  will-change: transform;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
 }
 
 .mini-dl-bar {
@@ -1335,11 +1345,9 @@ onUnmounted(() => {
 <style>
 /* Global Settings Dropdown Overrides */
 .settings-dropdown.el-popper {
-  background: rgba(20, 20, 22, 0.85) !important;
-  backdrop-filter: blur(8px) !important;
+  background: rgba(20, 20, 22, 0.95) !important;
   border: 1px solid rgba(255, 255, 255, 0.1) !important;
   border-radius: 16px !important;
-  box-shadow: 0 10px 40px rgba(0,0,0,0.5) !important;
 }
 
 .settings-dropdown .el-popper__arrow::before {

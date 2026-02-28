@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+﻿                                                        0<script setup lang="ts">
 import { ref } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { appSettings } from '../store';
@@ -132,9 +132,8 @@ const navTo = (path: string) => {
   left: 0;
   z-index: 9999;
   user-select: none;
-  background: rgba(0, 0, 0, 0.5); /* Darker background */
-  backdrop-filter: blur(12px); /* stronger blur */
-  transition: background 0.3s ease, backdrop-filter 0.3s ease;
+  background: rgba(8, 8, 12, 0.92);
+  transition: background 0.3s ease;
 }
 
 .nav-controls {

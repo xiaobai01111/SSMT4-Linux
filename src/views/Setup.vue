@@ -174,7 +174,7 @@ const finish = () => {
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 16px;
   padding: 48px 40px;
-  backdrop-filter: blur(20px);
+  will-change: transform;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
   text-align: center;
 }

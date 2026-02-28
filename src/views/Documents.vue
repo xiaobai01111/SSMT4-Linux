@@ -180,16 +180,17 @@ const handleDocClick = (e: MouseEvent) => {
   grid-template-columns: 240px 1fr;
   overflow: hidden;
   box-sizing: border-box;
-  animation: fadeIn 0.4s ease-out;
+  animation: fadeIn 0.15s ease-out;
 
   /* Tech Glass Wrapper */
-  background: rgba(10, 15, 20, 0.75);
-  backdrop-filter: blur(12px);
+  background: rgba(10, 15, 20, 0.92);
+  will-change: transform;
+  contain: layout style;
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .doc-sidebar {
@@ -209,7 +210,6 @@ const handleDocClick = (e: MouseEvent) => {
   padding: 4px 6px 12px 6px;
   text-transform: uppercase;
   letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
 }
 
 .doc-nav-btn {
@@ -236,8 +236,7 @@ const handleDocClick = (e: MouseEvent) => {
   background: rgba(0, 240, 255, 0.15);
   color: #00f0ff; /* Glowing cyan text */
   font-weight: 600;
-  text-shadow: 0 0 10px rgba(0, 240, 255, 0.5);
-  box-shadow: inset 4px 0 0 #00f0ff; /* Sharp cyan left marker */
+  border-left: 4px solid #00f0ff;
 }
 
 /* Hard tech button override */
@@ -259,7 +258,6 @@ const handleDocClick = (e: MouseEvent) => {
 .doc-open-btn:hover {
   background: #00f0ff;
   color: #000;
-  box-shadow: 0 0 15px rgba(0, 240, 255, 0.6);
   border-color: #00f0ff;
 }
 
@@ -294,7 +292,6 @@ const handleDocClick = (e: MouseEvent) => {
   height: 20px;
   background-color: #00f0ff;
   margin-right: 10px;
-  box-shadow: 0 0 10px rgba(0, 240, 255, 0.8);
 }
 
 .doc-link {
@@ -311,7 +308,6 @@ const handleDocClick = (e: MouseEvent) => {
 
 .doc-link:hover {
   text-decoration: underline;
-  text-shadow: 0 0 8px rgba(0, 240, 255, 0.6);
 }
 
 .doc-content {
@@ -331,7 +327,6 @@ const handleDocClick = (e: MouseEvent) => {
   color: #00f0ff;
   font-weight: 600;
   letter-spacing: 0.5px;
-  text-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
 }
 
 :deep(.markdown-body h1) { font-size: 26px; border-bottom: 1px solid rgba(0, 240, 255, 0.2); padding-bottom: 8px; margin-bottom: 24px; }
@@ -367,7 +362,6 @@ const handleDocClick = (e: MouseEvent) => {
   border-radius: 4px; /* Sharp */
   overflow-x: auto;
   margin-bottom: 24px;
-  box-shadow: inset 0 0 15px rgba(0, 240, 255, 0.05);
 }
 
 :deep(.markdown-body pre code) {
@@ -388,7 +382,6 @@ const handleDocClick = (e: MouseEvent) => {
 :deep(.markdown-body a:hover) {
   text-decoration: none;
   border-bottom-color: #00f0ff;
-  text-shadow: 0 0 8px rgba(0, 240, 255, 0.6);
 }
 
 @media (max-width: 980px) {
