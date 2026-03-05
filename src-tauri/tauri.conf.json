@@ -4,9 +4,9 @@
   "version": "0.0.7-beta",
   "identifier": "io.github.xiaobai01111.ssmt4linux",
   "build": {
-    "beforeDevCommand": "bun run dev",
+    "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run build",
+    "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
   "app": {

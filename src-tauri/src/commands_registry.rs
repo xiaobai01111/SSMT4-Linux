@@ -16,6 +16,12 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         commands::settings::get_version_check_info,
         commands::settings::get_resource_version_info,
         commands::settings::pull_resource_updates,
+        commands::settings::get_xxmi_package_sources,
+        commands::settings::scan_local_xxmi_packages,
+        commands::settings::fetch_xxmi_remote_versions,
+        commands::settings::download_xxmi_package,
+        commands::settings::deploy_xxmi_package,
+        commands::settings::delete_local_xxmi_package,
         // Process
         commands::process::run_resource_executable,
         // Game scanner

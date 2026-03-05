@@ -535,9 +535,29 @@ const activeTab = ref('info');
 const tabs = computed(() => [
   { id: 'info', label: '游戏信息' },
   { id: 'game', label: '游戏选项' },
+  { id: 'migoto', label: t('gamesettingsmodal.migoto.tabLabel') },
   { id: 'runtime', label: '运行环境' },
   { id: 'system', label: '系统选项' },
 ]);
+
+// 3DMigoto 启用状态（详细配置在 Settings > 3DMIGOTO 管理）
+const migotoEnabled = ref(false);
+
+const loadMigotoConfig = () => {
+  migotoEnabled.value = !!config.other?.migoto?.enabled;
+};
+
+const saveMigotoEnabled = async () => {
+  if (!config.other) config.other = {};
+  if (!config.other.migoto) config.other.migoto = {};
+  config.other.migoto.enabled = migotoEnabled.value;
+  try {
+    await saveConfig();
+    notify?.success(t('gamesettingsmodal.migoto.saved'), '');
+  } catch (e) {
+    notify?.error(t('gamesettingsmodal.migoto.saveFailed'), `${e}`);
+  }
+};
 type RuntimeFocusTarget = 'all' | 'wine_version' | 'dxvk' | 'vkd3d';
 const runtimeAttention = ref(false);
 const runtimeAttentionMessage = ref('');
@@ -769,6 +789,7 @@ const loadConfig = async () => {
     gameLang.value = typeof config.other.gameLang === 'string' ? config.other.gameLang : '';
     await refreshGameVersion();
     hasLoadedConfig.value = true;
+    loadMigotoConfig();
     // Note: configName is NOT set from file, but from props
   } catch (e) {
     console.error(t('gamesettingsmodal.error.failloadconfig'), e);
@@ -1186,7 +1207,36 @@ defineExpose({
               </div>
             </div>
 
-            <!-- ==================== Tab 3: 运行环境 ==================== -->
+            <!-- ==================== Tab 3: 3DMigoto ==================== -->
+            <div v-show="activeTab === 'migoto'" class="tab-pane" data-onboarding="game-settings-migoto-tab">
+
+              <!-- 启用/禁用开关 -->
+              <div class="setting-group">
+                <div class="setting-checkbox-row">
+                  <label class="checkbox-label" style="font-size: 15px; font-weight: 600;">
+                    <input type="checkbox" v-model="migotoEnabled" />
+                    {{ t('gamesettingsmodal.migoto.enabled') }}
+                  </label>
+                </div>
+                <div class="info-sub" style="margin-top:6px;">
+                  {{ migotoEnabled ? t('gamesettingsmodal.migoto.enabledHint') : t('gamesettingsmodal.migoto.disabledHint') }}
+                </div>
+              </div>
+
+              <!-- 保存 + 引导到 Settings -->
+              <div class="setting-group" style="margin-top: 16px;">
+                <div class="button-row">
+                  <button class="action-btn highlight" @click="saveMigotoEnabled">
+                    {{ t('gamesettingsmodal.migoto.save') }}
+                  </button>
+                </div>
+                <div class="info-sub" style="margin-top: 12px;">
+                  如需配置 3DMigoto 路径、注入方式、Mod 文件夹等详细设置，请前往<strong>「设置 → 3DMIGOTO 管理」</strong>页面。
+                </div>
+              </div>
+            </div>
+
+            <!-- ==================== Tab 4: 运行环境 ==================== -->
             <div
               v-show="activeTab === 'runtime'"
               class="tab-pane"

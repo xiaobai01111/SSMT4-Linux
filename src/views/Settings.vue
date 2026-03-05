@@ -19,6 +19,9 @@ import {
   scanLocalDxvk,
   scanLocalVkd3d,
   scanLocalProtonGrouped,
+  scanGames,
+  loadGameConfig,
+  saveGameConfig,
   showMessage,
   type DxvkLocalVersion,
   type DxvkRemoteVersion,
@@ -31,6 +34,16 @@ import {
   type ProtonRemoteVersionItem,
   type ProtonSource,
   type VersionCheckInfo,
+  type GameInfo,
+  getXxmiPackageSources,
+  scanLocalXxmiPackages,
+  fetchXxmiRemoteVersions,
+  downloadXxmiPackage,
+  deployXxmiPackage,
+  deleteLocalXxmiPackage,
+  type XxmiPackageSource,
+  type XxmiRemoteVersion,
+  type XxmiLocalPackage,
 } from '../api';
 import { useI18n } from 'vue-i18n';
 
@@ -50,6 +63,7 @@ const VALID_MENUS = new Set([
   'proton',
   'dxvk',
   'vkd3d',
+  'migoto',
 ]);
 
 const applyMenuFromRoute = () => {
@@ -723,6 +737,281 @@ const doDownloadVkd3d = async () => {
 
 const vkd3dLocalCount = computed(() => vkd3dLocalVersions.value.length);
 
+// ============================================================
+// 3DMIGOTO 管理
+// ============================================================
+const migotoGamesList = ref<GameInfo[]>([]);
+const migotoSelectedGame = ref('');
+const migotoLoaded = ref(false);
+const isMigotoSaving = ref(false);
+
+interface MigotoGameConfig {
+  enabled: boolean;
+  importer: string;
+  use_hook: boolean;
+  enforce_rendering: boolean;
+  enable_hunting: boolean;
+  dump_shaders: boolean;
+  mute_warnings: boolean;
+  calls_logging: boolean;
+  debug_logging: boolean;
+  unsafe_mode: boolean;
+  process_timeout: number;
+  // 路径配置
+  migoto_path: string;         // 3DMigoto 主程序/数据路径
+  importer_folder: string;     // 导入器文件夹
+  mod_folder: string;          // Mod 文件夹
+  shader_fixes_folder: string; // ShaderFixes 文件夹
+  d3dx_ini_path: string;       // d3dx.ini 自定义路径
+  // 中间层 Bridge 配置
+  bridge_exe_path: string;           // ssmt4-bridge.exe 路径
+  start_args: string;                // 游戏启动参数（空格分隔）
+  process_start_method: string;      // 进程启动方式
+  process_priority: string;          // 进程优先级
+  xxmi_dll_init_delay: number;       // DLL 初始化延迟 (ms)
+  extra_libraries_enabled: boolean;  // 额外库加载
+  extra_libraries_paths: string;     // 额外库路径（换行分隔）
+  custom_launch_enabled: boolean;    // 自定义启动命令
+  custom_launch_cmd: string;         // 自定义启动命令行
+  custom_launch_inject_mode: string; // 注入模式
+  pre_launch_enabled: boolean;       // 启动前脚本
+  pre_launch_cmd: string;            // 启动前命令
+  pre_launch_wait: boolean;          // 等待完成
+  post_load_enabled: boolean;        // 加载后脚本
+  post_load_cmd: string;             // 加载后命令
+  post_load_wait: boolean;           // 等待完成
+  // WWMI 专属
+  wwmi_configure_game: boolean;
+  wwmi_unlock_fps: boolean;
+  wwmi_perf_tweaks: boolean;
+  wwmi_disable_wounded_fx: boolean;
+}
+
+const defaultMigotoConfig: MigotoGameConfig = {
+  enabled: false,
+  importer: 'WWMI',
+  use_hook: true,
+  enforce_rendering: true,
+  enable_hunting: false,
+  dump_shaders: false,
+  mute_warnings: true,
+  calls_logging: false,
+  debug_logging: false,
+  unsafe_mode: false,
+  process_timeout: 30,
+  migoto_path: '',
+  importer_folder: '',
+  mod_folder: '',
+  shader_fixes_folder: '',
+  d3dx_ini_path: '',
+  // 中间层 Bridge 配置
+  bridge_exe_path: '',
+  start_args: '',
+  process_start_method: 'Native',
+  process_priority: 'Normal',
+  xxmi_dll_init_delay: 500,
+  extra_libraries_enabled: false,
+  extra_libraries_paths: '',
+  custom_launch_enabled: false,
+  custom_launch_cmd: '',
+  custom_launch_inject_mode: 'Hook',
+  pre_launch_enabled: false,
+  pre_launch_cmd: '',
+  pre_launch_wait: true,
+  post_load_enabled: false,
+  post_load_cmd: '',
+  post_load_wait: true,
+  // WWMI 专属
+  wwmi_configure_game: true,
+  wwmi_unlock_fps: true,
+  wwmi_perf_tweaks: true,
+  wwmi_disable_wounded_fx: false,
+};
+
+const migotoConfig = reactive<MigotoGameConfig>({ ...defaultMigotoConfig });
+
+const migotoImporterOptions = [
+  { value: 'WWMI', label: '鸣潮 (WWMI)' },
+  { value: 'ZZMI', label: '绝区零 (ZZMI)' },
+  { value: 'SRMI', label: '崩铁 (SRMI)' },
+  { value: 'GIMI', label: '原神 (GIMI)' },
+  { value: 'HIMI', label: '崩坏3 (HIMI)' },
+];
+
+const isMigotoWwmi = computed(() => migotoConfig.importer === 'WWMI');
+
+const refreshMigotoGamesList = async () => {
+  try {
+    const games = await scanGames();
+    migotoGamesList.value = games;
+    if (!migotoSelectedGame.value && games.length > 0) {
+      migotoSelectedGame.value = games[0].name;
+    }
+  } catch (e) {
+    console.warn('[migoto] 获取游戏列表失败:', e);
+  }
+};
+
+const loadMigotoGameConfig = async () => {
+  const gameName = migotoSelectedGame.value;
+  if (!gameName) return;
+  try {
+    const data = await loadGameConfig(gameName);
+    const saved = data?.other?.migoto;
+    if (saved && typeof saved === 'object') {
+      Object.assign(migotoConfig, { ...defaultMigotoConfig, ...saved });
+    } else {
+      Object.assign(migotoConfig, { ...defaultMigotoConfig });
+    }
+  } catch (e) {
+    console.warn('[migoto] 加载游戏配置失败:', e);
+    Object.assign(migotoConfig, { ...defaultMigotoConfig });
+  }
+};
+
+const saveMigotoGameConfig = async () => {
+  const gameName = migotoSelectedGame.value;
+  if (!gameName || isMigotoSaving.value) return;
+  try {
+    isMigotoSaving.value = true;
+    const data = await loadGameConfig(gameName);
+    data.other = data.other || {};
+    data.other.migoto = { ...migotoConfig };
+    await saveGameConfig(gameName, data);
+    await showMessage('3DMigoto 配置已保存', { title: '成功', kind: 'info' });
+  } catch (e) {
+    await showMessage(`保存 3DMigoto 配置失败: ${e}`, { title: '错误', kind: 'error' });
+  } finally {
+    isMigotoSaving.value = false;
+  }
+};
+
+const selectMigotoPath = async (field: keyof MigotoGameConfig) => {
+  const fileFields: Array<keyof MigotoGameConfig> = ['d3dx_ini_path', 'bridge_exe_path'];
+  const isDir = !fileFields.includes(field);
+  const filterMap: Partial<Record<keyof MigotoGameConfig, { name: string; extensions: string[] }[]>> = {
+    d3dx_ini_path: [{ name: 'INI 文件', extensions: ['ini'] }],
+    bridge_exe_path: [{ name: '可执行文件', extensions: ['exe'] }],
+  };
+  const selected = await openFileDialog({
+    directory: isDir,
+    multiple: false,
+    title: isDir ? '选择文件夹' : `选择文件`,
+    filters: filterMap[field],
+  });
+  if (selected && typeof selected === 'string') {
+    (migotoConfig as any)[field] = selected;
+  }
+};
+
+watch(() => migotoSelectedGame.value, async () => {
+  await loadMigotoGameConfig();
+});
+
+// ============================================================
+// XXMI 资源包下载管理
+// ============================================================
+const xxmiSources = ref<XxmiPackageSource[]>([]);
+const xxmiSelectedSource = ref('xxmi-libs');
+const xxmiRemoteVersions = ref<XxmiRemoteVersion[]>([]);
+const xxmiLocalPackages = ref<XxmiLocalPackage[]>([]);
+const isXxmiFetching = ref(false);
+const isXxmiDownloading = ref(false);
+const xxmiDownloadingVersion = ref('');
+const xxmiMessage = ref('');
+const xxmiMessageType = ref<'success' | 'error' | ''>('');
+
+const loadXxmiSources = async () => {
+  try {
+    xxmiSources.value = await getXxmiPackageSources();
+  } catch (e) {
+    console.warn('[xxmi] 获取包源列表失败:', e);
+  }
+};
+
+const refreshXxmiLocal = async () => {
+  try {
+    const status = await scanLocalXxmiPackages();
+    xxmiLocalPackages.value = status.packages;
+  } catch (e) {
+    console.warn('[xxmi] 扫描本地包失败:', e);
+  }
+};
+
+const refreshXxmiRemote = async () => {
+  if (isXxmiFetching.value) return;
+  try {
+    isXxmiFetching.value = true;
+    xxmiMessage.value = '';
+    xxmiRemoteVersions.value = await fetchXxmiRemoteVersions(xxmiSelectedSource.value);
+  } catch (e) {
+    xxmiMessage.value = `获取远程版本失败: ${e}`;
+    xxmiMessageType.value = 'error';
+  } finally {
+    isXxmiFetching.value = false;
+  }
+};
+
+const doDownloadXxmi = async (ver: XxmiRemoteVersion) => {
+  if (isXxmiDownloading.value) return;
+  try {
+    isXxmiDownloading.value = true;
+    xxmiDownloadingVersion.value = ver.version;
+    xxmiMessage.value = `正在下载 ${ver.source_name} ${ver.version}...`;
+    xxmiMessageType.value = '';
+    const msg = await downloadXxmiPackage(ver.source_id, ver.version, ver.download_url);
+    xxmiMessage.value = msg;
+    xxmiMessageType.value = 'success';
+    await refreshXxmiLocal();
+    await refreshXxmiRemote();
+  } catch (e) {
+    xxmiMessage.value = `下载失败: ${e}`;
+    xxmiMessageType.value = 'error';
+  } finally {
+    isXxmiDownloading.value = false;
+    xxmiDownloadingVersion.value = '';
+  }
+};
+
+const doDeployXxmi = async (pkg: XxmiLocalPackage) => {
+  const targetDir = migotoConfig.importer_folder || migotoConfig.migoto_path;
+  if (!targetDir) {
+    xxmiMessage.value = '请先配置导入器文件夹或 3DMigoto 数据路径';
+    xxmiMessageType.value = 'error';
+    return;
+  }
+  try {
+    const msg = await deployXxmiPackage(pkg.source_id, pkg.version, targetDir);
+    xxmiMessage.value = msg;
+    xxmiMessageType.value = 'success';
+  } catch (e) {
+    xxmiMessage.value = `部署失败: ${e}`;
+    xxmiMessageType.value = 'error';
+  }
+};
+
+const doDeleteXxmi = async (pkg: XxmiLocalPackage) => {
+  try {
+    const msg = await deleteLocalXxmiPackage(pkg.source_id, pkg.version);
+    xxmiMessage.value = msg;
+    xxmiMessageType.value = 'success';
+    await refreshXxmiLocal();
+    await refreshXxmiRemote();
+  } catch (e) {
+    xxmiMessage.value = `删除失败: ${e}`;
+    xxmiMessageType.value = 'error';
+  }
+};
+
+watch(() => xxmiSelectedSource.value, async () => {
+  xxmiRemoteVersions.value = [];
+  await refreshXxmiRemote();
+});
+
+const xxmiFilteredLocal = computed(() =>
+  xxmiLocalPackages.value.filter(p => p.source_id === xxmiSelectedSource.value)
+);
+
 const selectCacheDir = async () => {
   const selected = await openFileDialog({
     directory: true,
@@ -772,6 +1061,10 @@ watch(
     if (menu === 'vkd3d' && !vkd3dLoaded.value) {
       await Promise.all([refreshVkd3dLocal(), refreshVkd3dRemote()]);
       vkd3dLoaded.value = true;
+    }
+    if (menu === 'migoto' && !migotoLoaded.value) {
+      await Promise.all([refreshMigotoGamesList(), loadXxmiSources(), refreshXxmiLocal()]);
+      migotoLoaded.value = true;
     }
   },
   { immediate: true }
@@ -826,6 +1119,10 @@ watch(
         <el-menu-item index="vkd3d">
           <el-icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16"/><path d="M6 20V8l6-4 6 4v12"/><path d="M9 12h6"/><path d="M9 16h6"/></svg></el-icon>
           <span>{{ tr('settings.vkd3d_manage_title', 'VKD3D 管理') }}</span>
+        </el-menu-item>
+        <el-menu-item index="migoto">
+          <el-icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></el-icon>
+          <span>3DMIGOTO 管理</span>
         </el-menu-item>
       </el-menu>
     </div>
@@ -1408,6 +1705,449 @@ watch(
                 }}
               </el-button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3DMIGOTO 管理 -->
+      <div v-if="activeMenu === 'migoto'" class="settings-panel dxvk-panel" data-onboarding="settings-migoto-panel">
+        <div class="panel-title">3DMIGOTO 管理</div>
+
+        <div class="section-block">
+          <div class="section-header">
+            <div>
+              <div class="section-title">按游戏配置 3DMigoto</div>
+              <div class="section-hint">
+                选择一个游戏，配置其 3DMigoto 路径、注入方式和高级选项。每个游戏的配置独立保存。
+              </div>
+            </div>
+          </div>
+
+          <!-- 游戏选择 -->
+          <div class="migoto-game-select" style="margin-top: 16px;">
+            <div class="editor-subtitle">选择游戏</div>
+            <el-select
+              v-model="migotoSelectedGame"
+              placeholder="选择要配置的游戏..."
+              class="dxvk-version-select"
+              filterable
+              style="width: 100%; max-width: 400px;"
+            >
+              <el-option
+                v-for="g in migotoGamesList"
+                :key="g.name"
+                :label="g.name"
+                :value="g.name"
+              />
+            </el-select>
+          </div>
+
+          <template v-if="migotoSelectedGame">
+
+            <!-- 路径配置 -->
+            <div class="dxvk-section" style="margin-top: 20px;">
+              <div class="editor-subtitle">路径配置</div>
+              <div class="section-hint" style="margin-bottom: 12px;">
+                留空则使用默认路径。自定义路径可指向任意位置（Linux 原生路径，启动时自动转换为 Wine 路径）。
+              </div>
+              <el-form label-width="160px" class="migoto-form">
+
+                <el-form-item label="3DMigoto 数据路径">
+                  <div style="display: flex; gap: 8px; width: 100%;">
+                    <el-input v-model="migotoConfig.migoto_path" placeholder="留空使用默认 (数据目录/3Dmigoto-data)" />
+                    <el-button size="small" @click="selectMigotoPath('migoto_path')">选择</el-button>
+                  </div>
+                  <div class="form-item-hint">3DMigoto 主程序、d3d11.dll 等核心文件所在文件夹。</div>
+                </el-form-item>
+
+                <el-form-item label="导入器文件夹">
+                  <div style="display: flex; gap: 8px; width: 100%;">
+                    <el-input v-model="migotoConfig.importer_folder" placeholder="留空使用默认 (数据路径/<importer>)" />
+                    <el-button size="small" @click="selectMigotoPath('importer_folder')">选择</el-button>
+                  </div>
+                  <div class="form-item-hint">导入器（如 WWMI、GIMI）的根目录，包含 d3dx.ini 等配置。</div>
+                </el-form-item>
+
+                <el-form-item label="Mod 文件夹">
+                  <div style="display: flex; gap: 8px; width: 100%;">
+                    <el-input v-model="migotoConfig.mod_folder" placeholder="留空使用默认 (导入器文件夹/Mods)" />
+                    <el-button size="small" @click="selectMigotoPath('mod_folder')">选择</el-button>
+                  </div>
+                  <div class="form-item-hint">存放 Mod 文件的文件夹，包含各 Mod 子目录。</div>
+                </el-form-item>
+
+                <el-form-item label="ShaderFixes 文件夹">
+                  <div style="display: flex; gap: 8px; width: 100%;">
+                    <el-input v-model="migotoConfig.shader_fixes_folder" placeholder="留空使用默认 (导入器文件夹/ShaderFixes)" />
+                    <el-button size="small" @click="selectMigotoPath('shader_fixes_folder')">选择</el-button>
+                  </div>
+                  <div class="form-item-hint">着色器修复文件所在文件夹。</div>
+                </el-form-item>
+
+                <el-form-item label="d3dx.ini 路径">
+                  <div style="display: flex; gap: 8px; width: 100%;">
+                    <el-input v-model="migotoConfig.d3dx_ini_path" placeholder="留空使用默认 (导入器文件夹/d3dx.ini)" />
+                    <el-button size="small" @click="selectMigotoPath('d3dx_ini_path')">选择</el-button>
+                  </div>
+                  <div class="form-item-hint">3DMigoto 核心配置文件路径。高级用户可指定自定义 ini 文件。</div>
+                </el-form-item>
+
+              </el-form>
+            </div>
+
+            <!-- Mod 导入器 + 注入方式 -->
+            <div class="dxvk-section" style="margin-top: 20px;">
+              <div class="editor-subtitle">Mod 导入器 &amp; 注入方式</div>
+              <el-form label-width="160px" class="migoto-form">
+
+                <el-form-item label="Mod 导入器">
+                  <el-select v-model="migotoConfig.importer" style="width: 280px;">
+                    <el-option
+                      v-for="opt in migotoImporterOptions"
+                      :key="opt.value"
+                      :label="opt.label"
+                      :value="opt.value"
+                    />
+                  </el-select>
+                  <div class="form-item-hint">选择与当前游戏对应的 Mod 导入器类型。</div>
+                </el-form-item>
+
+                <el-form-item label="注入方式">
+                  <el-radio-group v-model="migotoConfig.use_hook">
+                    <el-radio :value="true">Hook 注入（推荐）</el-radio>
+                    <el-radio :value="false">直接注入</el-radio>
+                  </el-radio-group>
+                  <div class="form-item-hint">Hook 注入兼容性更好；直接注入适用于 Hook 失败的情况。</div>
+                </el-form-item>
+
+              </el-form>
+            </div>
+
+            <!-- 高级选项 -->
+            <div class="dxvk-section" style="margin-top: 20px;">
+              <div class="editor-subtitle">高级选项</div>
+              <el-form label-width="160px" class="migoto-form">
+
+                <el-form-item label="强制渲染设置">
+                  <el-switch v-model="migotoConfig.enforce_rendering" />
+                  <div class="form-item-hint">确保 texture_hash 和 track_texture_updates 为正确值，避免 Mod 失效。</div>
+                </el-form-item>
+
+                <el-form-item label="静默警告">
+                  <el-switch v-model="migotoConfig.mute_warnings" />
+                  <div class="form-item-hint">隐藏 3DMigoto 控制台中的非关键警告。</div>
+                </el-form-item>
+
+                <el-form-item label="Hunting 模式">
+                  <el-switch v-model="migotoConfig.enable_hunting" />
+                  <div class="form-item-hint">用于 Mod 开发/调试，可实时查看和切换着色器。</div>
+                </el-form-item>
+
+                <el-form-item label="导出着色器">
+                  <el-switch v-model="migotoConfig.dump_shaders" />
+                  <div class="form-item-hint">将着色器 HLSL / ASM 导出到剪贴板，用于 Mod 开发。</div>
+                </el-form-item>
+
+                <el-form-item label="调用日志">
+                  <el-switch v-model="migotoConfig.calls_logging" />
+                  <div class="form-item-hint">记录 D3D11 API 调用，用于调试（影响性能）。</div>
+                </el-form-item>
+
+                <el-form-item label="调试日志">
+                  <el-switch v-model="migotoConfig.debug_logging" />
+                  <div class="form-item-hint">输出详细调试信息到日志文件。</div>
+                </el-form-item>
+
+                <el-form-item label="进程超时（秒）">
+                  <el-input-number v-model="migotoConfig.process_timeout" :min="5" :max="120" :step="5" style="width: 160px;" />
+                  <div class="form-item-hint">等待游戏进程启动和窗口出现的最大时间。</div>
+                </el-form-item>
+
+                <el-form-item label="不安全模式">
+                  <el-switch v-model="migotoConfig.unsafe_mode" />
+                  <div class="form-item-hint">跳过 DLL 签名验证。仅在信任所有 Mod 文件时启用。</div>
+                  <div v-if="migotoConfig.unsafe_mode" style="color: #f56c6c; font-size: 12px; margin-top: 4px;">
+                    ⚠ 不安全模式已启用，DLL 签名验证将被跳过。
+                  </div>
+                </el-form-item>
+
+              </el-form>
+            </div>
+
+            <!-- WWMI 专属设置 -->
+            <div v-if="isMigotoWwmi" class="dxvk-section" style="margin-top: 20px;">
+              <div class="editor-subtitle">鸣潮 (WWMI) 专属设置</div>
+              <el-form label-width="160px" class="migoto-form">
+
+                <el-form-item label="自动配置游戏">
+                  <el-switch v-model="migotoConfig.wwmi_configure_game" />
+                  <div class="form-item-hint">自动修改 SQLite 数据库和 INI 文件以优化游戏兼容性。</div>
+                </el-form-item>
+
+                <el-form-item label="解锁 120 FPS">
+                  <el-switch v-model="migotoConfig.wwmi_unlock_fps" />
+                  <div class="form-item-hint">将帧率限制提升至 120 FPS 并锁定设置。</div>
+                </el-form-item>
+
+                <el-form-item label="性能优化">
+                  <el-switch v-model="migotoConfig.wwmi_perf_tweaks" />
+                  <div class="form-item-hint">关闭光线追踪等高负载功能以提升兼容性和帧率。</div>
+                </el-form-item>
+
+                <el-form-item label="禁用受伤特效">
+                  <el-switch v-model="migotoConfig.wwmi_disable_wounded_fx" />
+                  <div class="form-item-hint">关闭受伤时的屏幕红边效果。</div>
+                </el-form-item>
+
+              </el-form>
+            </div>
+
+            <!-- 中间层 Bridge 配置 -->
+            <div class="dxvk-section" style="margin-top: 20px;">
+              <div class="editor-subtitle">中间层 (Bridge) 配置</div>
+              <div class="section-hint" style="margin-bottom: 12px;">
+                控制 ssmt4-bridge.exe 的行为，包括进程管理、自定义启动、脚本钩子等。
+              </div>
+              <el-form label-width="180px" class="migoto-form">
+
+                <el-form-item label="Bridge 可执行文件">
+                  <div style="display: flex; gap: 8px; width: 100%;">
+                    <el-input v-model="migotoConfig.bridge_exe_path" placeholder="留空使用默认 (数据目录/Windows/ssmt4-bridge.exe)" />
+                    <el-button size="small" @click="selectMigotoPath('bridge_exe_path')">选择</el-button>
+                  </div>
+                  <div class="form-item-hint">ssmt4-bridge.exe 的路径。留空则使用应用数据目录下的默认位置。</div>
+                </el-form-item>
+
+                <el-form-item label="游戏启动参数">
+                  <el-input v-model="migotoConfig.start_args" placeholder="留空不添加额外参数（如 -dx11 -windowed）" />
+                  <div class="form-item-hint">传递给游戏可执行文件的额外命令行参数，空格分隔。</div>
+                </el-form-item>
+
+                <el-form-item label="进程启动方式">
+                  <el-select v-model="migotoConfig.process_start_method" style="width: 200px;">
+                    <el-option value="Native" label="Native（原生）" />
+                    <el-option value="CreateProcess" label="CreateProcess" />
+                    <el-option value="ShellExecute" label="ShellExecute" />
+                  </el-select>
+                  <div class="form-item-hint">Bridge 启动游戏进程的方式。一般使用 Native 即可。</div>
+                </el-form-item>
+
+                <el-form-item label="进程优先级">
+                  <el-select v-model="migotoConfig.process_priority" style="width: 200px;">
+                    <el-option value="Normal" label="Normal（正常）" />
+                    <el-option value="AboveNormal" label="AboveNormal（高于正常）" />
+                    <el-option value="High" label="High（高）" />
+                    <el-option value="Realtime" label="Realtime（实时）" />
+                    <el-option value="BelowNormal" label="BelowNormal（低于正常）" />
+                    <el-option value="Idle" label="Idle（空闲）" />
+                  </el-select>
+                  <div class="form-item-hint">游戏进程的 Windows 优先级。提高优先级可能改善帧率稳定性。</div>
+                </el-form-item>
+
+                <el-form-item label="DLL 初始化延迟">
+                  <el-input-number v-model="migotoConfig.xxmi_dll_init_delay" :min="0" :max="5000" :step="50" style="width: 180px;" />
+                  <span style="margin-left: 8px; color: rgba(255,255,255,0.5); font-size: 12px;">ms</span>
+                  <div class="form-item-hint">注入 DLL 后等待初始化的时间（毫秒）。遇到崩溃可尝试增大此值。</div>
+                </el-form-item>
+
+              </el-form>
+            </div>
+
+            <!-- 自定义启动命令 -->
+            <div class="dxvk-section" style="margin-top: 20px;">
+              <div class="editor-subtitle">自定义启动命令</div>
+              <el-form label-width="180px" class="migoto-form">
+
+                <el-form-item label="启用">
+                  <el-switch v-model="migotoConfig.custom_launch_enabled" />
+                  <div class="form-item-hint">使用自定义命令代替默认的游戏启动方式。</div>
+                </el-form-item>
+
+                <template v-if="migotoConfig.custom_launch_enabled">
+                  <el-form-item label="命令行">
+                    <el-input v-model="migotoConfig.custom_launch_cmd" placeholder="自定义启动命令（Wine 路径格式）" />
+                    <div class="form-item-hint">在 Proton 容器内执行的命令。路径将自动转换为 Wine 格式。</div>
+                  </el-form-item>
+
+                  <el-form-item label="注入模式">
+                    <el-select v-model="migotoConfig.custom_launch_inject_mode" style="width: 200px;">
+                      <el-option value="Hook" label="Hook 注入" />
+                      <el-option value="Direct" label="直接注入" />
+                    </el-select>
+                    <div class="form-item-hint">自定义启动时使用的 DLL 注入方式。</div>
+                  </el-form-item>
+                </template>
+
+              </el-form>
+            </div>
+
+            <!-- 启动前/加载后脚本 -->
+            <div class="dxvk-section" style="margin-top: 20px;">
+              <div class="editor-subtitle">脚本钩子</div>
+              <div class="section-hint" style="margin-bottom: 12px;">
+                在游戏启动前后执行自定义命令，可用于清理缓存、备份存档等。
+              </div>
+              <el-form label-width="180px" class="migoto-form">
+
+                <el-form-item label="启动前脚本">
+                  <el-switch v-model="migotoConfig.pre_launch_enabled" />
+                </el-form-item>
+                <template v-if="migotoConfig.pre_launch_enabled">
+                  <el-form-item label="命令">
+                    <el-input v-model="migotoConfig.pre_launch_cmd" placeholder="游戏启动前执行的命令" />
+                  </el-form-item>
+                  <el-form-item label="等待完成">
+                    <el-switch v-model="migotoConfig.pre_launch_wait" />
+                    <div class="form-item-hint">启用后将等待命令执行完毕再启动游戏。</div>
+                  </el-form-item>
+                </template>
+
+                <el-form-item label="加载后脚本">
+                  <el-switch v-model="migotoConfig.post_load_enabled" />
+                </el-form-item>
+                <template v-if="migotoConfig.post_load_enabled">
+                  <el-form-item label="命令">
+                    <el-input v-model="migotoConfig.post_load_cmd" placeholder="DLL 注入完成后执行的命令" />
+                  </el-form-item>
+                  <el-form-item label="等待完成">
+                    <el-switch v-model="migotoConfig.post_load_wait" />
+                    <div class="form-item-hint">启用后将等待命令执行完毕再继续。</div>
+                  </el-form-item>
+                </template>
+
+              </el-form>
+            </div>
+
+            <!-- 额外库加载 -->
+            <div class="dxvk-section" style="margin-top: 20px;">
+              <div class="editor-subtitle">额外库加载</div>
+              <el-form label-width="180px" class="migoto-form">
+
+                <el-form-item label="启用">
+                  <el-switch v-model="migotoConfig.extra_libraries_enabled" />
+                  <div class="form-item-hint">在 DLL 注入时加载额外的动态库。</div>
+                </el-form-item>
+
+                <el-form-item v-if="migotoConfig.extra_libraries_enabled" label="库路径">
+                  <el-input
+                    v-model="migotoConfig.extra_libraries_paths"
+                    type="textarea"
+                    :rows="4"
+                    placeholder="每行一个 Linux 路径，例如：&#10;/home/user/libs/reshade.dll&#10;/home/user/libs/custom.dll"
+                  />
+                  <div class="form-item-hint">每行一个 Linux 路径，启动时自动转换为 Wine 路径。</div>
+                </el-form-item>
+
+              </el-form>
+            </div>
+
+            <!-- 保存按钮 -->
+            <div style="margin-top: 24px; display: flex; gap: 12px;">
+              <el-button type="primary" @click="saveMigotoGameConfig" :loading="isMigotoSaving">
+                {{ isMigotoSaving ? '保存中...' : '保存配置' }}
+              </el-button>
+              <el-button @click="loadMigotoGameConfig">重新加载</el-button>
+            </div>
+
+          </template>
+        </div>
+
+        <!-- XXMI 资源包下载 -->
+        <div class="section-block" style="margin-top: 28px;">
+          <div class="section-header">
+            <div>
+              <div class="section-title">XXMI 资源包下载</div>
+              <div class="section-hint">
+                从原版 XXMI 项目 (SpectrumQT) 的 GitHub Releases 下载 3DMigoto 核心库和各游戏导入器包。
+              </div>
+            </div>
+          </div>
+
+          <!-- 包源选择 -->
+          <div style="margin-top: 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+            <div class="editor-subtitle" style="margin: 0;">包源</div>
+            <el-select
+              v-model="xxmiSelectedSource"
+              style="width: 320px;"
+              class="dxvk-version-select"
+            >
+              <el-option
+                v-for="src in xxmiSources"
+                :key="src.id"
+                :label="src.display_name"
+                :value="src.id"
+              />
+            </el-select>
+            <el-button size="small" @click="refreshXxmiRemote" :loading="isXxmiFetching">
+              {{ isXxmiFetching ? '获取中...' : '刷新版本' }}
+            </el-button>
+          </div>
+
+          <!-- 状态消息 -->
+          <div
+            v-if="xxmiMessage"
+            :style="{
+              marginTop: '12px', padding: '8px 12px', borderRadius: '4px', fontSize: '13px',
+              background: xxmiMessageType === 'success' ? 'rgba(103,194,58,0.1)' : xxmiMessageType === 'error' ? 'rgba(245,108,108,0.1)' : 'rgba(144,147,153,0.1)',
+              color: xxmiMessageType === 'success' ? '#67c23a' : xxmiMessageType === 'error' ? '#f56c6c' : '#909399',
+            }"
+          >
+            {{ xxmiMessage }}
+          </div>
+
+          <!-- 本地已下载 -->
+          <div v-if="xxmiFilteredLocal.length > 0" style="margin-top: 16px;">
+            <div class="editor-subtitle">本地已下载</div>
+            <div class="xxmi-pkg-list">
+              <div v-for="pkg in xxmiFilteredLocal" :key="`${pkg.source_id}-${pkg.version}`" class="xxmi-pkg-item">
+                <div class="xxmi-pkg-info">
+                  <span class="xxmi-pkg-version">{{ pkg.version }}</span>
+                  <span class="xxmi-pkg-size">{{ formatBytes(pkg.size_bytes) }}</span>
+                </div>
+                <div class="xxmi-pkg-actions">
+                  <el-button size="small" type="primary" @click="doDeployXxmi(pkg)">
+                    部署
+                  </el-button>
+                  <el-button size="small" type="danger" @click="doDeleteXxmi(pkg)">
+                    删除
+                  </el-button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 远程可用版本 -->
+          <div v-if="xxmiRemoteVersions.length > 0" style="margin-top: 16px;">
+            <div class="editor-subtitle">可下载版本</div>
+            <div class="xxmi-pkg-list">
+              <div v-for="ver in xxmiRemoteVersions" :key="`${ver.source_id}-${ver.version}`" class="xxmi-pkg-item">
+                <div class="xxmi-pkg-info">
+                  <span class="xxmi-pkg-version">{{ ver.version }}</span>
+                  <span class="xxmi-pkg-size">{{ formatBytes(ver.asset_size) }}</span>
+                  <el-tag v-if="ver.installed" type="success" size="small" style="margin-left: 6px;">已下载</el-tag>
+                </div>
+                <div class="xxmi-pkg-actions">
+                  <el-button
+                    v-if="!ver.installed"
+                    size="small"
+                    type="primary"
+                    :loading="isXxmiDownloading && xxmiDownloadingVersion === ver.version"
+                    :disabled="isXxmiDownloading"
+                    @click="doDownloadXxmi(ver)"
+                  >
+                    {{ isXxmiDownloading && xxmiDownloadingVersion === ver.version ? '下载中...' : '下载' }}
+                  </el-button>
+                  <span v-if="ver.published_at" class="xxmi-pkg-date">
+                    {{ ver.published_at.substring(0, 10) }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 空状态 -->
+          <div v-else-if="!isXxmiFetching && xxmiSources.length > 0" style="margin-top: 16px; color: #909399; font-size: 13px;">
+            点击「刷新版本」获取可用的 XXMI 资源包版本。
           </div>
         </div>
       </div>
@@ -1995,6 +2735,62 @@ watch(
   background-color: rgba(255, 255, 255, 0.05);
   color: rgba(255, 255, 255, 0.2);
   border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* XXMI 资源包列表 */
+.xxmi-pkg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.xxmi-pkg-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: rgba(0, 240, 255, 0.03);
+  border: 1px solid rgba(0, 240, 255, 0.15);
+  border-radius: 4px;
+  transition: border-color 0.2s;
+}
+
+.xxmi-pkg-item:hover {
+  border-color: rgba(0, 240, 255, 0.4);
+}
+
+.xxmi-pkg-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.xxmi-pkg-version {
+  font-weight: 600;
+  color: #00f0ff;
+  font-size: 14px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.xxmi-pkg-size {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+}
+
+.xxmi-pkg-date {
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 12px;
+  margin-left: 8px;
+}
+
+.xxmi-pkg-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 @media (max-width: 1280px) {

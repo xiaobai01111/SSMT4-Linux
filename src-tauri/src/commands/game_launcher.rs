@@ -798,9 +798,112 @@ async fn start_game_internal(
         None
     };
 
+    // 检查 3DMigoto 是否启用
+    let migoto_enabled = game_config_data
+        .as_ref()
+        .and_then(|c| c.pointer("/other/migoto/enabled"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let migoto_importer = game_config_data
+        .as_ref()
+        .and_then(|c| c.pointer("/other/migoto/importer"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("WWMI")
+        .to_string();
+
     // 实际要运行的可执行文件
-    // 优先级：jadeite > 游戏 exe
-    let (run_exe, extra_args) = if let Some(ref jade) = jadeite_exe {
+    // 优先级：3DMigoto bridge > jadeite > 游戏 exe
+    //
+    // 当 3DMigoto 启用时，bridge.exe 替代游戏 exe 作为启动目标。
+    // bridge 在同一 Proton 容器内运行，内部负责：
+    //   1. 配置 d3dx.ini
+    //   2. 优化 Mods/ShaderFixes
+    //   3. 部署并验证 DLL
+    //   4. 启动游戏进程
+    //   5. 注入 DLL（Hook 或 Direct）
+    //   6. 通过 stdout JSON 报告状态
+    let (run_exe, extra_args) = if migoto_enabled {
+        let app_data_dir = crate::configs::app_config::get_app_data_dir();
+        // 优先使用用户自定义的 bridge_exe_path，否则使用默认位置
+        let bridge_exe = game_config_data
+            .as_ref()
+            .and_then(|c| c.pointer("/other/migoto/bridge_exe_path"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| PathBuf::from(s))
+            .unwrap_or_else(|| app_data_dir.join("Windows").join("ssmt4-bridge.exe"));
+        if !bridge_exe.exists() {
+            return Err(format!(
+                "3DMigoto 已启用但桥接程序未找到: {}。请在设置中配置正确的 Bridge 可执行文件路径，或构建 ssmt4-bridge.exe。",
+                bridge_exe.display()
+            ));
+        }
+
+        // 生成 bridge-config.json
+        let game_folder_linux = game_root.to_string_lossy().to_string();
+        let game_exe_name = launch_exe
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("game.exe")
+            .to_string();
+
+        let mut bridge_config = super::bridge::build_bridge_config(
+            &migoto_importer,
+            &app_data_dir,
+            &game_folder_linux,
+            &game_exe_name,
+            game_config_data.as_ref(),
+        );
+
+        // 自动注入 Jadeite：如果是 HoYoverse 游戏且检测到已安装的 jadeite.exe，
+        // 将路径传入 bridge config，让 bridge 通过 jadeite.exe 启动游戏以绕过反作弊
+        if let Some(ref jade) = jadeite_exe {
+            let jade_wine = super::bridge::linux_to_wine_path(&jade.to_string_lossy());
+            bridge_config.jadeite = super::bridge::BridgeJadeite {
+                enabled: true,
+                exe_path: jade_wine.clone(),
+            };
+            info!("3DMigoto + Jadeite: bridge 将通过 {} 启动游戏", jade.display());
+        }
+
+        let config_path = super::bridge::write_bridge_config(&bridge_config, &app_data_dir)?;
+        let config_wine_path = super::bridge::linux_to_wine_path(&config_path.to_string_lossy());
+
+        // 注意: 不要设置 WINEDLLOVERRIDES d3d11=n,b
+        // 3DMigoto 的 d3d11.dll 是代理 DLL，其 DllMain 会内部 LoadLibrary("d3d11")
+        // 来获取"真正的"系统 d3d11.dll（DXVK）。如果设置 d3d11=n,b，
+        // Wine 会再次找到 3DMigoto 自己 → 循环依赖 → ERROR_DLL_INIT_FAILED (1114)。
+
+        // 3DMigoto 强制 DX11 模式，DXVK 负责 DX11→Vulkan 翻译。
+        // 启用异步着色器编译减少首次运行卡顿（用户可通过自定义环境变量覆盖）。
+        if !env.contains_key("DXVK_ASYNC") {
+            env.insert("DXVK_ASYNC".to_string(), "1".to_string());
+            info!("3DMigoto: 自动设置 DXVK_ASYNC=1 (异步着色器编译)");
+        }
+
+        info!(
+            "3DMigoto 启用: importer={}, bridge={}, config={}",
+            migoto_importer,
+            bridge_exe.display(),
+            config_path.display()
+        );
+        append_game_log(
+            &game_name,
+            "INFO",
+            "bridge",
+            format!(
+                "3DMigoto enabled: importer={}, bridge_exe={}, config={}",
+                migoto_importer,
+                bridge_exe.display(),
+                config_path.display()
+            ),
+        );
+
+        (
+            bridge_exe,
+            vec!["--config".to_string(), config_wine_path],
+        )
+    } else if let Some(ref jade) = jadeite_exe {
         info!("使用 jadeite 反作弊补丁: {}", jade.display());
         let win_game_path = format!("Z:{}", launch_exe.to_string_lossy().replace('/', "\\"));
         (jade.clone(), vec![win_game_path, "--".to_string()])
@@ -1165,6 +1268,27 @@ async fn start_game_internal(
                         exit_code, signal
                     ),
                 );
+
+                // Bridge 日志回读：始终读取 bridge-output.log
+                // Proton 会吞掉 GUI 子系统应用的 stdout，所以 bridge 同时写文件日志
+                {
+                    let bridge_log = crate::configs::app_config::get_app_data_dir()
+                        .join("Cache").join("bridge").join("bridge-output.log");
+                    if bridge_log.exists() {
+                        if let Ok(content) = std::fs::read_to_string(&bridge_log) {
+                            let level = if crashed { "WARN" } else { "INFO" };
+                            for line in content.lines().filter(|l| !l.trim().is_empty()) {
+                                info!("[bridge-log] {}", line);
+                                crate::commands::game_log::append_game_log_line(
+                                    &game_name_for_monitor,
+                                    level,
+                                    "bridge-log",
+                                    line,
+                                );
+                            }
+                        }
+                    }
+                }
             }
             Err(e) => {
                 crashed = true;

@@ -698,3 +698,60 @@ fn apply_data_dir(cfg: &AppConfig) {
     }
     tracing::info!("数据目录: {}", app_config::get_app_data_dir().display());
 }
+
+// ============================================================
+// 3DMigoto / XXMI 资源包管理
+// ============================================================
+
+#[tauri::command]
+pub fn get_xxmi_package_sources() -> Vec<crate::utils::migoto_packages::XxmiPackageSource> {
+    crate::utils::migoto_packages::known_package_sources()
+}
+
+#[tauri::command]
+pub fn scan_local_xxmi_packages() -> Result<crate::utils::migoto_packages::XxmiLocalStatus, String> {
+    Ok(crate::utils::migoto_packages::scan_local_xxmi_packages())
+}
+
+#[tauri::command]
+pub async fn fetch_xxmi_remote_versions(
+    source_id: &str,
+    settings: State<'_, Mutex<AppConfig>>,
+) -> Result<Vec<crate::utils::migoto_packages::XxmiRemoteVersion>, String> {
+    let github_token = {
+        let s = settings.lock().map_err(|e| e.to_string())?;
+        s.github_token.clone()
+    };
+    crate::utils::migoto_packages::fetch_xxmi_remote_versions(
+        source_id,
+        20,
+        Some(&github_token),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn download_xxmi_package(
+    source_id: &str,
+    version: &str,
+    download_url: &str,
+) -> Result<String, String> {
+    crate::utils::migoto_packages::download_xxmi_package(source_id, version, download_url).await
+}
+
+#[tauri::command]
+pub fn deploy_xxmi_package(
+    source_id: &str,
+    version: &str,
+    target_dir: &str,
+) -> Result<String, String> {
+    crate::utils::migoto_packages::deploy_xxmi_package(source_id, version, target_dir)
+}
+
+#[tauri::command]
+pub fn delete_local_xxmi_package(
+    source_id: &str,
+    version: &str,
+) -> Result<String, String> {
+    crate::utils::migoto_packages::delete_local_xxmi_package(source_id, version)
+}

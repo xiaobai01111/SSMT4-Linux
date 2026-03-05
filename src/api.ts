@@ -1177,3 +1177,63 @@ export async function openGameLogWindow(gameName: string): Promise<void> {
 export async function readGameLogSnapshot(maxLines?: number): Promise<GameLogSnapshot> {
   return invoke<GameLogSnapshot>('read_game_log_snapshot', { maxLines: maxLines ?? null });
 }
+
+// ============================================================
+// XXMI 资源包管理（3DMigoto / Mod Importer 包）
+// ============================================================
+
+export interface XxmiPackageSource {
+  id: string;
+  display_name: string;
+  github_repo: string;
+  asset_prefix: string;
+}
+
+export interface XxmiRemoteVersion {
+  source_id: string;
+  source_name: string;
+  version: string;
+  tag: string;
+  published_at: string;
+  download_url: string;
+  asset_name: string;
+  asset_size: number;
+  installed: boolean;
+  body: string;
+}
+
+export interface XxmiLocalPackage {
+  source_id: string;
+  source_name: string;
+  version: string;
+  extracted_path: string;
+  size_bytes: number;
+}
+
+export interface XxmiLocalStatus {
+  packages: XxmiLocalPackage[];
+}
+
+export async function getXxmiPackageSources(): Promise<XxmiPackageSource[]> {
+  return invoke<XxmiPackageSource[]>('get_xxmi_package_sources');
+}
+
+export async function scanLocalXxmiPackages(): Promise<XxmiLocalStatus> {
+  return invoke<XxmiLocalStatus>('scan_local_xxmi_packages');
+}
+
+export async function fetchXxmiRemoteVersions(sourceId: string): Promise<XxmiRemoteVersion[]> {
+  return invoke<XxmiRemoteVersion[]>('fetch_xxmi_remote_versions', { sourceId });
+}
+
+export async function downloadXxmiPackage(sourceId: string, version: string, downloadUrl: string): Promise<string> {
+  return invoke<string>('download_xxmi_package', { sourceId, version, downloadUrl });
+}
+
+export async function deployXxmiPackage(sourceId: string, version: string, targetDir: string): Promise<string> {
+  return invoke<string>('deploy_xxmi_package', { sourceId, version, targetDir });
+}
+
+export async function deleteLocalXxmiPackage(sourceId: string, version: string): Promise<string> {
+  return invoke<string>('delete_local_xxmi_package', { sourceId, version });
+}
