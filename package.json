@@ -7,8 +7,8 @@
     "sync-version": "bash scripts/sync-version.sh",
     "package:linux": "bash scripts/build-install-packages.sh",
     "package:appimage": "bash scripts/build-install-packages.sh --appimage-only",
-    "dev": "npm run sync-version && vite",
-    "build": "npm run sync-version && vue-tsc --noEmit && vite build",
+    "dev": "pnpm run sync-version && vite",
+    "build": "pnpm run sync-version && vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "gen-i18n-types": "bun scripts/gen-i18n-types.js"

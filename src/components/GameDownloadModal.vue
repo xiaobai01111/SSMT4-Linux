@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import {
   getGameState,
   getLauncherInstallerState,
@@ -35,6 +36,9 @@ import {
   cancelActive,
   getRepairableFailuresFor,
 } from '../downloadStore';
+
+const { t, te } = useI18n();
+const tr = (key: string, fallback: string) => (te(key) ? t(key) : fallback);
 
 const props = defineProps<{
   modelValue: boolean;
@@ -107,30 +111,30 @@ const currentRuntimeChannelMode = computed<RuntimeChannelMode>(() => {
 const runtimeChannelModeLabel = computed(() => {
   switch (currentRuntimeChannelMode.value) {
     case 'protected':
-      return `游戏(${channelProtectedValue.value})`;
+      return tr('gamedownload.channel.modeProtected', `游戏(${channelProtectedValue.value})`).replace('{value}', String(channelProtectedValue.value));
     case 'init':
-      return `初始化(${channelInitValue.value})`;
+      return tr('gamedownload.channel.modeInit', `初始化(${channelInitValue.value})`).replace('{value}', String(channelInitValue.value));
     default:
-      return '未知';
+      return tr('gamedownload.common.unknown', '未知');
   }
 });
 const runtimeChannelPillLabel = computed(() => {
   switch (currentRuntimeChannelMode.value) {
     case 'protected':
-      return '游戏模式';
+      return tr('gamedownload.channel.pillProtected', '游戏模式');
     case 'init':
-      return '初始化模式';
+      return tr('gamedownload.channel.pillInit', '初始化模式');
     default:
-      return '未知模式';
+      return tr('gamedownload.channel.pillUnknown', '未知模式');
   }
 });
 
 const protectionStatusLabel = computed(() => {
-  if (!protectionInfo.value?.hasProtections) return '该游戏暂无可用防护';
+  if (!protectionInfo.value?.hasProtections) return tr('gamedownload.protection.none', '该游戏暂无可用防护');
   if (protectionEnforceAtLaunch.value) {
-    return protectionApplied.value ? '防护状态：已启用（强制）' : '防护状态：未启用（将阻止启动）';
+    return protectionApplied.value ? tr('gamedownload.protection.enabledEnforced', '防护状态：已启用（强制）') : tr('gamedownload.protection.disabledEnforced', '防护状态：未启用（将阻止启动）');
   }
-  return protectionApplied.value ? '防护状态：已启用' : '防护状态：未启用';
+  return protectionApplied.value ? tr('gamedownload.protection.enabled', '防护状态：已启用') : tr('gamedownload.protection.disabled', '防护状态：未启用');
 });
 
 const protectionStatusClass = computed(() => {
@@ -205,7 +209,7 @@ const resolvedBizPrefix = (): string => {
 const ensureBizPrefixReady = (): boolean => {
   if (!isHoyoverseApi(launcherApi.value)) return true;
   if (resolvedBizPrefix()) return true;
-  error.value = '当前 HoYoverse 服务器缺少 biz_prefix，请检查游戏预设配置';
+  error.value = tr('gamedownload.messages.bizPrefixMissing', '当前 HoYoverse 服务器缺少 biz_prefix，请检查游戏预设配置');
   return false;
 };
 
@@ -217,23 +221,23 @@ const ensureRiskAcknowledged = async () => {
   if (appSettings.tosRiskAcknowledged) return true;
 
   const accepted = await askConfirm(
-    '本启动器为非官方工具，与游戏厂商无关。\n\n在 Linux/Wine/Proton 环境运行游戏，可能被反作弊误判，存在账号处罚（包括封禁）风险。\n\n是否确认你已理解并愿意自行承担风险？',
+    tr('gamedownload.messages.tosPrimary', '本启动器为非官方工具，与游戏厂商无关。\n\n在 Linux/Wine/Proton 环境运行游戏，可能被反作弊误判，存在账号处罚（包括封禁）风险。\n\n是否确认你已理解并愿意自行承担风险？'),
     {
-      title: 'ToS / 封禁风险提示',
+      title: tr('gamedownload.messages.title.tosRisk', 'ToS / 封禁风险提示'),
       kind: 'warning',
-      okLabel: '我已理解风险',
-      cancelLabel: '取消',
+      okLabel: tr('gamedownload.messages.ok.riskUnderstood', '我已理解风险'),
+      cancelLabel: tr('gamedownload.messages.cancel.cancel', '取消'),
     }
   );
   if (!accepted) return false;
 
   const second = await askConfirm(
-    '请再次确认：继续使用即表示你了解这是非官方方案，且可能导致账号风险。',
+    tr('gamedownload.messages.tosSecondary', '请再次确认：继续使用即表示你了解这是非官方方案，且可能导致账号风险。'),
     {
-      title: '二次确认',
+      title: tr('gamedownload.messages.title.secondConfirm', '二次确认'),
       kind: 'warning',
-      okLabel: '确认继续',
-      cancelLabel: '返回',
+      okLabel: tr('gamedownload.messages.ok.confirmContinue', '确认继续'),
+      cancelLabel: tr('gamedownload.messages.cancel.back', '返回'),
     }
   );
   if (!second) return false;
@@ -273,7 +277,7 @@ const refreshProtectionStatus = async () => {
 const setChannelMode = async (mode: 'init' | 'protected') => {
   if (isChannelModeBusy.value) return;
   if (!gameFolder.value) {
-    await showMessage('请先选择游戏安装目录', { title: '提示', kind: 'warning' });
+    await showMessage(tr('gamedownload.messages.needGameFolder', '请先选择游戏安装目录'), { title: tr('gamedownload.messages.title.info', '提示'), kind: 'warning' });
     return;
   }
   try {
@@ -282,12 +286,12 @@ const setChannelMode = async (mode: 'init' | 'protected') => {
     channelProtection.value = await setChannelProtectionMode(preset, mode, gameFolder.value);
     await refreshProtectionStatus();
     await showMessage(
-      mode === 'init' ? '已切换到初始化模式 (KR_ChannelId=19)' : '已切换到联机模式 (KR_ChannelId=205)',
-      { title: '渠道模式', kind: 'info' },
+      mode === 'init' ? tr('gamedownload.messages.switchInitDone', '已切换到初始化模式 (KR_ChannelId=19)') : tr('gamedownload.messages.switchProtectedDone', '已切换到联机模式 (KR_ChannelId=205)'),
+      { title: tr('gamedownload.channel.title', '渠道模式'), kind: 'info' },
     );
   } catch (e) {
     console.warn('[防护] 切换渠道模式失败:', e);
-    await showMessage(`切换渠道模式失败: ${e}`, { title: '错误', kind: 'error' });
+    await showMessage(tr('gamedownload.messages.switchModeFailed', `切换渠道模式失败: ${e}`).replace('{error}', String(e)), { title: tr('gamedownload.messages.title.error', '错误'), kind: 'error' });
   } finally {
     isChannelModeBusy.value = false;
   }
@@ -299,7 +303,7 @@ const loadState = async () => {
   const seq = ++loadSeq.value;
   const isStale = () => seq !== loadSeq.value || !props.modelValue;
   error.value = '';
-  statusMsg.value = '正在加载配置...';
+  statusMsg.value = tr('gamedownload.status.loadingConfig', '正在加载配置...');
   selectedServer.value = null;
   availableServers.value = [];
   availableLanguages.value = [];
@@ -352,7 +356,7 @@ const loadState = async () => {
     const matched = savedApi
       ? availableServers.value.find((s) => s.launcherApi.trim() === savedApi) || null
       : null;
-    selectedServer.value = matched || availableServers.value[0]; // 默认选择第一个（国服）
+    selectedServer.value = matched || availableServers.value[0];
     if (selectedServer.value) {
       launcherApi.value = selectedServer.value.launcherApi;
     }
@@ -361,7 +365,7 @@ const loadState = async () => {
   // 设置可用语言包
   availableLanguages.value = knownApi?.audioLanguages || [];
   if (availableLanguages.value.length > 0 && selectedLanguages.value.length === 0) {
-    selectedLanguages.value = ['zh-cn']; // 国服默认中文
+    selectedLanguages.value = ['zh-cn'];
   }
   console.log('[GameDownload] isSupported =', isSupported.value, ', servers =', availableServers.value.length);
 
@@ -443,13 +447,13 @@ const onServerChange = async (server: ServerOption) => {
 
 const checkState = async () => {
   if (!launcherApi.value || !gameFolder.value) {
-    error.value = '请先配置启动器 API 和游戏安装目录';
+    error.value = tr('gamedownload.messages.needLauncherAndFolder', '请先配置启动器 API 和游戏安装目录');
     return;
   }
   if (!isLauncherInstallerMode.value && !ensureBizPrefixReady()) return;
   isChecking.value = true;
   error.value = '';
-  statusMsg.value = '正在检查游戏状态...';
+  statusMsg.value = tr('gamedownload.status.checkingState', '正在检查游戏状态...');
   try {
     if (isLauncherInstallerMode.value) {
       const state = await getLauncherInstallerState(
@@ -472,7 +476,7 @@ const checkState = async () => {
     await refreshProtectionStatus();
     statusMsg.value = '';
   } catch (e: any) {
-    error.value = `检查状态失败: ${e}`;
+    error.value = tr('gamedownload.messages.checkStateFailed', `检查状态失败: ${e}`).replace('{error}', String(e));
     statusMsg.value = '';
   } finally {
     isChecking.value = false;
@@ -485,11 +489,11 @@ const startDownload = async () => {
     return;
   }
   if (!launcherApi.value || !gameFolder.value) {
-    await showMessage('请先配置下载源和安装目录，再开始下载。', { title: '提示', kind: 'warning' });
+    await showMessage(tr('gamedownload.messages.needSourceAndFolderForDownload', '请先配置下载源和安装目录，再开始下载。'), { title: tr('gamedownload.messages.title.info', '提示'), kind: 'warning' });
     return;
   }
   if (dlState.active) {
-    await showMessage('当前已有下载/校验任务正在进行，请稍候。', { title: '提示', kind: 'warning' });
+    await showMessage(tr('gamedownload.messages.taskRunning', '当前已有下载/校验任务正在进行，请稍候。'), { title: tr('gamedownload.messages.title.info', '提示'), kind: 'warning' });
     return;
   }
   if (!isLauncherInstallerMode.value && !ensureBizPrefixReady()) return;
@@ -526,16 +530,16 @@ const startVerify = async () => {
   }
   if (isLauncherInstallerMode.value) return;
   if (!launcherApi.value || !gameFolder.value) {
-    await showMessage('请先配置下载源和安装目录，再执行校验。', { title: '提示', kind: 'warning' });
+    await showMessage(tr('gamedownload.messages.needSourceAndFolderForVerify', '请先配置下载源和安装目录，再执行校验。'), { title: tr('gamedownload.messages.title.info', '提示'), kind: 'warning' });
     return;
   }
   if (dlState.active) {
-    await showMessage('当前已有下载/校验任务正在进行，请稍候。', { title: '提示', kind: 'warning' });
+    await showMessage(tr('gamedownload.messages.taskRunning', '当前已有下载/校验任务正在进行，请稍候。'), { title: tr('gamedownload.messages.title.info', '提示'), kind: 'warning' });
     return;
   }
   if (!gameState.value?.local_version) {
     await showMessage('未识别到本地版本号，将按远程清单尝试校验当前目录文件。', {
-      title: '提示',
+      title: tr('gamedownload.messages.title.info', '提示'),
       kind: 'info',
     });
   }
@@ -557,20 +561,20 @@ const startRepair = async () => {
   }
   if (isLauncherInstallerMode.value) return;
   if (isHoyoverseApi(launcherApi.value) || isSnowbreakApi(launcherApi.value)) {
-    await showMessage('当前游戏暂不支持按异常列表单文件修复。', { title: '提示', kind: 'warning' });
+    await showMessage(tr('gamedownload.messages.repairUnsupported', '当前游戏暂不支持按异常列表单文件修复。'), { title: tr('gamedownload.messages.title.info', '提示'), kind: 'warning' });
     return;
   }
   if (!launcherApi.value || !gameFolder.value) {
-    await showMessage('请先配置下载源和安装目录，再执行修复。', { title: '提示', kind: 'warning' });
+    await showMessage(tr('gamedownload.messages.needSourceAndFolderForRepair', '请先配置下载源和安装目录，再执行修复。'), { title: tr('gamedownload.messages.title.info', '提示'), kind: 'warning' });
     return;
   }
   if (dlState.active) {
-    await showMessage('当前已有下载/校验/修复任务正在进行，请稍候。', { title: '提示', kind: 'warning' });
+    await showMessage(tr('gamedownload.messages.taskRunningAny', '当前已有下载/校验/修复任务正在进行，请稍候。'), { title: tr('gamedownload.messages.title.info', '提示'), kind: 'warning' });
     return;
   }
   const files = repairableFailures.value;
   if (files.length === 0) {
-    await showMessage('当前没有可修复的异常文件，请先执行一次校验。', { title: '提示', kind: 'info' });
+    await showMessage(tr('gamedownload.messages.noRepairableFiles', '当前没有可修复的异常文件，请先执行一次校验。'), { title: tr('gamedownload.messages.title.info', '提示'), kind: 'info' });
     return;
   }
   if (!ensureBizPrefixReady()) return;
@@ -597,29 +601,29 @@ const applyProtectionAfterDownload = async () => {
 
     const protNames = (info.protections as any[]).map((p: any) => p.name).join('、');
     const confirmed = await askConfirm(
-      `检测到该游戏支持以下安全防护：\n\n${protNames}\n\n是否立即应用？`,
-      { title: '游戏安全防护', kind: 'warning', okLabel: '应用防护', cancelLabel: '跳过' }
+      tr('gamedownload.messages.protectionDetected', `检测到该游戏支持以下安全防护：\n\n${protNames}\n\n是否立即应用？`).replace('{protections}', protNames),
+      { title: tr('gamedownload.protection.title', '游戏安全防护'), kind: 'warning', okLabel: tr('gamedownload.protection.apply', '应用防护'), cancelLabel: tr('gamedownload.common.skip', '跳过') }
     );
     if (confirmed) {
       const result = await applyGameProtection(preset, gameFolder.value);
       console.log('[防护] 应用结果:', result);
       await refreshProtectionStatus();
       if (protectionApplied.value) {
-        await showMessage('游戏安全防护已成功应用！', { title: '防护完成', kind: 'info' });
+        await showMessage(tr('gamedownload.messages.protectionApplied', '游戏安全防护已成功应用！'), { title: tr('gamedownload.protection.doneTitle', '防护完成'), kind: 'info' });
       } else {
         const status = await checkGameProtectionStatus(preset, gameFolder.value || undefined);
         const missing = Array.isArray(status?.missing) && status.missing.length > 0
           ? status.missing.join('\n')
-          : '未知';
+          : tr('gamedownload.common.unknown', '未知');
         await showMessage(
-          `防护未完全生效，仍有以下问题：\n${missing}`,
-          { title: '防护部分完成', kind: 'warning' }
+          tr('gamedownload.messages.protectionPartial', `防护未完全生效，仍有以下问题：\n${missing}`).replace('{missing}', missing),
+          { title: tr('gamedownload.protection.partialTitle', '防护部分完成'), kind: 'warning' }
         );
       }
     }
   } catch (e) {
     console.warn('[防护] 应用失败:', e);
-    await showMessage(`应用防护失败: ${e}`, { title: '错误', kind: 'error' });
+    await showMessage(tr('gamedownload.messages.protectionApplyFailed', `应用防护失败: ${e}`).replace('{error}', String(e)), { title: tr('gamedownload.messages.title.error', '错误'), kind: 'error' });
   } finally {
     isProtectionBusy.value = false;
   }
@@ -631,8 +635,8 @@ const disableProtection = async () => {
     isProtectionBusy.value = true;
     const preset = getProtectionPreset();
     const yes = await askConfirm(
-      '禁用防护会恢复渠道参数为原始值并可能增加账号风险，确认继续？',
-      { title: '禁用防护', kind: 'warning', okLabel: '确认禁用', cancelLabel: '取消' }
+      tr('gamedownload.messages.disableProtectionConfirm', '禁用防护会恢复渠道参数为原始值并可能增加账号风险，确认继续？'),
+      { title: tr('gamedownload.protection.disableTitle', '禁用防护'), kind: 'warning', okLabel: tr('gamedownload.protection.confirmDisable', '确认禁用'), cancelLabel: tr('gamedownload.messages.cancel.cancel', '取消') }
     );
     if (!yes) return;
 
@@ -640,12 +644,12 @@ const disableProtection = async () => {
     await refreshProtectionStatus();
     const channelTip = result?.channel?.message;
     await showMessage(
-      channelTip ? `已禁用域名/文件防护。\n${channelTip}` : '已禁用防护',
-      { title: '已禁用', kind: 'info' },
+      channelTip ? tr('gamedownload.messages.disableProtectionWithTip', `已禁用域名/文件防护。\n${channelTip}`).replace('{tip}', channelTip) : tr('gamedownload.messages.disableProtectionDone', '已禁用防护'),
+      { title: tr('gamedownload.protection.disabledTitle', '已禁用'), kind: 'info' },
     );
   } catch (e) {
     console.warn('[防护] 禁用失败:', e);
-    await showMessage(`禁用防护失败: ${e}`, { title: '错误', kind: 'error' });
+    await showMessage(tr('gamedownload.messages.disableProtectionFailed', `禁用防护失败: ${e}`).replace('{error}', String(e)), { title: tr('gamedownload.messages.title.error', '错误'), kind: 'error' });
   } finally {
     isProtectionBusy.value = false;
   }
@@ -662,7 +666,7 @@ const pauseDownload = async () => {
 const resumeDownload = async () => {
   const resumed = await resumePaused(props.gameName);
   if (!resumed) {
-    await showMessage('当前没有可恢复的下载任务。', { title: '提示', kind: 'warning' });
+    await showMessage(tr('gamedownload.messages.noTaskToResume', '当前没有可恢复的下载任务。'), { title: tr('gamedownload.messages.title.info', '提示'), kind: 'warning' });
   }
 };
 
@@ -670,26 +674,26 @@ const selectGameExe = async () => {
   try {
     const selected = await openFileDialog({
       multiple: false,
-      filters: [{ name: '可执行文件', extensions: ['exe', 'sh', 'AppImage', 'desktop', '*'] }],
-      title: '选择游戏可执行文件'
+      filters: [{ name: tr('gamedownload.filePicker.executables', '可执行文件'), extensions: ['exe', 'sh', 'AppImage', 'desktop', '*'] }],
+      title: tr('gamedownload.filePicker.selectExe', '选择游戏可执行文件')
     });
     if (selected && typeof selected === 'string') {
       const config = await loadGameConfig(props.gameName);
       config.other = config.other || {};
       config.other.gamePath = selected;
       await saveGameConfig(props.gameName, config);
-      await showMessage('已设置游戏路径', { title: '成功', kind: 'info' });
+      await showMessage(tr('gamedownload.messages.gamePathSet', '已设置游戏路径'), { title: tr('gamedownload.messages.title.success', '成功'), kind: 'info' });
       emit('gameConfigured');
       close();
     }
   } catch (e: any) {
-    error.value = `选择文件失败: ${e}`;
+    error.value = tr('gamedownload.messages.selectFileFailed', `选择文件失败: ${e}`).replace('{error}', String(e));
   }
 };
 
 const selectGameFolder = async () => {
   try {
-    const selected = await openFileDialog({ directory: true, title: '选择游戏安装目录' });
+    const selected = await openFileDialog({ directory: true, title: tr('gamedownload.filePicker.selectGameFolder', '选择游戏安装目录') });
     if (selected && typeof selected === 'string') {
       gameFolder.value = selected;
       // 自动保存用户选择的目录
@@ -714,9 +718,9 @@ const copyOfficialLink = async () => {
   if (!installerOfficialUrl.value) return;
   try {
     await navigator.clipboard.writeText(installerOfficialUrl.value);
-    await showMessage('官方启动器链接已复制', { title: '成功', kind: 'info' });
+    await showMessage(tr('gamedownload.messages.installerLinkCopied', '官方启动器链接已复制'), { title: tr('gamedownload.messages.title.success', '成功'), kind: 'info' });
   } catch (e) {
-    await showMessage(`复制失败: ${e}`, { title: '错误', kind: 'error' });
+    await showMessage(tr('gamedownload.messages.copyFailed', `复制失败: ${e}`).replace('{error}', String(e)), { title: tr('gamedownload.messages.title.error', '错误'), kind: 'error' });
   }
 };
 
@@ -728,7 +732,7 @@ const formatSize = (bytes: number) => {
   return `${(bytes / 1073741824).toFixed(2)} GB`;
 };
 const formatEta = (seconds: number) => {
-  if (seconds <= 0) return '计算中...';
+  if (seconds <= 0) return tr('gamedownload.common.calculating', '计算中...');
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
@@ -751,13 +755,13 @@ const progressPercent = computed(() => {
 const stateLabel = computed(() => {
   if (!gameState.value) return '';
   switch (gameState.value.state) {
-    case 'startgame': return isLauncherInstallerMode.value ? '✓ 已是最新启动器版本' : '✓ 已是最新版本';
-    case 'needinstall': return isLauncherInstallerMode.value ? '需要下载官方启动器安装器' : '需要下载安装';
+    case 'startgame': return isLauncherInstallerMode.value ? tr('gamedownload.state.latestInstaller', '✓ 已是最新启动器版本') : tr('gamedownload.state.latestGame', '✓ 已是最新版本');
+    case 'needinstall': return isLauncherInstallerMode.value ? tr('gamedownload.state.needInstaller', '需要下载官方启动器安装器') : tr('gamedownload.state.needInstall', '需要下载安装');
     case 'needupdate':
       return isLauncherInstallerMode.value
-        ? `启动器需要更新 (${gameState.value.local_version} → ${gameState.value.remote_version})`
-        : `需要更新 (${gameState.value.local_version} → ${gameState.value.remote_version})`;
-    case 'networkerror': return '⚠ 网络错误，请检查网络连接';
+        ? tr('gamedownload.state.installerNeedUpdate', `启动器需要更新 (${gameState.value.local_version} → ${gameState.value.remote_version})`).replace('{local}', gameState.value.local_version || '').replace('{remote}', gameState.value.remote_version || '')
+        : tr('gamedownload.state.needUpdate', `需要更新 (${gameState.value.local_version} → ${gameState.value.remote_version})`).replace('{local}', gameState.value.local_version || '').replace('{remote}', gameState.value.remote_version || '');
+    case 'networkerror': return tr('gamedownload.state.networkError', '⚠ 网络错误，请检查网络连接');
     default: return String(gameState.value.state);
   }
 });
@@ -786,11 +790,11 @@ const canShowPrimaryDownload = computed(() => {
 
 const primaryDownloadLabel = computed(() => {
   if (isLauncherInstallerMode.value) {
-    return gameState.value?.state === 'needupdate' ? '更新官方启动器' : '下载官方启动器';
+    return gameState.value?.state === 'needupdate' ? tr('gamedownload.actions.updateInstaller', '更新官方启动器') : tr('gamedownload.actions.downloadInstaller', '下载官方启动器');
   }
-  if (gameState.value?.state === 'needupdate') return '开始更新';
-  if (gameState.value?.state === 'startgame') return '重新下载';
-  return '开始下载';
+  if (gameState.value?.state === 'needupdate') return tr('gamedownload.actions.startUpdate', '开始更新');
+  if (gameState.value?.state === 'startgame') return tr('gamedownload.actions.redownload', '重新下载');
+  return tr('gamedownload.actions.startDownload', '开始下载');
 });
 
 const canVerifyNow = computed(() => {
@@ -818,10 +822,10 @@ const isWorking = computed(() => isActiveFor(props.gameName) && (dlState.phase =
 const isVerifyPhase = computed(() => dlState.phase === 'verifying' || progress.value?.phase === 'verify');
 const workingPhase = computed(() => {
   if (!isActiveFor(props.gameName)) return '';
-  if (dlState.phase === 'verifying') return '校验中';
+  if (dlState.phase === 'verifying') return tr('gamedownload.phase.verifying', '校验中');
   if (dlState.phase === 'downloading') {
-    if (progress.value?.phase === 'install') return '安装中';
-    return '下载中';
+    if (progress.value?.phase === 'install') return tr('gamedownload.phase.installing', '安装中');
+    return tr('gamedownload.phase.downloading', '下载中');
   }
   return '';
 });
@@ -861,7 +865,7 @@ watch(launcherApi, (api) => {
       <div class="dl-window" data-onboarding="download-modal-root">
         <!-- 标题栏 -->
         <div class="dl-header">
-          <span class="dl-title">下载 / 安装游戏</span>
+          <span class="dl-title">{{ tr('gamedownload.title', '下载 / 安装游戏') }}</span>
           <div class="dl-close" @click="close">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
               fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -874,8 +878,8 @@ watch(launcherApi, (api) => {
           <!-- 游戏名 -->
           <div class="game-info">
             <span class="game-name">{{ displayName || gameName }}</span>
-            <span v-if="isSupported" class="badge supported">支持自动下载</span>
-            <span v-else class="badge manual">手动安装</span>
+            <span v-if="isSupported" class="badge supported">{{ tr('gamedownload.badge.supported', '支持自动下载') }}</span>
+            <span v-else class="badge manual">{{ tr('gamedownload.badge.manual', '手动安装') }}</span>
           </div>
 
           <!-- 加载提示 -->
@@ -885,7 +889,7 @@ watch(launcherApi, (api) => {
           <template v-if="isSupported">
             <!-- 服务器选择 -->
             <div v-if="availableServers.length > 1 && !isWorking" class="server-section">
-              <label class="server-label">服务器</label>
+              <label class="server-label">{{ tr('gamedownload.server.label', '服务器') }}</label>
               <div class="server-options">
                 <button
                   v-for="srv in availableServers"
@@ -903,8 +907,8 @@ watch(launcherApi, (api) => {
             <div v-if="gameState" class="state-card" :class="stateClass" data-onboarding="download-state-card">
               <div class="state-label">{{ stateLabel }}</div>
               <div class="state-versions" v-if="gameState.remote_version">
-                <span v-if="gameState.local_version">本地: {{ gameState.local_version }}</span>
-                <span>最新: {{ gameState.remote_version }}</span>
+                <span v-if="gameState.local_version">{{ tr('gamedownload.state.local', '本地') }}: {{ gameState.local_version }}</span>
+                <span>{{ tr('gamedownload.state.latest', '最新') }}: {{ gameState.remote_version }}</span>
               </div>
             </div>
 
@@ -913,7 +917,7 @@ watch(launcherApi, (api) => {
               class="channel-mode-card"
             >
               <div class="channel-mode-head">
-                <span class="channel-mode-title">渠道模式</span>
+                <span class="channel-mode-title">{{ tr('gamedownload.channel.title', '渠道模式') }}</span>
                 <span
                   class="channel-mode-pill"
                   :class="{ ok: currentRuntimeChannelMode === 'protected', warn: currentRuntimeChannelMode !== 'protected' }"
@@ -922,38 +926,38 @@ watch(launcherApi, (api) => {
                 </span>
               </div>
               <div class="channel-mode-meta">
-                <span>当前值: {{ channelCurrentValue ?? '未知' }}</span>
-                <span>目标值: {{ channelProtection.channel?.expectedValue ?? '未知' }}</span>
-                <span>当前模式: {{ runtimeChannelModeLabel }}</span>
+                <span>{{ tr('gamedownload.channel.currentValue', '当前值') }}: {{ channelCurrentValue ?? tr('gamedownload.common.unknown', '未知') }}</span>
+                <span>{{ tr('gamedownload.channel.targetValue', '目标值') }}: {{ channelProtection.channel?.expectedValue ?? tr('gamedownload.common.unknown', '未知') }}</span>
+                <span>{{ tr('gamedownload.channel.currentMode', '当前模式') }}: {{ runtimeChannelModeLabel }}</span>
               </div>
               <div class="channel-mode-actions">
                 <button class="action-btn sm" @click="setChannelMode('init')" :disabled="isChannelModeBusy || !gameFolder">
-                  切换初始化模式(19)
+                  {{ tr('gamedownload.channel.switchInit', '切换初始化模式(19)') }}
                 </button>
                 <button class="action-btn sm primary" @click="setChannelMode('protected')" :disabled="isChannelModeBusy || !gameFolder">
-                  切换联机模式(205)
+                  {{ tr('gamedownload.channel.switchProtected', '切换联机模式(205)') }}
                 </button>
                 <button class="action-btn sm" @click="setChannelMode('init')" :disabled="isChannelModeBusy || !gameFolder">
-                  恢复默认(19)
+                  {{ tr('gamedownload.channel.restoreDefault', '恢复默认(19)') }}
                 </button>
               </div>
               <p v-if="currentRuntimeChannelMode === 'init'" class="channel-mode-hint">
-                当前处于初始化模式。完成首次初始化后，请手动切换到联机模式(205)。
+                {{ tr('gamedownload.channel.initHint', '当前处于初始化模式。完成首次初始化后，请手动切换到联机模式(205)。') }}
               </p>
               <p
                 v-else-if="currentRuntimeChannelMode === 'unknown'"
                 class="channel-mode-hint warning"
               >
-                当前渠道值无法识别（既不是 19 也不是 205），建议重新应用当前模式。
+                {{ tr('gamedownload.channel.unknownHint', '当前渠道值无法识别（既不是 19 也不是 205），建议重新应用当前模式。') }}
               </p>
             </div>
 
             <!-- 安装目录（始终显示，下载前必须确认） -->
             <div v-if="!isWorking" class="install-dir-section" data-onboarding="download-install-dir">
-              <label class="install-dir-label">安装目录</label>
+              <label class="install-dir-label">{{ tr('gamedownload.installDir.label', '安装目录') }}</label>
               <div class="install-dir-row">
-                <input v-model="gameFolder" type="text" class="dl-input" placeholder="选择游戏安装目录..." />
-                <button class="dir-btn" @click="selectGameFolder" title="选择目录">
+                <input v-model="gameFolder" type="text" class="dl-input" :placeholder="tr('gamedownload.installDir.placeholder', '选择游戏安装目录...')" />
+                <button class="dir-btn" @click="selectGameFolder" :title="tr('gamedownload.installDir.selectTitle', '选择目录')">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
                     fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
@@ -961,14 +965,14 @@ watch(launcherApi, (api) => {
                 </button>
               </div>
               <p v-if="isLauncherInstallerMode" class="install-dir-hint">
-                官方启动器安装器将下载到此目录，并自动写入游戏路径（可后续修改）。
+                {{ tr('gamedownload.installDir.installerHint', '官方启动器安装器将下载到此目录，并自动写入游戏路径（可后续修改）。') }}
               </p>
-              <p v-else class="install-dir-hint">游戏文件将下载到此目录，请确保有足够磁盘空间（约 130GB+）</p>
+              <p v-else class="install-dir-hint">{{ tr('gamedownload.installDir.gameHint', '游戏文件将下载到此目录，请确保有足够磁盘空间（约 130GB+）') }}</p>
             </div>
 
             <!-- 语言包选择 -->
             <div v-if="!isLauncherInstallerMode && availableLanguages.length > 0 && !isWorking" class="lang-section">
-              <label class="lang-label">语音包（可多选）</label>
+              <label class="lang-label">{{ tr('gamedownload.language.label', '语音包（可多选）') }}</label>
               <div class="lang-options">
                 <label
                   v-for="lang in availableLanguages"
@@ -984,7 +988,7 @@ watch(launcherApi, (api) => {
                 </label>
               </div>
               <p class="lang-hint" v-if="selectedLanguages.length === 0">
-                ⚠ 未选择任何语音包，游戏将没有角色语音
+                {{ tr('gamedownload.language.noneSelectedHint', '⚠ 未选择任何语音包，游戏将没有角色语音') }}
               </p>
             </div>
 
@@ -1003,7 +1007,7 @@ watch(launcherApi, (api) => {
                 @click="resumeDownload"
                 :disabled="!gameFolder"
               >
-                继续下载
+                {{ tr('gamedownload.actions.resume', '继续下载') }}
               </button>
               <button
                 v-else-if="canShowPrimaryDownload"
@@ -1020,10 +1024,10 @@ watch(launcherApi, (api) => {
                 {{ primaryDownloadLabel }}
               </button>
               <button class="action-btn" @click="startVerify" v-if="!isPaused && canVerifyNow">
-                校验游戏文件
+                {{ tr('gamedownload.actions.verify', '校验游戏文件') }}
               </button>
               <button class="action-btn warning-soft" @click="startRepair" v-if="!isPaused && canRepairNow">
-                修复异常文件 ({{ repairableFailures.length }})
+                {{ tr('gamedownload.actions.repair', '修复异常文件') }} ({{ repairableFailures.length }})
               </button>
               <button
                 class="action-btn"
@@ -1031,7 +1035,7 @@ watch(launcherApi, (api) => {
                 @click="applyProtectionAfterDownload"
                 :disabled="isProtectionBusy"
               >
-                {{ isProtectionBusy ? '处理中...' : '应用安全防护' }}
+                {{ isProtectionBusy ? tr('gamedownload.common.processing', '处理中...') : tr('gamedownload.protection.apply', '应用安全防护') }}
               </button>
               <button
                 class="action-btn danger-soft"
@@ -1039,13 +1043,13 @@ watch(launcherApi, (api) => {
                 @click="disableProtection"
                 :disabled="isProtectionBusy"
               >
-                {{ isProtectionBusy ? '处理中...' : '删除/禁用防护' }}
+                {{ isProtectionBusy ? tr('gamedownload.common.processing', '处理中...') : tr('gamedownload.protection.disable', '删除/禁用防护') }}
               </button>
               <button class="action-btn" @click="checkState" :disabled="isChecking">
-                {{ isChecking ? '检查中...' : '刷新状态' }}
+                {{ isChecking ? tr('gamedownload.common.checking', '检查中...') : tr('gamedownload.actions.refreshState', '刷新状态') }}
               </button>
               <button v-if="isPaused" class="action-btn danger" @click="cancelDownload">
-                取消任务
+                {{ tr('gamedownload.actions.cancelTask', '取消任务') }}
               </button>
             </div>
 
@@ -1061,7 +1065,7 @@ watch(launcherApi, (api) => {
                 <div class="progress-info">
                   <span>{{ progressPercent }}%</span>
                   <span v-if="progress.phase === 'install'">
-                    {{ progress.finished_size }} / {{ progress.total_size }} 条目
+                    {{ progress.finished_size }} / {{ progress.total_size }} {{ tr('gamedownload.progress.entries', '条目') }}
                   </span>
                   <span v-else>
                     {{ formatSize(progress.finished_size) }} / {{ formatSize(progress.total_size) }}
@@ -1070,55 +1074,55 @@ watch(launcherApi, (api) => {
                 <div class="progress-detail">
                   <span class="progress-file">{{ progress.current_file }}</span>
                   <span v-if="isVerifyPhase">
-                    校验速度 {{ formatSize(progress.speed_bps) }}/s · 剩余 {{ formatEta(progress.eta_seconds) }}
+                    {{ tr('gamedownload.progress.verifySpeed', '校验速度') }} {{ formatSize(progress.speed_bps) }}/s · {{ tr('gamedownload.progress.remaining', '剩余') }} {{ formatEta(progress.eta_seconds) }}
                   </span>
                   <span v-else-if="progress.phase !== 'install'">
-                    {{ formatSize(progress.speed_bps) }}/s · 剩余 {{ formatEta(progress.eta_seconds) }}
+                    {{ formatSize(progress.speed_bps) }}/s · {{ tr('gamedownload.progress.remaining', '剩余') }} {{ formatEta(progress.eta_seconds) }}
                   </span>
                 </div>
                 <div class="progress-counts">
-                  {{ isVerifyPhase ? '文件' : '包' }}: {{ progress.finished_count }} / {{ progress.total_count }}
+                  {{ isVerifyPhase ? tr('gamedownload.progress.files', '文件') : tr('gamedownload.progress.packages', '包') }}: {{ progress.finished_count }} / {{ progress.total_count }}
                 </div>
               </template>
-              <div v-else class="progress-waiting">任务已启动，正在等待进度数据...</div>
+              <div v-else class="progress-waiting">{{ tr('gamedownload.progress.waiting', '任务已启动，正在等待进度数据...') }}</div>
               <div class="progress-actions">
-                <button class="action-btn" @click="pauseDownload">暂停</button>
-                <button class="action-btn danger" @click="cancelDownload">取消</button>
+                <button class="action-btn" @click="pauseDownload">{{ tr('gamedownload.actions.pause', '暂停') }}</button>
+                <button class="action-btn danger" @click="cancelDownload">{{ tr('gamedownload.actions.cancel', '取消') }}</button>
               </div>
             </div>
 
             <!-- 高级配置（折叠） -->
             <details class="config-details">
-              <summary>高级配置</summary>
+              <summary>{{ tr('gamedownload.advanced.title', '高级配置') }}</summary>
               <div class="config-content">
                 <div class="field">
-                  <label>启动器 API</label>
+                  <label>{{ tr('gamedownload.advanced.launcherApi', '启动器 API') }}</label>
                   <input v-model="launcherApi" type="text" class="dl-input" />
                 </div>
                 <div v-if="isLauncherInstallerMode && installerOfficialUrl" class="field">
-                  <label>官方启动器下载链接</label>
+                  <label>{{ tr('gamedownload.advanced.installerUrl', '官方启动器下载链接') }}</label>
                   <div class="install-dir-row">
                     <input :value="installerOfficialUrl" type="text" class="dl-input" readonly />
-                    <button class="action-btn sm" @click="copyOfficialLink">复制</button>
+                    <button class="action-btn sm" @click="copyOfficialLink">{{ tr('gamedownload.actions.copy', '复制') }}</button>
                   </div>
                 </div>
-                <button class="action-btn sm" @click="saveDownloadConfig">保存配置</button>
+                <button class="action-btn sm" @click="saveDownloadConfig">{{ tr('gamedownload.actions.saveConfig', '保存配置') }}</button>
               </div>
             </details>
 
-            <div class="divider"><span>或者</span></div>
+            <div class="divider"><span>{{ tr('gamedownload.common.or', '或者') }}</span></div>
           </template>
 
           <!-- ========== 手动指定路径 ========== -->
           <div class="section">
-            <p v-if="!isSupported" class="hint">此游戏暂不支持自动下载。</p>
-            <p class="hint">如果游戏已安装（通过 Steam、Lutris 或手动安装），选择可执行文件即可。</p>
+            <p v-if="!isSupported" class="hint">{{ tr('gamedownload.manual.notSupported', '此游戏暂不支持自动下载。') }}</p>
+            <p class="hint">{{ tr('gamedownload.manual.hint', '如果游戏已安装（通过 Steam、Lutris 或手动安装），选择可执行文件即可。') }}</p>
             <button class="action-btn primary large" @click="selectGameExe">
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
               </svg>
-              选择游戏可执行文件
+              {{ tr('gamedownload.manual.selectExe', '选择游戏可执行文件') }}
             </button>
           </div>
 

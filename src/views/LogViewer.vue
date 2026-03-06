@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick } from 'vue';
 import { readLogFile, getLogDir } from '../api';
+import { useI18n } from 'vue-i18n';
 
+const { t } = useI18n();
 const logContent = ref('');
 const logDir = ref('');
 const autoScroll = ref(true);
@@ -24,7 +26,7 @@ const loadLogs = async () => {
       scrollToBottom();
     }
   } catch (e) {
-    logContent.value = `读取日志失败: ${e}`;
+    logContent.value = `${t('logviewer.readFailed')}: ${e}`;
   } finally {
     isLoading.value = false;
   }
@@ -65,19 +67,19 @@ onUnmounted(() => {
 <template>
   <div class="log-viewer">
     <div class="log-toolbar">
-      <span class="log-title">SSMT4 日志查看器</span>
+      <span class="log-title">{{ t('logviewer.title') }}</span>
       <span class="log-dir">{{ logDir }}</span>
       <div class="log-actions">
         <label class="auto-scroll-label">
           <input type="checkbox" v-model="autoScroll" />
-          自动滚动
+          {{ t('logviewer.autoScroll') }}
         </label>
-        <button class="log-btn" @click="loadLogs" :disabled="isLoading">刷新</button>
-        <button class="log-btn" @click="copyLogs">复制全部</button>
+        <button class="log-btn" @click="loadLogs" :disabled="isLoading">{{ t('logviewer.refresh') }}</button>
+        <button class="log-btn" @click="copyLogs">{{ t('logviewer.copyAll') }}</button>
       </div>
     </div>
     <div class="log-content" ref="logContainer">
-      <pre>{{ logContent || '暂无日志...' }}</pre>
+      <pre>{{ logContent || t('logviewer.empty') }}</pre>
     </div>
   </div>
 </template>

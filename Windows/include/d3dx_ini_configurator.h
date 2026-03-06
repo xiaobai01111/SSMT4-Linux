@@ -21,6 +21,7 @@ private:
     void set_target_exe();
     void set_init_delay();
     void set_screen_resolution();
+    void set_proxy_d3d11();
     void apply_constant_settings(const std::string& setting_name);
     void apply_bool_settings(const std::string& setting_name, bool value);
 };

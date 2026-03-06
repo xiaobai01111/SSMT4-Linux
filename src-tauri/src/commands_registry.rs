@@ -7,6 +7,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         commands::common::greet,
         commands::common::get_resource_path,
         commands::common::ensure_directory,
+        commands::common::path_exists,
         commands::common::open_in_explorer,
         #[cfg(feature = "devtools")]
         commands::common::toggle_devtools,
@@ -84,15 +85,18 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         // Wine/Proton 远程版本管理
         commands::wine_manager::fetch_remote_proton,
         commands::wine_manager::download_proton,
+        commands::wine_manager::delete_local_proton,
         // DXVK 版本管理
         commands::wine_manager::scan_local_dxvk,
         commands::wine_manager::detect_dxvk_status,
         commands::wine_manager::fetch_dxvk_versions,
         commands::wine_manager::download_dxvk,
+        commands::wine_manager::delete_local_dxvk,
         commands::wine_manager::scan_local_vkd3d,
         commands::wine_manager::detect_vkd3d_status,
         commands::wine_manager::fetch_vkd3d_versions,
         commands::wine_manager::download_vkd3d,
+        commands::wine_manager::delete_local_vkd3d,
         // 遥测防护
         commands::telemetry::check_telemetry_status,
         commands::telemetry::check_game_protection_status,

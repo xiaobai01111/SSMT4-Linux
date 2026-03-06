@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 
 type DocItem = {
   id: string;
-  title: string;
+  titleKey: string;
+  fallbackTitle: string;
   file: string;
   content: string;
 };
 
+const { t, te } = useI18n();
+const tr = (key: string, fallback: string) => (te(key) ? t(key) : fallback);
 const wikiUrl = 'https://github.com/xiaobai01111/SSMT4-Linux/wiki';
 
 const wikiModules: Record<string, string> = {};
@@ -15,12 +19,12 @@ const wikiModules: Record<string, string> = {};
 const fallbackDocContent = (title: string, file: string): string => [
   `# ${title}`,
   '',
-  '本地 Wiki 文档未包含在当前打包目录中。',
+  t('documents.fallback.localMissing'),
   '',
-  `- 文档文件：\`${file}\``,
-  `- 在线 Wiki：${wikiUrl}`,
+  `- ${t('documents.fallback.file')}: \`${file}\``,
+  `- ${t('documents.fallback.onlineWiki')}: ${wikiUrl}`,
   '',
-  '可在联网环境中点击“打开 GitHub Wiki”查看最新内容。',
+  t('documents.fallback.openWikiHint'),
 ].join('\n');
 
 const loadDocContent = (file: string, title: string): string => {
@@ -29,13 +33,13 @@ const loadDocContent = (file: string, title: string): string => {
 };
 
 const docs: DocItem[] = [
-  { id: 'home', title: 'Home', file: 'Home.md', content: loadDocContent('Home.md', 'Home') },
-  { id: 'risk', title: '项目风险与要求', file: '01-项目风险与要求.md', content: loadDocContent('01-项目风险与要求.md', '项目风险与要求') },
-  { id: 'download', title: '游戏下载与主程序配置', file: '02-游戏下载与主程序配置.md', content: loadDocContent('02-游戏下载与主程序配置.md', '游戏下载与主程序配置') },
-  { id: 'proton', title: 'Proton 下载、管理与使用', file: '03-Proton-下载管理与使用.md', content: loadDocContent('03-Proton-下载管理与使用.md', 'Proton 下载、管理与使用') },
-  { id: 'dxvk', title: 'DXVK 下载、管理与使用', file: '04-DXVK-下载管理与使用.md', content: loadDocContent('04-DXVK-下载管理与使用.md', 'DXVK 下载、管理与使用') },
-  { id: 'protection', title: '防护与防封禁管理', file: '05-防护与防封禁管理.md', content: loadDocContent('05-防护与防封禁管理.md', '防护与防封禁管理') },
-  { id: 'known', title: '已知问题与不足', file: '06-已知问题与不足.md', content: loadDocContent('06-已知问题与不足.md', '已知问题与不足') },
+  { id: 'home', titleKey: 'documents.items.home', fallbackTitle: 'Home', file: 'Home.md', content: loadDocContent('Home.md', 'Home') },
+  { id: 'risk', titleKey: 'documents.items.risk', fallbackTitle: '项目风险与要求', file: '01-项目风险与要求.md', content: loadDocContent('01-项目风险与要求.md', '项目风险与要求') },
+  { id: 'download', titleKey: 'documents.items.download', fallbackTitle: '游戏下载与主程序配置', file: '02-游戏下载与主程序配置.md', content: loadDocContent('02-游戏下载与主程序配置.md', '游戏下载与主程序配置') },
+  { id: 'proton', titleKey: 'documents.items.proton', fallbackTitle: 'Proton 下载、管理与使用', file: '03-Proton-下载管理与使用.md', content: loadDocContent('03-Proton-下载管理与使用.md', 'Proton 下载、管理与使用') },
+  { id: 'dxvk', titleKey: 'documents.items.dxvk', fallbackTitle: 'DXVK 下载、管理与使用', file: '04-DXVK-下载管理与使用.md', content: loadDocContent('04-DXVK-下载管理与使用.md', 'DXVK 下载、管理与使用') },
+  { id: 'protection', titleKey: 'documents.items.protection', fallbackTitle: '防护与防封禁管理', file: '05-防护与防封禁管理.md', content: loadDocContent('05-防护与防封禁管理.md', '防护与防封禁管理') },
+  { id: 'known', titleKey: 'documents.items.known', fallbackTitle: '已知问题与不足', file: '06-已知问题与不足.md', content: loadDocContent('06-已知问题与不足.md', '已知问题与不足') },
 ];
 
 const activeDocId = ref('home');
@@ -157,14 +161,14 @@ const handleDocClick = (e: MouseEvent) => {
         :class="{ active: doc.id === activeDocId }"
         @click="activeDocId = doc.id"
       >
-        {{ doc.title }}
+        {{ tr(doc.titleKey, doc.fallbackTitle) }}
       </button>
-      <button class="doc-open-btn" @click="openWiki">打开 GitHub Wiki</button>
+      <button class="doc-open-btn" @click="openWiki">{{ t('documents.openWiki') }}</button>
     </aside>
 
     <section class="doc-content-wrap">
       <div class="doc-content-header">
-        <div class="doc-content-title">{{ activeDoc.title }}</div>
+        <div class="doc-content-title">{{ tr(activeDoc.titleKey, activeDoc.fallbackTitle) }}</div>
         <a :href="wikiUrl" target="_blank" rel="noopener noreferrer" class="doc-link">{{ wikiUrl }}</a>
       </div>
       <article class="doc-content markdown-body" v-html="renderedHtml" @click="handleDocClick"></article>

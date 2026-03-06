@@ -339,8 +339,17 @@ pub async fn fetch_dxvk_versions(
 }
 
 #[tauri::command]
-pub async fn download_dxvk(version: &str, variant: &str) -> Result<String, String> {
-    graphics::download_dxvk_only(version, variant).await
+pub async fn download_dxvk(
+    app: tauri::AppHandle,
+    version: &str,
+    variant: &str,
+) -> Result<String, String> {
+    graphics::download_dxvk_only(version, variant, Some(app)).await
+}
+
+#[tauri::command]
+pub fn delete_local_dxvk(version: &str, variant: &str) -> Result<String, String> {
+    graphics::delete_local_dxvk_version(version, variant)
 }
 
 #[tauri::command]
@@ -367,6 +376,19 @@ pub async fn fetch_vkd3d_versions(
 }
 
 #[tauri::command]
-pub async fn download_vkd3d(version: &str) -> Result<String, String> {
-    graphics::download_vkd3d_only(version).await
+pub async fn download_vkd3d(
+    app: tauri::AppHandle,
+    version: &str,
+) -> Result<String, String> {
+    graphics::download_vkd3d_only(version, Some(app)).await
+}
+
+#[tauri::command]
+pub fn delete_local_vkd3d(version: &str) -> Result<String, String> {
+    graphics::delete_local_vkd3d_version(version)
+}
+
+#[tauri::command]
+pub fn delete_local_proton(path: &str) -> Result<String, String> {
+    detector::delete_local_proton(path)
 }

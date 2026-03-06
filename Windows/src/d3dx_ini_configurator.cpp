@@ -85,6 +85,7 @@ void D3dxIniConfigurator::update() {
     set_target_exe();
     set_init_delay();
     set_screen_resolution();
+    set_proxy_d3d11();
 
     // Write back only if modified
     if (ini_->is_modified()) {
@@ -108,6 +109,16 @@ void D3dxIniConfigurator::set_init_delay() {
     // The [System] section value is what d3d11.dll actually uses.
     ini_->set_option("System", "dll_initialization_delay",
                      config_.migoto.xxmi_dll_init_delay);
+}
+
+void D3dxIniConfigurator::set_proxy_d3d11() {
+    // DLL Proxy Chain mode: 3DMigoto's d3d11.dll is placed in the game directory
+    // and loaded naturally by Windows DLL search order. It must proxy to DXVK's
+    // d3d11.dll (renamed to dxvk_d3d11.dll) instead of calling LoadLibrary("d3d11")
+    // which would find itself again → circular dependency → error 1114.
+    if (config_.migoto.use_dll_drop) {
+        ini_->set_option("System", "proxy_d3d11", "dxvk_d3d11.dll");
+    }
 }
 
 void D3dxIniConfigurator::set_screen_resolution() {

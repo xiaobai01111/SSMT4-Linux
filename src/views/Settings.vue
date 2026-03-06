@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, inject, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { appSettings, startFeatureOnboarding } from '../store'
 import {
+  deleteLocalDxvk,
+  deleteLocalProton,
+  deleteLocalVkd3d,
   downloadDxvk,
   downloadVkd3d,
   downloadProton,
@@ -12,6 +15,7 @@ import {
   getResourceVersionInfo,
   getVersionCheckInfo,
   getProtonCatalog,
+  listenEvent,
   openFileDialog,
   openLogWindow,
   pullResourceUpdates,
@@ -41,14 +45,23 @@ import {
   downloadXxmiPackage,
   deployXxmiPackage,
   deleteLocalXxmiPackage,
+  pathExists,
+  joinPath,
   type XxmiPackageSource,
   type XxmiRemoteVersion,
   type XxmiLocalPackage,
 } from '../api';
 import { useI18n } from 'vue-i18n';
+import {
+  failTaskNotification,
+  finishTaskNotification,
+  startTaskNotification,
+  updateTaskNotification,
+} from '../taskNotifications';
 
 const { t, te } = useI18n()
 const route = useRoute();
+const notify = inject<any>('notify', null);
 
 const activeMenu = ref('basic')
 const guideMenu = ref('');
@@ -114,6 +127,19 @@ const editableSources = ref<ProtonSource[]>([]);
 
 const tr = (key: string, fallback: string) => (te(key) ? t(key) : fallback);
 
+const toast = async (
+  kind: 'success' | 'warning' | 'info' | 'error',
+  title: string,
+  message: string,
+) => {
+  const handler = notify?.[kind];
+  if (typeof handler === 'function') {
+    handler(title, message);
+    return;
+  }
+  await showMessage(message, { title, kind });
+};
+
 const checkVersionInfo = async () => {
   if (isVersionChecking.value) return;
   try {
@@ -121,7 +147,7 @@ const checkVersionInfo = async () => {
     versionInfo.value = await getVersionCheckInfo();
     versionCheckLoaded.value = true;
   } catch (e) {
-    await showMessage(`版本检查失败: ${e}`, { title: '错误', kind: 'error' });
+    await toast('error', tr('settings.messages.title.error', '错误'), tr('settings.messages.versionCheckFailed', `版本检查失败: ${e}`));
   } finally {
     isVersionChecking.value = false;
   }
@@ -134,7 +160,7 @@ const checkResourceInfo = async () => {
     resourceInfo.value = await getResourceVersionInfo();
     resourceCheckLoaded.value = true;
   } catch (e) {
-    await showMessage(`资源检查失败: ${e}`, { title: '错误', kind: 'error' });
+    await toast('error', tr('settings.messages.title.error', '错误'), tr('settings.messages.resourceCheckFailed', `资源检查失败: ${e}`));
   } finally {
     isResourceChecking.value = false;
   }
@@ -146,9 +172,9 @@ const pullResources = async () => {
     isResourcePulling.value = true;
     const msg = await pullResourceUpdates();
     await checkResourceInfo();
-    await showMessage(msg, { title: '资源更新', kind: 'info' });
+    await toast('info', tr('settings.resource.title', '资源更新'), msg);
   } catch (e) {
-    await showMessage(`拉取资源失败: ${e}`, { title: '错误', kind: 'error' });
+    await toast('error', tr('settings.messages.title.error', '错误'), tr('settings.messages.resourcePullFailed', `拉取资源失败: ${e}`));
   } finally {
     isResourcePulling.value = false;
   }
@@ -192,6 +218,11 @@ const selectedRemoteItem = (familyKey: string) => {
   if (!group) return null;
   const key = selectedRemoteByFamily[familyKey];
   return group.items.find((item) => remoteItemKey(item) === key) ?? null;
+};
+
+const protonFamilyLabel = (familyKey: string) => {
+  const family = protonCatalog.value.families.find((item) => item.family_key === familyKey);
+  return family?.display_name || familyKey;
 };
 
 const ensureLocalSelections = () => {
@@ -246,7 +277,7 @@ const loadCatalog = async () => {
     editableFamilies.value = protonCatalog.value.families.map(toEditableFamily);
     editableSources.value = protonCatalog.value.sources.map((source) => ({ ...source }));
   } catch (e) {
-    await showMessage(`加载 Proton 目录失败: ${e}`, { title: '错误', kind: 'error' });
+    await toast('error', tr('settings.messages.title.error', '错误'), tr('settings.messages.protonCatalogLoadFailed', `加载 Proton 目录失败: ${e}`));
   } finally {
     isCatalogLoading.value = false;
   }
@@ -259,7 +290,7 @@ const refreshLocalGrouped = async () => {
     localGroups.value = await scanLocalProtonGrouped();
     ensureLocalSelections();
   } catch (e) {
-    await showMessage(`获取本地 Proton 失败: ${e}`, { title: '错误', kind: 'error' });
+    await toast('error', tr('settings.messages.title.error', '错误'), tr('settings.messages.protonLocalFetchFailed', `获取本地 Proton 失败: ${e}`));
   } finally {
     isLocalLoading.value = false;
   }
@@ -272,7 +303,7 @@ const refreshRemoteGrouped = async () => {
     remoteGroups.value = await fetchRemoteProtonGrouped();
     ensureRemoteSelections();
   } catch (e) {
-    await showMessage(`获取远程 Proton 列表失败: ${e}`, { title: '错误', kind: 'error' });
+    await toast('error', tr('settings.messages.title.error', '错误'), tr('settings.messages.protonRemoteFetchFailed', `获取远程 Proton 列表失败: ${e}`));
   } finally {
     isRemoteLoading.value = false;
   }
@@ -307,16 +338,16 @@ const buildCatalogPayload = (): ProtonCatalog | null => {
   const familyKeySet = new Set<string>();
   for (const family of families) {
     if (!family.family_key || !family.display_name) {
-      showMessage(tr('settings.proton_empty_fields', '家族 key 和显示名不能为空'), { title: '错误', kind: 'error' });
+      toast('error', tr('settings.messages.title.error', '错误'), tr('settings.proton_empty_fields', '家族 key 和显示名不能为空'));
       return null;
     }
     if (!/^[a-zA-Z0-9_-]+$/.test(family.family_key)) {
-      showMessage(tr('settings.proton_invalid_family_key', `非法 family_key: ${family.family_key}`), { title: '错误', kind: 'error' });
+      toast('error', tr('settings.messages.title.error', '错误'), tr('settings.proton_invalid_family_key', `非法 family_key: ${family.family_key}`));
       return null;
     }
     const lower = family.family_key.toLowerCase();
     if (familyKeySet.has(lower)) {
-      showMessage(`${tr('settings.proton_invalid_family_key', 'family_key 重复')}: ${family.family_key}`, { title: '错误', kind: 'error' });
+      toast('error', tr('settings.messages.title.error', '错误'), `${tr('settings.proton_invalid_family_key', 'family_key 重复')}: ${family.family_key}`);
       return null;
     }
     familyKeySet.add(lower);
@@ -324,26 +355,26 @@ const buildCatalogPayload = (): ProtonCatalog | null => {
 
   for (const source of sources) {
     if (!source.family_key || !familyKeySet.has(source.family_key.toLowerCase())) {
-      showMessage(`source family_key 不存在: ${source.family_key}`, { title: '错误', kind: 'error' });
+      toast('error', tr('settings.messages.title.error', '错误'), `source family_key 不存在: ${source.family_key}`);
       return null;
     }
     if (!source.provider) source.provider = 'github_releases';
     const needRepo = source.provider === 'github_releases';
     const needEndpoint = source.provider === 'forgejo_releases' || source.provider === 'github_actions';
     if (needRepo && !source.repo && !source.endpoint) {
-      showMessage(tr('settings.proton_empty_fields', 'github_releases 需要 repo 或 endpoint'), { title: '错误', kind: 'error' });
+      toast('error', tr('settings.messages.title.error', '错误'), tr('settings.proton_empty_fields', 'github_releases 需要 repo 或 endpoint'));
       return null;
     }
     if (needEndpoint && !source.endpoint) {
-      showMessage(tr('settings.proton_empty_fields', `${source.provider} 需要 endpoint`), { title: '错误', kind: 'error' });
+      toast('error', tr('settings.messages.title.error', '错误'), tr('settings.proton_empty_fields', `${source.provider} 需要 endpoint`));
       return null;
     }
     if (source.provider === 'github_actions' && !source.url_template) {
-      showMessage(tr('settings.proton_empty_fields', 'github_actions 需要 url_template'), { title: '错误', kind: 'error' });
+      toast('error', tr('settings.messages.title.error', '错误'), tr('settings.proton_empty_fields', 'github_actions 需要 url_template'));
       return null;
     }
     if (!Number.isInteger(source.asset_index) || source.asset_index < -1 || source.asset_index > 100) {
-      showMessage(tr('settings.proton_empty_fields', 'asset_index 必须在 -1 到 100 之间'), { title: '错误', kind: 'error' });
+      toast('error', tr('settings.messages.title.error', '错误'), tr('settings.proton_empty_fields', 'asset_index 必须在 -1 到 100 之间'));
       return null;
     }
   }
@@ -362,9 +393,9 @@ const saveCatalogChanges = async () => {
     await saveProtonCatalog(payload);
     await loadCatalog();
     await Promise.all([refreshLocalGrouped(), refreshRemoteGrouped()]);
-    await showMessage(tr('settings.proton_editor_saved', 'Proton 目录已保存'), { title: '成功', kind: 'info' });
+    await toast('success', tr('settings.messages.title.success', '成功'), tr('settings.proton_editor_saved', 'Proton 目录已保存'));
   } catch (e) {
-    await showMessage(`保存 Proton 目录失败: ${e}`, { title: '错误', kind: 'error' });
+    await toast('error', tr('settings.messages.title.error', '错误'), tr('settings.messages.protonCatalogSaveFailed', `保存 Proton 目录失败: ${e}`));
   } finally {
     isCatalogSaving.value = false;
   }
@@ -372,7 +403,7 @@ const saveCatalogChanges = async () => {
 
 const reloadCatalogEditor = async () => {
   await loadCatalog();
-  await showMessage(tr('settings.proton_editor_reloaded', '已重载 Proton 目录'), { title: '提示', kind: 'info' });
+  await toast('info', tr('settings.messages.title.info', '提示'), tr('settings.proton_editor_reloaded', '已重载 Proton 目录'));
 };
 
 const addFamily = () => {
@@ -417,25 +448,126 @@ const removeSource = (index: number) => {
   editableSources.value.splice(index, 1);
 };
 
+const deletingProtonIds = reactive<Record<string, boolean>>({});
+const deletingDxvkKeys = reactive<Record<string, boolean>>({});
+const deletingVkd3dVersions = reactive<Record<string, boolean>>({});
+const activeComponentTasks = reactive<Record<string, string>>({});
+
+const normalizeFsPath = (value: string) =>
+  value.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+
+const managedProtonRoots = computed(() => {
+  const roots = [
+    `${String(appSettings.dataDir || '').trim()}/proton`,
+    `${String(appSettings.dataDir || '').trim()}/runners/wine`,
+    '/home/xiaobai/.local/share/ssmt4/proton',
+    '/home/xiaobai/.local/share/ssmt4/runners/wine',
+  ]
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map(normalizeFsPath);
+  return Array.from(new Set(roots));
+});
+
+const isManagedProtonItem = (item: { path: string } | null | undefined) => {
+  if (!item?.path) return false;
+  const path = normalizeFsPath(item.path);
+  return managedProtonRoots.value.some((root) => path === root || path.startsWith(`${root}/`));
+};
+
+const rememberComponentTask = (component: string, taskId: string) => {
+  activeComponentTasks[component] = taskId;
+};
+
+const forgetComponentTask = (component: string) => {
+  delete activeComponentTasks[component];
+};
+
+const taskDownloadingMessage = () =>
+  tr('settings.messages.taskDownloading', '正在下载，请稍候...');
+
+const taskExtractingMessage = () =>
+  tr('settings.messages.taskExtracting', '正在解压，请稍候...');
+
+const taskDeletingMessage = () =>
+  tr('settings.messages.taskDeleting', '正在删除，请稍候...');
+
+let unlistenComponentProgress: null | (() => void) = null;
+
+onMounted(async () => {
+  unlistenComponentProgress = await listenEvent('component-download-progress', (event: any) => {
+    const payload = event.payload || {};
+    const componentKey = String(payload.componentId || payload.component || '').trim();
+    const taskId = activeComponentTasks[componentKey];
+    if (!taskId) return;
+
+    const phase = String(payload.phase || '').trim().toLowerCase();
+    const downloaded = Number(payload.downloaded || 0);
+    const total = Number(payload.total || 0);
+
+    if (phase === 'extracting') {
+      updateTaskNotification(taskId, {
+        message: taskExtractingMessage(),
+        progress: null,
+      });
+      return;
+    }
+
+    if (phase === 'done') {
+      updateTaskNotification(taskId, { progress: 100 });
+      return;
+    }
+
+    updateTaskNotification(taskId, {
+      message: taskDownloadingMessage(),
+      progress: total > 0 ? (downloaded / total) * 100 : null,
+    });
+  });
+});
+
+onUnmounted(() => {
+  unlistenComponentProgress?.();
+  unlistenComponentProgress = null;
+});
+
 const installSelectedForFamily = async (familyKey: string) => {
   if (isDownloading.value) return;
 
   const item = selectedRemoteItem(familyKey);
   if (!item || item.installed) return;
 
+  const taskId = `settings-proton-download-${familyKey}`;
+  const familyLabel = protonFamilyLabel(familyKey);
+  const componentKey = `${familyKey.startsWith('Wine') ? 'proton:wine' : 'proton:proton'}:${item.tag}`;
   try {
     isDownloading.value = true;
     downloadingFamilyKey.value = familyKey;
     downloadingTag.value = item.tag;
-    showDlDialog('下载 Proton', `正在下载 ${item.tag}，请稍候...`);
-    const message = await downloadProton(item.download_url, item.tag, familyKey);
-    dlDialogStatus.value = 'success';
-    dlDialogMessage.value = message;
+    rememberComponentTask(componentKey, taskId);
+    startTaskNotification(
+      taskId,
+      tr('settings.messages.downloadLabelTitle', `下载 ${familyLabel}`).replace('{label}', familyLabel),
+      tr('settings.messages.downloadLabelBody', `正在下载 ${familyLabel} ${item.tag}，请稍候...`)
+        .replace('{label}', familyLabel)
+        .replace('{version}', item.tag),
+    );
+    await downloadProton(item.download_url, item.tag, familyKey);
+    finishTaskNotification(
+      taskId,
+      tr('settings.messages.downloadLabelTitle', `下载 ${familyLabel}`).replace('{label}', familyLabel),
+      tr('settings.messages.downloadLabelDone', `${familyLabel} ${item.tag} 下载完成`)
+        .replace('{label}', familyLabel)
+        .replace('{version}', item.tag),
+    );
     await Promise.all([refreshLocalGrouped(), refreshRemoteGrouped()]);
   } catch (e) {
-    dlDialogStatus.value = 'error';
-    dlDialogMessage.value = `下载 Proton 失败: ${e}`;
+    failTaskNotification(
+      taskId,
+      tr('settings.messages.downloadLabelTitle', `下载 ${familyLabel}`).replace('{label}', familyLabel),
+      tr('settings.messages.downloadFailed', `下载失败: ${e}`).replace('{error}', String(e)),
+    );
   } finally {
+    forgetComponentTask(componentKey);
     isDownloading.value = false;
     downloadingFamilyKey.value = '';
     downloadingTag.value = '';
@@ -464,23 +596,33 @@ const familyCards = computed(() => {
     }));
 });
 
-// ============================================================
-// 下载弹窗状态
-// ============================================================
-const dlDialogVisible = ref(false);
-const dlDialogTitle = ref('');
-const dlDialogMessage = ref('');
-const dlDialogStatus = ref<'downloading' | 'success' | 'error'>('downloading');
-
-const showDlDialog = (title: string, message: string) => {
-  dlDialogTitle.value = title;
-  dlDialogMessage.value = message;
-  dlDialogStatus.value = 'downloading';
-  dlDialogVisible.value = true;
-};
-
-const closeDlDialog = () => {
-  dlDialogVisible.value = false;
+const removeLocalProtonItem = async (item: { id: string; path: string; name: string }) => {
+  if (!isManagedProtonItem(item) || deletingProtonIds[item.id]) return;
+  const taskId = `settings-proton-delete-${item.id}`;
+  const target = item.name || item.path;
+  try {
+    deletingProtonIds[item.id] = true;
+    startTaskNotification(
+      taskId,
+      tr('settings.actions.delete', '删除'),
+      taskDeletingMessage(),
+    );
+    await deleteLocalProton(item.path);
+    finishTaskNotification(
+      taskId,
+      tr('settings.actions.delete', '删除'),
+      tr('settings.messages.deleteTargetDone', `${target} 已删除`).replace('{target}', target),
+    );
+    await Promise.all([refreshLocalGrouped(), refreshRemoteGrouped()]);
+  } catch (e) {
+    failTaskNotification(
+      taskId,
+      tr('settings.actions.delete', '删除'),
+      tr('settings.messages.deleteFailed', `删除失败: ${e}`).replace('{error}', String(e)),
+    );
+  } finally {
+    deletingProtonIds[item.id] = false;
+  }
 };
 
 // ============================================================
@@ -546,7 +688,7 @@ const selectedDxvkItem = computed(() =>
 
 const dxvkVariantLabel = (variant: string) => {
   const labels: Record<string, string> = {
-    dxvk: 'DXVK (官方)',
+    dxvk: tr('settings.dxvk_variant_official', 'Official DXVK'),
     gplasync: 'DXVK-GPLAsync',
     async: 'DXVK-Async',
     sarek: 'DXVK-Sarek',
@@ -557,7 +699,7 @@ const dxvkVariantLabel = (variant: string) => {
 
 const dxvkVariantShortLabel = (variant: string) => {
   const labels: Record<string, string> = {
-    dxvk: 'Official',
+    dxvk: tr('settings.dxvk_variant_short_official', 'Official'),
     gplasync: 'GPLAsync',
     async: 'Async',
     sarek: 'Sarek',
@@ -607,10 +749,10 @@ const refreshDxvkRemote = async () => {
       dxvkSelectedKey.value = `${first.version}|${first.variant}`;
     }
     if (dxvkRemoteVersions.value.length === 0) {
-      dxvkFetchWarning.value = '未获取到远程版本，请稍后重试。';
+      dxvkFetchWarning.value = tr('settings.messages.dxvkFetchWarning', '未获取到远程版本，请稍后重试。');
     }
   } catch (e) {
-    await showMessage(`获取 DXVK 版本列表失败: ${e}`, { title: '错误', kind: 'error' });
+    await toast('error', tr('settings.messages.title.error', '错误'), tr('settings.messages.dxvkFetchFailed', `获取 DXVK 版本列表失败: ${e}`).replace('{error}', String(e)));
   } finally {
     isDxvkFetching.value = false;
   }
@@ -619,24 +761,68 @@ const refreshDxvkRemote = async () => {
 const doDownloadDxvk = async () => {
   const item = selectedDxvkItem.value;
   if (isDxvkDownloading.value || !item) return;
+  const label = dxvkVariantLabel(item.variant);
+  const taskId = `settings-dxvk-download-${item.variant}-${item.version}`;
+  const componentKey = `dxvk:${item.variant}:${item.version}`;
   try {
     isDxvkDownloading.value = true;
-    const label = dxvkVariantLabel(item.variant);
-    showDlDialog(`下载 ${label}`, `正在下载 ${label} ${item.version}，请稍候...`);
-    const result = await downloadDxvk(item.version, item.variant);
-    dlDialogStatus.value = 'success';
-    dlDialogMessage.value = result;
+    rememberComponentTask(componentKey, taskId);
+    startTaskNotification(
+      taskId,
+      tr('settings.messages.downloadLabelTitle', `下载 ${label}`).replace('{label}', label),
+      tr('settings.messages.downloadLabelBody', `正在下载 ${label} ${item.version}，请稍候...`).replace('{label}', label).replace('{version}', item.version),
+    );
+    await downloadDxvk(item.version, item.variant);
+    finishTaskNotification(
+      taskId,
+      tr('settings.messages.downloadLabelTitle', `下载 ${label}`).replace('{label}', label),
+      tr('settings.messages.downloadLabelDone', `${label} ${item.version} 下载完成`)
+        .replace('{label}', label)
+        .replace('{version}', item.version),
+    );
     const [, remDxvk] = await Promise.all([refreshDxvkLocal(), fetchDxvkVersions()]);
     dxvkRemoteVersions.value = remDxvk;
   } catch (e) {
-    dlDialogStatus.value = 'error';
-    dlDialogMessage.value = `下载失败: ${e}`;
+    failTaskNotification(
+      taskId,
+      tr('settings.messages.downloadLabelTitle', `下载 ${label}`).replace('{label}', label),
+      tr('settings.messages.downloadFailed', `下载失败: ${e}`).replace('{error}', String(e)),
+    );
   } finally {
+    forgetComponentTask(componentKey);
     isDxvkDownloading.value = false;
   }
 };
 
 const dxvkLocalCount = computed(() => dxvkLocalVersions.value.length);
+
+const removeLocalDxvkItem = async (version: string, variant: string) => {
+  const key = `${version}|${variant}`;
+  if (deletingDxvkKeys[key]) return;
+  const label = dxvkVariantLabel(variant);
+  const taskId = `settings-dxvk-delete-${variant}-${version}`;
+  const target = `${label} ${version}`;
+  try {
+    deletingDxvkKeys[key] = true;
+    startTaskNotification(taskId, tr('settings.actions.delete', '删除'), taskDeletingMessage());
+    await deleteLocalDxvk(version, variant);
+    finishTaskNotification(
+      taskId,
+      tr('settings.actions.delete', '删除'),
+      tr('settings.messages.deleteTargetDone', `${target} 已删除`).replace('{target}', target),
+    );
+    const [, remDxvk] = await Promise.all([refreshDxvkLocal(), fetchDxvkVersions()]);
+    dxvkRemoteVersions.value = remDxvk;
+  } catch (e) {
+    failTaskNotification(
+      taskId,
+      tr('settings.actions.delete', '删除'),
+      tr('settings.messages.deleteFailed', `删除失败: ${e}`).replace('{error}', String(e)),
+    );
+  } finally {
+    deletingDxvkKeys[key] = false;
+  }
+};
 
 // ============================================================
 // VKD3D 管理
@@ -707,10 +893,10 @@ const refreshVkd3dRemote = async () => {
       vkd3dSelectedVersion.value = vkd3dRemoteVersions.value[0].version;
     }
     if (vkd3dRemoteVersions.value.length === 0) {
-      vkd3dFetchWarning.value = '未获取到远程版本，请稍后重试。';
+      vkd3dFetchWarning.value = tr('settings.messages.vkd3dFetchWarning', '未获取到远程版本，请稍后重试。');
     }
   } catch (e) {
-    await showMessage(`获取 VKD3D 版本列表失败: ${e}`, { title: '错误', kind: 'error' });
+    await toast('error', tr('settings.messages.title.error', '错误'), tr('settings.messages.vkd3dFetchFailed', `获取 VKD3D 版本列表失败: ${e}`).replace('{error}', String(e)));
   } finally {
     isVkd3dFetching.value = false;
   }
@@ -719,23 +905,68 @@ const refreshVkd3dRemote = async () => {
 const doDownloadVkd3d = async () => {
   const item = selectedVkd3dItem.value;
   if (isVkd3dDownloading.value || !item) return;
+  const taskId = `settings-vkd3d-download-${item.version}`;
+  const label = 'VKD3D-Proton';
+  const componentKey = `vkd3d:${item.version}`;
   try {
     isVkd3dDownloading.value = true;
-    showDlDialog('下载 VKD3D-Proton', `正在下载 VKD3D-Proton ${item.version}，请稍候...`);
-    const result = await downloadVkd3d(item.version);
-    dlDialogStatus.value = 'success';
-    dlDialogMessage.value = result;
+    rememberComponentTask(componentKey, taskId);
+    startTaskNotification(
+      taskId,
+      tr('settings.messages.downloadLabelTitle', `下载 ${label}`).replace('{label}', label),
+      tr('settings.messages.downloadLabelBody', `正在下载 ${label} ${item.version}，请稍候...`)
+        .replace('{label}', label)
+        .replace('{version}', item.version),
+    );
+    await downloadVkd3d(item.version);
+    finishTaskNotification(
+      taskId,
+      tr('settings.messages.downloadLabelTitle', `下载 ${label}`).replace('{label}', label),
+      tr('settings.messages.downloadLabelDone', `${label} ${item.version} 下载完成`)
+        .replace('{label}', label)
+        .replace('{version}', item.version),
+    );
     const [, remVkd3d] = await Promise.all([refreshVkd3dLocal(), fetchVkd3dVersions()]);
     vkd3dRemoteVersions.value = remVkd3d;
   } catch (e) {
-    dlDialogStatus.value = 'error';
-    dlDialogMessage.value = `下载失败: ${e}`;
+    failTaskNotification(
+      taskId,
+      tr('settings.messages.downloadLabelTitle', `下载 ${label}`).replace('{label}', label),
+      tr('settings.messages.downloadFailed', `下载失败: ${e}`).replace('{error}', String(e)),
+    );
   } finally {
+    forgetComponentTask(componentKey);
     isVkd3dDownloading.value = false;
   }
 };
 
 const vkd3dLocalCount = computed(() => vkd3dLocalVersions.value.length);
+
+const removeLocalVkd3dItem = async (version: string) => {
+  if (deletingVkd3dVersions[version]) return;
+  const taskId = `settings-vkd3d-delete-${version}`;
+  const target = `VKD3D-Proton ${version}`;
+  try {
+    deletingVkd3dVersions[version] = true;
+    startTaskNotification(taskId, tr('settings.actions.delete', '删除'), taskDeletingMessage());
+    await deleteLocalVkd3d(version);
+    finishTaskNotification(
+      taskId,
+      tr('settings.actions.delete', '删除'),
+      tr('settings.messages.deleteTargetDone', `${target} 已删除`).replace('{target}', target),
+    );
+    const [, remVkd3d] = await Promise.all([refreshVkd3dLocal(), fetchVkd3dVersions()]);
+    vkd3dRemoteVersions.value = remVkd3d;
+  } catch (e) {
+    failTaskNotification(
+      taskId,
+      tr('settings.actions.delete', '删除'),
+      tr('settings.messages.deleteFailed', `删除失败: ${e}`).replace('{error}', String(e)),
+    );
+  } finally {
+    deletingVkd3dVersions[version] = false;
+  }
+};
 
 // ============================================================
 // 3DMIGOTO 管理
@@ -830,15 +1061,26 @@ const defaultMigotoConfig: MigotoGameConfig = {
 
 const migotoConfig = reactive<MigotoGameConfig>({ ...defaultMigotoConfig });
 
-const migotoImporterOptions = [
-  { value: 'WWMI', label: '鸣潮 (WWMI)' },
-  { value: 'ZZMI', label: '绝区零 (ZZMI)' },
-  { value: 'SRMI', label: '崩铁 (SRMI)' },
-  { value: 'GIMI', label: '原神 (GIMI)' },
-  { value: 'HIMI', label: '崩坏3 (HIMI)' },
-];
+const migotoImporterOptions = computed(() => [
+  { value: 'WWMI', label: t('settings.migoto.importerWWMI') },
+  { value: 'ZZMI', label: t('settings.migoto.importerZZMI') },
+  { value: 'SRMI', label: t('settings.migoto.importerSRMI') },
+  { value: 'GIMI', label: t('settings.migoto.importerGIMI') },
+  { value: 'HIMI', label: t('settings.migoto.importerHIMI') },
+]);
 
 const isMigotoWwmi = computed(() => migotoConfig.importer === 'WWMI');
+
+// Feature #3: 游戏名 → 推荐导入器映射
+const gameToImporterMap: Record<string, string> = {
+  WutheringWaves: 'WWMI',
+  ZenlessZoneZero: 'ZZMI',
+  HonkaiStarRail: 'SRMI',
+  GenshinImpact: 'GIMI',
+  Genshin: 'GIMI',
+  HonkaiImpact3rd: 'HIMI',
+  Honkai3rd: 'HIMI',
+};
 
 const refreshMigotoGamesList = async () => {
   try {
@@ -852,20 +1094,24 @@ const refreshMigotoGamesList = async () => {
   }
 };
 
-const loadMigotoGameConfig = async () => {
+// 返回 true 表示加载到了已保存的配置，false 表示使用了默认值
+const loadMigotoGameConfig = async (): Promise<boolean> => {
   const gameName = migotoSelectedGame.value;
-  if (!gameName) return;
+  if (!gameName) return false;
   try {
     const data = await loadGameConfig(gameName);
     const saved = data?.other?.migoto;
     if (saved && typeof saved === 'object') {
       Object.assign(migotoConfig, { ...defaultMigotoConfig, ...saved });
+      return true;
     } else {
       Object.assign(migotoConfig, { ...defaultMigotoConfig });
+      return false;
     }
   } catch (e) {
     console.warn('[migoto] 加载游戏配置失败:', e);
     Object.assign(migotoConfig, { ...defaultMigotoConfig });
+    return false;
   }
 };
 
@@ -878,9 +1124,9 @@ const saveMigotoGameConfig = async () => {
     data.other = data.other || {};
     data.other.migoto = { ...migotoConfig };
     await saveGameConfig(gameName, data);
-    await showMessage('3DMigoto 配置已保存', { title: '成功', kind: 'info' });
+    await toast('success', t('gamesettingsmodal.message.success.title'), t('settings.migoto.saveSuccess'));
   } catch (e) {
-    await showMessage(`保存 3DMigoto 配置失败: ${e}`, { title: '错误', kind: 'error' });
+    await toast('error', t('gamesettingsmodal.message.error.title'), `${t('settings.migoto.saveFailed')}: ${e}`);
   } finally {
     isMigotoSaving.value = false;
   }
@@ -890,22 +1136,62 @@ const selectMigotoPath = async (field: keyof MigotoGameConfig) => {
   const fileFields: Array<keyof MigotoGameConfig> = ['d3dx_ini_path', 'bridge_exe_path'];
   const isDir = !fileFields.includes(field);
   const filterMap: Partial<Record<keyof MigotoGameConfig, { name: string; extensions: string[] }[]>> = {
-    d3dx_ini_path: [{ name: 'INI 文件', extensions: ['ini'] }],
-    bridge_exe_path: [{ name: '可执行文件', extensions: ['exe'] }],
+    d3dx_ini_path: [{ name: 'INI', extensions: ['ini'] }],
+    bridge_exe_path: [{ name: 'EXE', extensions: ['exe'] }],
   };
   const selected = await openFileDialog({
     directory: isDir,
     multiple: false,
-    title: isDir ? '选择文件夹' : `选择文件`,
+    title: isDir ? t('gamesettingsmodal.selectfolder') : t('gamesettingsmodal.selectfile'),
     filters: filterMap[field],
   });
   if (selected && typeof selected === 'string') {
     (migotoConfig as any)[field] = selected;
+
+    // Feature #2: 选择数据路径后自动识别子目录
+    if (field === 'migoto_path') {
+      autoDetectMigotoPaths(selected);
+    }
   }
 };
 
-watch(() => migotoSelectedGame.value, async () => {
-  await loadMigotoGameConfig();
+// Feature #2: 自动识别 3DMigoto 子路径
+const autoDetectMigotoPaths = async (basePath: string) => {
+  try {
+    const candidates = [
+      { field: 'mod_folder', subPaths: ['Mods'] },
+      { field: 'shader_fixes_folder', subPaths: ['ShaderFixes'] },
+      { field: 'd3dx_ini_path', subPaths: ['d3dx.ini'] },
+      { field: 'importer_folder', subPaths: ['WWMI', 'ZZMI', 'SRMI', 'GIMI', 'HIMI'] },
+    ];
+    for (const { field, subPaths } of candidates) {
+      // 只自动填充空字段
+      if ((migotoConfig as any)[field]) continue;
+      for (const sub of subPaths) {
+        const candidate = await joinPath(basePath, sub);
+        try {
+          const exists = await pathExists(candidate);
+          if (exists) {
+            (migotoConfig as any)[field] = candidate;
+            console.log(`[migoto] 自动识别 ${field}: ${candidate}`);
+            break;
+          }
+        } catch { /* ignore */ }
+      }
+    }
+  } catch (e) {
+    console.warn('[migoto] 路径自动识别失败:', e);
+  }
+};
+
+watch(() => migotoSelectedGame.value, async (newGame) => {
+  const hasSavedConfig = await loadMigotoGameConfig();
+
+  // Feature #3: 切换游戏时自动匹配导入器（仅当该游戏无已保存配置时）
+  if (!hasSavedConfig && newGame && gameToImporterMap[newGame]) {
+    migotoConfig.importer = gameToImporterMap[newGame];
+    console.log(`[migoto] 自动匹配导入器: ${newGame} → ${gameToImporterMap[newGame]}`);
+  }
 });
 
 // ============================================================
@@ -945,7 +1231,7 @@ const refreshXxmiRemote = async () => {
     xxmiMessage.value = '';
     xxmiRemoteVersions.value = await fetchXxmiRemoteVersions(xxmiSelectedSource.value);
   } catch (e) {
-    xxmiMessage.value = `获取远程版本失败: ${e}`;
+    xxmiMessage.value = tr('settings.messages.xxmiFetchFailed', `获取远程版本失败: ${e}`).replace('{error}', String(e));
     xxmiMessageType.value = 'error';
   } finally {
     isXxmiFetching.value = false;
@@ -957,7 +1243,7 @@ const doDownloadXxmi = async (ver: XxmiRemoteVersion) => {
   try {
     isXxmiDownloading.value = true;
     xxmiDownloadingVersion.value = ver.version;
-    xxmiMessage.value = `正在下载 ${ver.source_name} ${ver.version}...`;
+    xxmiMessage.value = tr('settings.messages.xxmiDownloading', `正在下载 ${ver.source_name} ${ver.version}...`).replace('{source}', ver.source_name).replace('{version}', ver.version);
     xxmiMessageType.value = '';
     const msg = await downloadXxmiPackage(ver.source_id, ver.version, ver.download_url);
     xxmiMessage.value = msg;
@@ -965,7 +1251,7 @@ const doDownloadXxmi = async (ver: XxmiRemoteVersion) => {
     await refreshXxmiLocal();
     await refreshXxmiRemote();
   } catch (e) {
-    xxmiMessage.value = `下载失败: ${e}`;
+    xxmiMessage.value = tr('settings.messages.downloadFailed', `下载失败: ${e}`).replace('{error}', String(e));
     xxmiMessageType.value = 'error';
   } finally {
     isXxmiDownloading.value = false;
@@ -976,7 +1262,7 @@ const doDownloadXxmi = async (ver: XxmiRemoteVersion) => {
 const doDeployXxmi = async (pkg: XxmiLocalPackage) => {
   const targetDir = migotoConfig.importer_folder || migotoConfig.migoto_path;
   if (!targetDir) {
-    xxmiMessage.value = '请先配置导入器文件夹或 3DMigoto 数据路径';
+    xxmiMessage.value = t('settings.migoto.xxmiDeployNoTarget');
     xxmiMessageType.value = 'error';
     return;
   }
@@ -985,7 +1271,7 @@ const doDeployXxmi = async (pkg: XxmiLocalPackage) => {
     xxmiMessage.value = msg;
     xxmiMessageType.value = 'success';
   } catch (e) {
-    xxmiMessage.value = `部署失败: ${e}`;
+    xxmiMessage.value = tr('settings.messages.xxmiDeployFailed', `部署失败: ${e}`).replace('{error}', String(e));
     xxmiMessageType.value = 'error';
   }
 };
@@ -998,7 +1284,7 @@ const doDeleteXxmi = async (pkg: XxmiLocalPackage) => {
     await refreshXxmiLocal();
     await refreshXxmiRemote();
   } catch (e) {
-    xxmiMessage.value = `删除失败: ${e}`;
+    xxmiMessage.value = tr('settings.messages.xxmiDeleteFailed', `删除失败: ${e}`).replace('{error}', String(e));
     xxmiMessageType.value = 'error';
   }
 };
@@ -1011,6 +1297,26 @@ watch(() => xxmiSelectedSource.value, async () => {
 const xxmiFilteredLocal = computed(() =>
   xxmiLocalPackages.value.filter(p => p.source_id === xxmiSelectedSource.value)
 );
+
+// Feature #4: 游戏名 → XXMI 包源 ID 映射（核心库 xxmi-libs 始终显示）
+const gameToXxmiSourceMap: Record<string, string> = {
+  WutheringWaves: 'wwmi',
+  ZenlessZoneZero: 'zzmi',
+  HonkaiStarRail: 'srmi',
+  GenshinImpact: 'gimi',
+  Genshin: 'gimi',
+  HonkaiImpact3rd: 'himi',
+  Honkai3rd: 'himi',
+};
+
+// Feature #4: 仅显示核心库 + 当前游戏对应的包源
+const xxmiFilteredSources = computed(() => {
+  const game = migotoSelectedGame.value;
+  if (!game) return xxmiSources.value; // 未选择游戏时显示全部
+  const gameSourceId = gameToXxmiSourceMap[game];
+  if (!gameSourceId) return xxmiSources.value; // 未知游戏时显示全部
+  return xxmiSources.value.filter(s => s.id === 'xxmi-libs' || s.id === gameSourceId);
+});
 
 const selectCacheDir = async () => {
   const selected = await openFileDialog({
@@ -1104,7 +1410,7 @@ watch(
         </el-menu-item>
         <el-menu-item index="resource">
           <el-icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14a8 8 0 0 1 8-8h8"/><path d="M20 10V6h-4"/><path d="M20 10a8 8 0 0 1-8 8H4"/><path d="M4 14v4h4"/></svg></el-icon>
-          <span>资源更新</span>
+          <span>{{ tr('settings.resource.title', '资源更新') }}</span>
         </el-menu-item>
         <el-menu-item index="proton">
           <span v-if="guideMenu === 'proton'" class="menu-guide-dot"></span>
@@ -1122,7 +1428,7 @@ watch(
         </el-menu-item>
         <el-menu-item index="migoto">
           <el-icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></el-icon>
-          <span>3DMIGOTO 管理</span>
+          <span>{{ tr('settings.migoto_manage_title', '3DMIGOTO 管理') }}</span>
         </el-menu-item>
       </el-menu>
     </div>
@@ -1134,10 +1440,10 @@ watch(
         <div class="panel-title">{{ t('settings.basicsettings') }}</div>
         <el-form label-width="140px">
           <el-form-item :label="t('settings.language')">
-            <el-select v-model="appSettings.locale" placeholder="Select language" style="width: 200px">
-              <el-option label="简体中文" value="zhs" />
-              <el-option label="繁體中文" value="zht" />
-              <el-option label="English" value="en" />
+            <el-select v-model="appSettings.locale" :placeholder="tr('settings.language_select_placeholder', 'Select language')" style="width: 200px">
+              <el-option :label="tr('settings.language_options.zhs', '简体中文')" value="zhs" />
+              <el-option :label="tr('settings.language_options.zht', '繁體中文')" value="zht" />
+              <el-option :label="tr('settings.language_options.en', 'English')" value="en" />
             </el-select>
           </el-form-item>
           <el-form-item :label="t('settings.datadir')">
@@ -1161,30 +1467,30 @@ watch(
             <el-input v-model="appSettings.githubToken" :placeholder="t('settings.github_token_placeholder')" type="password"
               show-password />
           </el-form-item>
-          <el-form-item label="尘白下载源策略">
+          <el-form-item :label="tr('settings.snowbreakSourcePolicy.label', '尘白下载源策略')">
             <div class="form-item-vertical">
               <el-select v-model="appSettings.snowbreakSourcePolicy" style="width: 260px">
-                <el-option label="官方优先（失败后回退社区）" value="official_first" />
-                <el-option label="社区优先（失败后回退官方）" value="community_first" />
+                <el-option :label="tr('settings.snowbreakSourcePolicy.officialFirst', '官方优先（失败后回退社区）')" value="official_first" />
+                <el-option :label="tr('settings.snowbreakSourcePolicy.communityFirst', '社区优先（失败后回退官方）')" value="community_first" />
               </el-select>
               <div class="form-item-hint">
-                推荐保持"官方优先"，网络异常时会自动回退到另一来源。
+                {{ tr('settings.snowbreakSourcePolicy.hint', '推荐保持\"官方优先\"，网络异常时会自动回退到另一来源。') }}
               </div>
             </div>
           </el-form-item>
-          <el-form-item label="日志查看器">
+          <el-form-item :label="tr('settings.logviewer.label', '日志查看器')">
             <div class="form-item-vertical">
-              <el-button @click="openLogWindow()">打开日志窗口</el-button>
+              <el-button @click="openLogWindow()">{{ tr('settings.logviewer.open', '打开日志窗口') }}</el-button>
               <div class="form-item-hint">
-                在新窗口中查看软件运行日志，便于排查问题时提供给开发者。
+                {{ tr('settings.logviewer.hint', '在新窗口中查看软件运行日志，便于排查问题时提供给开发者。') }}
               </div>
             </div>
           </el-form-item>
-          <el-form-item label="新手引导">
+          <el-form-item :label="tr('settings.onboarding.label', '新手引导')">
             <div class="form-item-vertical">
-              <el-button @click="reenterOnboarding">重新进入新手引导</el-button>
+              <el-button @click="reenterOnboarding">{{ tr('settings.onboarding.reenter', '重新进入新手引导') }}</el-button>
               <div class="form-item-hint">
-                仅重新展示功能导览（主页、游戏库、运行环境等），不会重置初始化设置。
+                {{ tr('settings.onboarding.hint', '仅重新展示功能导览（主页、游戏库、运行环境等），不会重置初始化设置。') }}
               </div>
             </div>
           </el-form-item>
@@ -1269,52 +1575,52 @@ watch(
 
       <!-- 资源检查 -->
       <div v-if="activeMenu === 'resource'" class="settings-panel version-panel" data-onboarding="settings-resource-panel">
-        <div class="panel-title">资源更新</div>
+        <div class="panel-title">{{ tr('settings.resource.title', '资源更新') }}</div>
 
         <div class="section-block">
           <div class="section-header">
             <div>
-              <div class="section-title">Data-parameters 资源版本</div>
+              <div class="section-title">{{ tr('settings.resource.sectionTitle', 'Data-parameters 资源版本') }}</div>
               <div class="section-hint">
-                从 https://github.com/xiaobai01111/Data-parameters 的 version 文件检查，并可一键拉取更新。
+                {{ tr('settings.resource.sectionHint', '从 https://github.com/xiaobai01111/Data-parameters 的 version 文件检查，并可一键拉取更新。') }}
               </div>
             </div>
             <div class="toolbar-actions">
               <el-button size="small" @click="checkResourceInfo" :loading="isResourceChecking">
-                {{ isResourceChecking ? '检查中...' : '检查资源版本' }}
+                {{ isResourceChecking ? tr('settings.resource.checking', '检查中...') : tr('settings.resource.checkAction', '检查资源版本') }}
               </el-button>
               <el-button type="primary" size="small" @click="pullResources" :loading="isResourcePulling">
-                {{ isResourcePulling ? '拉取中...' : '拉取资源更新' }}
+                {{ isResourcePulling ? tr('settings.resource.pulling', '拉取中...') : tr('settings.resource.pullAction', '拉取资源更新') }}
               </el-button>
             </div>
           </div>
 
           <div v-if="resourceInfo" class="version-grid">
             <div class="version-row">
-              <div class="version-label">本地资源版本</div>
+              <div class="version-label">{{ tr('settings.resource.currentVersion', '本地资源版本') }}</div>
               <div class="version-value">{{ resourceInfo.currentVersion }}</div>
             </div>
             <div class="version-row">
-              <div class="version-label">远程资源版本</div>
+              <div class="version-label">{{ tr('settings.resource.latestVersion', '远程资源版本') }}</div>
               <div class="version-value">{{ resourceInfo.latestVersion }}</div>
             </div>
             <div class="version-row">
-              <div class="version-label">更新状态</div>
+              <div class="version-label">{{ tr('settings.resource.status', '更新状态') }}</div>
               <div class="version-value">
-                <el-tag v-if="resourceInfo.hasUpdate" type="warning">有可用资源更新</el-tag>
-                <el-tag v-else type="success">资源已是最新</el-tag>
+                <el-tag v-if="resourceInfo.hasUpdate" type="warning">{{ tr('settings.resource.hasUpdate', '有可用资源更新') }}</el-tag>
+                <el-tag v-else type="success">{{ tr('settings.resource.upToDate', '资源已是最新') }}</el-tag>
               </div>
             </div>
             <div class="version-row version-log-row">
-              <div class="version-label">检查信息</div>
+              <div class="version-label">{{ tr('settings.resource.logLabel', '检查信息') }}</div>
               <div class="version-value">
-                <pre class="version-log-content">{{ resourceInfo.updateLog || '暂无检查信息' }}</pre>
+                <pre class="version-log-content">{{ resourceInfo.updateLog || tr('settings.resource.logEmpty', '暂无检查信息') }}</pre>
               </div>
             </div>
           </div>
 
           <div v-else class="row-sub">
-            尚未获取资源版本信息，请点击“检查资源版本”。
+            {{ tr('settings.resource.notLoaded', '尚未获取资源版本信息，请点击“检查资源版本”。') }}
           </div>
         </div>
       </div>
@@ -1323,7 +1629,7 @@ watch(
       <div v-if="activeMenu === 'proton'" class="settings-panel proton-panel" data-onboarding="settings-proton-panel">
         <div class="panel-title">{{ tr('settings.proton_manage_title', 'Proton 管理') }}</div>
         <div v-if="guideMenu === 'proton'" class="settings-guide-banner">
-          请先在此下载并安装至少一个 Proton 版本，然后回到主页启动游戏。
+          {{ tr('settings.proton_guide_hint', '请先在此下载并安装至少一个 Proton 版本，然后回到主页启动游戏。') }}
         </div>
 
         <div class="section-block">
@@ -1364,8 +1670,18 @@ watch(
                 />
               </el-select>
             </div>
-            <div class="row-sub" v-if="selectedLocalItem(family.family_key)">
-              {{ tr('settings.proton_selected_path', '路径') }}: {{ selectedLocalItem(family.family_key)?.path }}
+            <div class="row-sub row-sub-path" v-if="selectedLocalItem(family.family_key)">
+              <span>{{ tr('settings.proton_selected_path', '路径') }}: {{ selectedLocalItem(family.family_key)?.path }}</span>
+              <el-button
+                v-if="isManagedProtonItem(selectedLocalItem(family.family_key))"
+                text
+                type="danger"
+                size="small"
+                :loading="!!deletingProtonIds[selectedLocalItem(family.family_key)?.id || '']"
+                @click="removeLocalProtonItem(selectedLocalItem(family.family_key)!)"
+              >
+                {{ tr('settings.actions.delete', '删除') }}
+              </el-button>
             </div>
             <div class="row-sub" v-else>
               {{ tr('settings.proton_no_local', '该家族暂无本地版本') }}
@@ -1433,7 +1749,7 @@ watch(
             </div>
             <div class="toolbar-actions">
               <el-button size="small" @click="showProtonCatalogEditor = !showProtonCatalogEditor">
-                {{ showProtonCatalogEditor ? '收起目录编辑器' : '展开目录编辑器' }}
+                {{ showProtonCatalogEditor ? tr('settings.proton_editor_collapse', '收起目录编辑器') : tr('settings.proton_editor_expand', '展开目录编辑器') }}
               </el-button>
               <template v-if="showProtonCatalogEditor">
                 <el-button size="small" @click="reloadCatalogEditor" :loading="isCatalogLoading">
@@ -1503,7 +1819,7 @@ watch(
             </div>
           </div>
           <div v-else class="row-sub" style="margin-top: 10px;">
-            目录编辑器已折叠（推荐保持折叠以提升滚动性能）。
+            {{ tr('settings.proton_editor_collapsed_hint', '目录编辑器已折叠（推荐保持折叠以提升滚动性能）。') }}
           </div>
         </div>
       </div>
@@ -1512,13 +1828,13 @@ watch(
       <div v-if="activeMenu === 'dxvk'" class="settings-panel dxvk-panel" data-onboarding="settings-dxvk-panel">
         <div class="panel-title">{{ tr('settings.dxvk_manage_title', 'DXVK 管理') }}</div>
         <div v-if="guideMenu === 'dxvk'" class="settings-guide-banner">
-          请先在此下载 DXVK 版本；下载后可在“游戏设置 -> 运行环境”里应用到当前 Prefix。
+          {{ tr('settings.dxvk_guide_hint', '请先在此下载 DXVK 版本；下载后可在“游戏设置 -> 运行环境”里应用到当前 Prefix。') }}
         </div>
 
         <div class="section-block">
           <div class="section-header">
             <div>
-              <div class="section-title">DXVK (DirectX → Vulkan)</div>
+              <div class="section-title">{{ tr('settings.dxvk_section_title', 'DXVK (DirectX → Vulkan)') }}</div>
               <div class="section-hint">
                 {{ tr('settings.dxvk_hint', '在此下载和管理 DXVK 版本，并安装到游戏的 Wine Prefix 中。') }}
               </div>
@@ -1551,6 +1867,17 @@ watch(
                 <el-tag v-if="lv.extracted" type="success" size="small">{{ tr('settings.dxvk_extracted', '已解压') }}</el-tag>
                 <el-tag v-else type="info" size="small">{{ tr('settings.dxvk_archive_only', '仅存档') }}</el-tag>
                 <div class="dxvk-local-path">{{ lv.path }}</div>
+                <div class="dxvk-local-actions">
+                  <el-button
+                    text
+                    type="danger"
+                    size="small"
+                    :loading="!!deletingDxvkKeys[`${lv.version}|${lv.variant}`]"
+                    @click="removeLocalDxvkItem(lv.version, lv.variant)"
+                  >
+                    {{ tr('settings.actions.delete', '删除') }}
+                  </el-button>
+                </div>
               </div>
             </div>
           </div>
@@ -1625,7 +1952,7 @@ watch(
         <div class="section-block">
           <div class="section-header">
             <div>
-              <div class="section-title">VKD3D-Proton (Direct3D 12 → Vulkan)</div>
+              <div class="section-title">{{ tr('settings.vkd3d_section_title', 'VKD3D-Proton (Direct3D 12 → Vulkan)') }}</div>
               <div class="section-hint">
                 {{ tr('settings.vkd3d_hint', '在此下载和管理 VKD3D-Proton 版本，可用于 Direct3D 12 转译。') }}
               </div>
@@ -1655,6 +1982,17 @@ watch(
                 <el-tag v-if="lv.extracted" type="success" size="small">{{ tr('settings.vkd3d_extracted', '已解压') }}</el-tag>
                 <el-tag v-else type="info" size="small">{{ tr('settings.vkd3d_archive_only', '仅存档') }}</el-tag>
                 <div class="dxvk-local-path">{{ lv.path }}</div>
+                <div class="dxvk-local-actions">
+                  <el-button
+                    text
+                    type="danger"
+                    size="small"
+                    :loading="!!deletingVkd3dVersions[lv.version]"
+                    @click="removeLocalVkd3dItem(lv.version)"
+                  >
+                    {{ tr('settings.actions.delete', '删除') }}
+                  </el-button>
+                </div>
               </div>
             </div>
           </div>
@@ -1711,24 +2049,24 @@ watch(
 
       <!-- 3DMIGOTO 管理 -->
       <div v-if="activeMenu === 'migoto'" class="settings-panel dxvk-panel" data-onboarding="settings-migoto-panel">
-        <div class="panel-title">3DMIGOTO 管理</div>
+        <div class="panel-title">{{ $t('settings.migoto.panelTitle') }}</div>
 
         <div class="section-block">
           <div class="section-header">
             <div>
-              <div class="section-title">按游戏配置 3DMigoto</div>
+              <div class="section-title">{{ $t('settings.migoto.gameConfigTitle') }}</div>
               <div class="section-hint">
-                选择一个游戏，配置其 3DMigoto 路径、注入方式和高级选项。每个游戏的配置独立保存。
+                {{ $t('settings.migoto.gameConfigHint') }}
               </div>
             </div>
           </div>
 
           <!-- 游戏选择 -->
           <div class="migoto-game-select" style="margin-top: 16px;">
-            <div class="editor-subtitle">选择游戏</div>
+            <div class="editor-subtitle">{{ $t('settings.migoto.selectGame') }}</div>
             <el-select
               v-model="migotoSelectedGame"
-              placeholder="选择要配置的游戏..."
+              :placeholder="$t('settings.migoto.selectGamePlaceholder')"
               class="dxvk-version-select"
               filterable
               style="width: 100%; max-width: 400px;"
@@ -1746,50 +2084,50 @@ watch(
 
             <!-- 路径配置 -->
             <div class="dxvk-section" style="margin-top: 20px;">
-              <div class="editor-subtitle">路径配置</div>
+              <div class="editor-subtitle">{{ $t('settings.migoto.pathConfig') }}</div>
               <div class="section-hint" style="margin-bottom: 12px;">
-                留空则使用默认路径。自定义路径可指向任意位置（Linux 原生路径，启动时自动转换为 Wine 路径）。
+                {{ $t('settings.migoto.pathConfigHint') }}
               </div>
               <el-form label-width="160px" class="migoto-form">
 
-                <el-form-item label="3DMigoto 数据路径">
+                <el-form-item :label="$t('settings.migoto.migotoPath')">
                   <div style="display: flex; gap: 8px; width: 100%;">
-                    <el-input v-model="migotoConfig.migoto_path" placeholder="留空使用默认 (数据目录/3Dmigoto-data)" />
-                    <el-button size="small" @click="selectMigotoPath('migoto_path')">选择</el-button>
+                    <el-input v-model="migotoConfig.migoto_path" :placeholder="$t('settings.migoto.migotoPathPlaceholder')" />
+                    <el-button size="small" @click="selectMigotoPath('migoto_path')">{{ $t('settings.migoto.browse') }}</el-button>
                   </div>
-                  <div class="form-item-hint">3DMigoto 主程序、d3d11.dll 等核心文件所在文件夹。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.migotoPathHint') }}</div>
                 </el-form-item>
 
-                <el-form-item label="导入器文件夹">
+                <el-form-item :label="$t('settings.migoto.importerFolder')">
                   <div style="display: flex; gap: 8px; width: 100%;">
-                    <el-input v-model="migotoConfig.importer_folder" placeholder="留空使用默认 (数据路径/<importer>)" />
-                    <el-button size="small" @click="selectMigotoPath('importer_folder')">选择</el-button>
+                    <el-input v-model="migotoConfig.importer_folder" :placeholder="$t('settings.migoto.importerFolderPlaceholder')" />
+                    <el-button size="small" @click="selectMigotoPath('importer_folder')">{{ $t('settings.migoto.browse') }}</el-button>
                   </div>
-                  <div class="form-item-hint">导入器（如 WWMI、GIMI）的根目录，包含 d3dx.ini 等配置。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.importerFolderHint') }}</div>
                 </el-form-item>
 
-                <el-form-item label="Mod 文件夹">
+                <el-form-item :label="$t('settings.migoto.modFolder')">
                   <div style="display: flex; gap: 8px; width: 100%;">
-                    <el-input v-model="migotoConfig.mod_folder" placeholder="留空使用默认 (导入器文件夹/Mods)" />
-                    <el-button size="small" @click="selectMigotoPath('mod_folder')">选择</el-button>
+                    <el-input v-model="migotoConfig.mod_folder" :placeholder="$t('settings.migoto.modFolderPlaceholder')" />
+                    <el-button size="small" @click="selectMigotoPath('mod_folder')">{{ $t('settings.migoto.browse') }}</el-button>
                   </div>
-                  <div class="form-item-hint">存放 Mod 文件的文件夹，包含各 Mod 子目录。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.modFolderHint') }}</div>
                 </el-form-item>
 
-                <el-form-item label="ShaderFixes 文件夹">
+                <el-form-item :label="$t('settings.migoto.shaderFixesFolder')">
                   <div style="display: flex; gap: 8px; width: 100%;">
-                    <el-input v-model="migotoConfig.shader_fixes_folder" placeholder="留空使用默认 (导入器文件夹/ShaderFixes)" />
-                    <el-button size="small" @click="selectMigotoPath('shader_fixes_folder')">选择</el-button>
+                    <el-input v-model="migotoConfig.shader_fixes_folder" :placeholder="$t('settings.migoto.shaderFixesFolderPlaceholder')" />
+                    <el-button size="small" @click="selectMigotoPath('shader_fixes_folder')">{{ $t('settings.migoto.browse') }}</el-button>
                   </div>
-                  <div class="form-item-hint">着色器修复文件所在文件夹。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.shaderFixesFolderHint') }}</div>
                 </el-form-item>
 
-                <el-form-item label="d3dx.ini 路径">
+                <el-form-item :label="$t('settings.migoto.d3dxIniPath')">
                   <div style="display: flex; gap: 8px; width: 100%;">
-                    <el-input v-model="migotoConfig.d3dx_ini_path" placeholder="留空使用默认 (导入器文件夹/d3dx.ini)" />
-                    <el-button size="small" @click="selectMigotoPath('d3dx_ini_path')">选择</el-button>
+                    <el-input v-model="migotoConfig.d3dx_ini_path" :placeholder="$t('settings.migoto.d3dxIniPathPlaceholder')" />
+                    <el-button size="small" @click="selectMigotoPath('d3dx_ini_path')">{{ $t('settings.migoto.browse') }}</el-button>
                   </div>
-                  <div class="form-item-hint">3DMigoto 核心配置文件路径。高级用户可指定自定义 ini 文件。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.d3dxIniPathHint') }}</div>
                 </el-form-item>
 
               </el-form>
@@ -1797,10 +2135,10 @@ watch(
 
             <!-- Mod 导入器 + 注入方式 -->
             <div class="dxvk-section" style="margin-top: 20px;">
-              <div class="editor-subtitle">Mod 导入器 &amp; 注入方式</div>
+              <div class="editor-subtitle">{{ $t('settings.migoto.importerAndInjection') }}</div>
               <el-form label-width="160px" class="migoto-form">
 
-                <el-form-item label="Mod 导入器">
+                <el-form-item :label="$t('settings.migoto.importerLabel')">
                   <el-select v-model="migotoConfig.importer" style="width: 280px;">
                     <el-option
                       v-for="opt in migotoImporterOptions"
@@ -1809,15 +2147,15 @@ watch(
                       :value="opt.value"
                     />
                   </el-select>
-                  <div class="form-item-hint">选择与当前游戏对应的 Mod 导入器类型。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.importerSelectHint') }}</div>
                 </el-form-item>
 
-                <el-form-item label="注入方式">
+                <el-form-item :label="$t('settings.migoto.injectionLabel')">
                   <el-radio-group v-model="migotoConfig.use_hook">
-                    <el-radio :value="true">Hook 注入（推荐）</el-radio>
-                    <el-radio :value="false">直接注入</el-radio>
+                    <el-radio :value="true">{{ $t('settings.migoto.injectionHook') }}</el-radio>
+                    <el-radio :value="false">{{ $t('settings.migoto.injectionDirect') }}</el-radio>
                   </el-radio-group>
-                  <div class="form-item-hint">Hook 注入兼容性更好；直接注入适用于 Hook 失败的情况。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.injectionHint') }}</div>
                 </el-form-item>
 
               </el-form>
@@ -1825,49 +2163,49 @@ watch(
 
             <!-- 高级选项 -->
             <div class="dxvk-section" style="margin-top: 20px;">
-              <div class="editor-subtitle">高级选项</div>
+              <div class="editor-subtitle">{{ $t('settings.migoto.advancedOptions') }}</div>
               <el-form label-width="160px" class="migoto-form">
 
-                <el-form-item label="强制渲染设置">
+                <el-form-item :label="$t('settings.migoto.enforceRendering')">
                   <el-switch v-model="migotoConfig.enforce_rendering" />
-                  <div class="form-item-hint">确保 texture_hash 和 track_texture_updates 为正确值，避免 Mod 失效。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.enforceRenderingHint') }}</div>
                 </el-form-item>
 
-                <el-form-item label="静默警告">
+                <el-form-item :label="$t('settings.migoto.muteWarnings')">
                   <el-switch v-model="migotoConfig.mute_warnings" />
-                  <div class="form-item-hint">隐藏 3DMigoto 控制台中的非关键警告。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.muteWarningsHint') }}</div>
                 </el-form-item>
 
-                <el-form-item label="Hunting 模式">
+                <el-form-item :label="$t('settings.migoto.enableHunting')">
                   <el-switch v-model="migotoConfig.enable_hunting" />
-                  <div class="form-item-hint">用于 Mod 开发/调试，可实时查看和切换着色器。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.enableHuntingHint') }}</div>
                 </el-form-item>
 
-                <el-form-item label="导出着色器">
+                <el-form-item :label="$t('settings.migoto.dumpShaders')">
                   <el-switch v-model="migotoConfig.dump_shaders" />
-                  <div class="form-item-hint">将着色器 HLSL / ASM 导出到剪贴板，用于 Mod 开发。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.dumpShadersHint') }}</div>
                 </el-form-item>
 
-                <el-form-item label="调用日志">
+                <el-form-item :label="$t('settings.migoto.callsLogging')">
                   <el-switch v-model="migotoConfig.calls_logging" />
-                  <div class="form-item-hint">记录 D3D11 API 调用，用于调试（影响性能）。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.callsLoggingHint') }}</div>
                 </el-form-item>
 
-                <el-form-item label="调试日志">
+                <el-form-item :label="$t('settings.migoto.debugLogging')">
                   <el-switch v-model="migotoConfig.debug_logging" />
-                  <div class="form-item-hint">输出详细调试信息到日志文件。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.debugLoggingHint') }}</div>
                 </el-form-item>
 
-                <el-form-item label="进程超时（秒）">
+                <el-form-item :label="$t('settings.migoto.processTimeout')">
                   <el-input-number v-model="migotoConfig.process_timeout" :min="5" :max="120" :step="5" style="width: 160px;" />
-                  <div class="form-item-hint">等待游戏进程启动和窗口出现的最大时间。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.processTimeoutHint') }}</div>
                 </el-form-item>
 
-                <el-form-item label="不安全模式">
+                <el-form-item :label="$t('settings.migoto.unsafeMode')">
                   <el-switch v-model="migotoConfig.unsafe_mode" />
-                  <div class="form-item-hint">跳过 DLL 签名验证。仅在信任所有 Mod 文件时启用。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.unsafeModeHint') }}</div>
                   <div v-if="migotoConfig.unsafe_mode" style="color: #f56c6c; font-size: 12px; margin-top: 4px;">
-                    ⚠ 不安全模式已启用，DLL 签名验证将被跳过。
+                    {{ $t('settings.migoto.unsafeModeWarn') }}
                   </div>
                 </el-form-item>
 
@@ -1876,27 +2214,27 @@ watch(
 
             <!-- WWMI 专属设置 -->
             <div v-if="isMigotoWwmi" class="dxvk-section" style="margin-top: 20px;">
-              <div class="editor-subtitle">鸣潮 (WWMI) 专属设置</div>
+              <div class="editor-subtitle">{{ $t('settings.migoto.wwmiTitle') }}</div>
               <el-form label-width="160px" class="migoto-form">
 
-                <el-form-item label="自动配置游戏">
+                <el-form-item :label="$t('settings.migoto.wwmiConfigureGame')">
                   <el-switch v-model="migotoConfig.wwmi_configure_game" />
-                  <div class="form-item-hint">自动修改 SQLite 数据库和 INI 文件以优化游戏兼容性。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.wwmiConfigureGameHint') }}</div>
                 </el-form-item>
 
-                <el-form-item label="解锁 120 FPS">
+                <el-form-item :label="$t('settings.migoto.wwmiUnlockFps')">
                   <el-switch v-model="migotoConfig.wwmi_unlock_fps" />
-                  <div class="form-item-hint">将帧率限制提升至 120 FPS 并锁定设置。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.wwmiUnlockFpsHint') }}</div>
                 </el-form-item>
 
-                <el-form-item label="性能优化">
+                <el-form-item :label="$t('settings.migoto.wwmiPerfTweaks')">
                   <el-switch v-model="migotoConfig.wwmi_perf_tweaks" />
-                  <div class="form-item-hint">关闭光线追踪等高负载功能以提升兼容性和帧率。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.wwmiPerfTweaksHint') }}</div>
                 </el-form-item>
 
-                <el-form-item label="禁用受伤特效">
+                <el-form-item :label="$t('settings.migoto.wwmiDisableWoundedFx')">
                   <el-switch v-model="migotoConfig.wwmi_disable_wounded_fx" />
-                  <div class="form-item-hint">关闭受伤时的屏幕红边效果。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.wwmiDisableWoundedFxHint') }}</div>
                 </el-form-item>
 
               </el-form>
@@ -1904,50 +2242,50 @@ watch(
 
             <!-- 中间层 Bridge 配置 -->
             <div class="dxvk-section" style="margin-top: 20px;">
-              <div class="editor-subtitle">中间层 (Bridge) 配置</div>
+              <div class="editor-subtitle">{{ $t('settings.migoto.bridgeConfig') }}</div>
               <div class="section-hint" style="margin-bottom: 12px;">
-                控制 ssmt4-bridge.exe 的行为，包括进程管理、自定义启动、脚本钩子等。
+                {{ $t('settings.migoto.bridgeConfigHint') }}
               </div>
               <el-form label-width="180px" class="migoto-form">
 
-                <el-form-item label="Bridge 可执行文件">
+                <el-form-item :label="$t('settings.migoto.bridgeExe')">
                   <div style="display: flex; gap: 8px; width: 100%;">
-                    <el-input v-model="migotoConfig.bridge_exe_path" placeholder="留空使用默认 (数据目录/Windows/ssmt4-bridge.exe)" />
-                    <el-button size="small" @click="selectMigotoPath('bridge_exe_path')">选择</el-button>
+                    <el-input v-model="migotoConfig.bridge_exe_path" :placeholder="$t('settings.migoto.bridgeExePlaceholder')" />
+                    <el-button size="small" @click="selectMigotoPath('bridge_exe_path')">{{ $t('settings.migoto.browse') }}</el-button>
                   </div>
-                  <div class="form-item-hint">ssmt4-bridge.exe 的路径。留空则使用应用数据目录下的默认位置。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.bridgeExeHint') }}</div>
                 </el-form-item>
 
-                <el-form-item label="游戏启动参数">
-                  <el-input v-model="migotoConfig.start_args" placeholder="留空不添加额外参数（如 -dx11 -windowed）" />
-                  <div class="form-item-hint">传递给游戏可执行文件的额外命令行参数，空格分隔。</div>
+                <el-form-item :label="$t('settings.migoto.startArgs')">
+                  <el-input v-model="migotoConfig.start_args" :placeholder="$t('settings.migoto.startArgsPlaceholder')" />
+                  <div class="form-item-hint">{{ $t('settings.migoto.startArgsHint') }}</div>
                 </el-form-item>
 
-                <el-form-item label="进程启动方式">
+                <el-form-item :label="$t('settings.migoto.processStartMethod')">
                   <el-select v-model="migotoConfig.process_start_method" style="width: 200px;">
-                    <el-option value="Native" label="Native（原生）" />
-                    <el-option value="CreateProcess" label="CreateProcess" />
-                    <el-option value="ShellExecute" label="ShellExecute" />
+                    <el-option value="Native" :label="$t('settings.migoto.startMethodNative')" />
+                    <el-option value="CreateProcess" :label="$t('settings.migoto.startMethodCreateProcess')" />
+                    <el-option value="ShellExecute" :label="$t('settings.migoto.startMethodShellExecute')" />
                   </el-select>
-                  <div class="form-item-hint">Bridge 启动游戏进程的方式。一般使用 Native 即可。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.processStartMethodHint') }}</div>
                 </el-form-item>
 
-                <el-form-item label="进程优先级">
+                <el-form-item :label="$t('settings.migoto.processPriority')">
                   <el-select v-model="migotoConfig.process_priority" style="width: 200px;">
-                    <el-option value="Normal" label="Normal（正常）" />
-                    <el-option value="AboveNormal" label="AboveNormal（高于正常）" />
-                    <el-option value="High" label="High（高）" />
-                    <el-option value="Realtime" label="Realtime（实时）" />
-                    <el-option value="BelowNormal" label="BelowNormal（低于正常）" />
-                    <el-option value="Idle" label="Idle（空闲）" />
+                    <el-option value="Normal" :label="$t('settings.migoto.priorityNormal')" />
+                    <el-option value="AboveNormal" :label="$t('settings.migoto.priorityAboveNormal')" />
+                    <el-option value="High" :label="$t('settings.migoto.priorityHigh')" />
+                    <el-option value="Realtime" :label="$t('settings.migoto.priorityRealtime')" />
+                    <el-option value="BelowNormal" :label="$t('settings.migoto.priorityBelowNormal')" />
+                    <el-option value="Idle" :label="$t('settings.migoto.priorityIdle')" />
                   </el-select>
-                  <div class="form-item-hint">游戏进程的 Windows 优先级。提高优先级可能改善帧率稳定性。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.processPriorityHint') }}</div>
                 </el-form-item>
 
-                <el-form-item label="DLL 初始化延迟">
+                <el-form-item :label="$t('settings.migoto.dllInitDelay')">
                   <el-input-number v-model="migotoConfig.xxmi_dll_init_delay" :min="0" :max="5000" :step="50" style="width: 180px;" />
-                  <span style="margin-left: 8px; color: rgba(255,255,255,0.5); font-size: 12px;">ms</span>
-                  <div class="form-item-hint">注入 DLL 后等待初始化的时间（毫秒）。遇到崩溃可尝试增大此值。</div>
+                  <span style="margin-left: 8px; color: rgba(255,255,255,0.5); font-size: 12px;">{{ $t('settings.migoto.dllInitDelayUnit') }}</span>
+                  <div class="form-item-hint">{{ $t('settings.migoto.dllInitDelayHint') }}</div>
                 </el-form-item>
 
               </el-form>
@@ -1955,26 +2293,26 @@ watch(
 
             <!-- 自定义启动命令 -->
             <div class="dxvk-section" style="margin-top: 20px;">
-              <div class="editor-subtitle">自定义启动命令</div>
+              <div class="editor-subtitle">{{ $t('settings.migoto.customLaunch') }}</div>
               <el-form label-width="180px" class="migoto-form">
 
-                <el-form-item label="启用">
+                <el-form-item :label="$t('settings.migoto.customLaunchEnable')">
                   <el-switch v-model="migotoConfig.custom_launch_enabled" />
-                  <div class="form-item-hint">使用自定义命令代替默认的游戏启动方式。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.customLaunchEnableHint') }}</div>
                 </el-form-item>
 
                 <template v-if="migotoConfig.custom_launch_enabled">
-                  <el-form-item label="命令行">
-                    <el-input v-model="migotoConfig.custom_launch_cmd" placeholder="自定义启动命令（Wine 路径格式）" />
-                    <div class="form-item-hint">在 Proton 容器内执行的命令。路径将自动转换为 Wine 格式。</div>
+                  <el-form-item :label="$t('settings.migoto.customLaunchCmd')">
+                    <el-input v-model="migotoConfig.custom_launch_cmd" :placeholder="$t('settings.migoto.customLaunchCmdPlaceholder')" />
+                    <div class="form-item-hint">{{ $t('settings.migoto.customLaunchCmdHint') }}</div>
                   </el-form-item>
 
-                  <el-form-item label="注入模式">
+                  <el-form-item :label="$t('settings.migoto.customLaunchInjectMode')">
                     <el-select v-model="migotoConfig.custom_launch_inject_mode" style="width: 200px;">
-                      <el-option value="Hook" label="Hook 注入" />
-                      <el-option value="Direct" label="直接注入" />
+                      <el-option value="Hook" :label="$t('settings.migoto.customLaunchInjectHook')" />
+                      <el-option value="Direct" :label="$t('settings.migoto.customLaunchInjectDirect')" />
                     </el-select>
-                    <div class="form-item-hint">自定义启动时使用的 DLL 注入方式。</div>
+                    <div class="form-item-hint">{{ $t('settings.migoto.customLaunchInjectHint') }}</div>
                   </el-form-item>
                 </template>
 
@@ -1983,35 +2321,35 @@ watch(
 
             <!-- 启动前/加载后脚本 -->
             <div class="dxvk-section" style="margin-top: 20px;">
-              <div class="editor-subtitle">脚本钩子</div>
+              <div class="editor-subtitle">{{ $t('settings.migoto.scriptHooks') }}</div>
               <div class="section-hint" style="margin-bottom: 12px;">
-                在游戏启动前后执行自定义命令，可用于清理缓存、备份存档等。
+                {{ $t('settings.migoto.scriptHooksHint') }}
               </div>
               <el-form label-width="180px" class="migoto-form">
 
-                <el-form-item label="启动前脚本">
+                <el-form-item :label="$t('settings.migoto.preLaunchScript')">
                   <el-switch v-model="migotoConfig.pre_launch_enabled" />
                 </el-form-item>
                 <template v-if="migotoConfig.pre_launch_enabled">
-                  <el-form-item label="命令">
-                    <el-input v-model="migotoConfig.pre_launch_cmd" placeholder="游戏启动前执行的命令" />
+                  <el-form-item :label="$t('settings.migoto.preLaunchCmd')">
+                    <el-input v-model="migotoConfig.pre_launch_cmd" :placeholder="$t('settings.migoto.preLaunchCmdPlaceholder')" />
                   </el-form-item>
-                  <el-form-item label="等待完成">
+                  <el-form-item :label="$t('settings.migoto.preLaunchWait')">
                     <el-switch v-model="migotoConfig.pre_launch_wait" />
-                    <div class="form-item-hint">启用后将等待命令执行完毕再启动游戏。</div>
+                    <div class="form-item-hint">{{ $t('settings.migoto.preLaunchWaitHint') }}</div>
                   </el-form-item>
                 </template>
 
-                <el-form-item label="加载后脚本">
+                <el-form-item :label="$t('settings.migoto.postLoadScript')">
                   <el-switch v-model="migotoConfig.post_load_enabled" />
                 </el-form-item>
                 <template v-if="migotoConfig.post_load_enabled">
-                  <el-form-item label="命令">
-                    <el-input v-model="migotoConfig.post_load_cmd" placeholder="DLL 注入完成后执行的命令" />
+                  <el-form-item :label="$t('settings.migoto.postLoadCmd')">
+                    <el-input v-model="migotoConfig.post_load_cmd" :placeholder="$t('settings.migoto.postLoadCmdPlaceholder')" />
                   </el-form-item>
-                  <el-form-item label="等待完成">
+                  <el-form-item :label="$t('settings.migoto.postLoadWait')">
                     <el-switch v-model="migotoConfig.post_load_wait" />
-                    <div class="form-item-hint">启用后将等待命令执行完毕再继续。</div>
+                    <div class="form-item-hint">{{ $t('settings.migoto.postLoadWaitHint') }}</div>
                   </el-form-item>
                 </template>
 
@@ -2020,22 +2358,22 @@ watch(
 
             <!-- 额外库加载 -->
             <div class="dxvk-section" style="margin-top: 20px;">
-              <div class="editor-subtitle">额外库加载</div>
+              <div class="editor-subtitle">{{ $t('settings.migoto.extraLibraries') }}</div>
               <el-form label-width="180px" class="migoto-form">
 
-                <el-form-item label="启用">
+                <el-form-item :label="$t('settings.migoto.extraLibrariesEnable')">
                   <el-switch v-model="migotoConfig.extra_libraries_enabled" />
-                  <div class="form-item-hint">在 DLL 注入时加载额外的动态库。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.extraLibrariesEnableHint') }}</div>
                 </el-form-item>
 
-                <el-form-item v-if="migotoConfig.extra_libraries_enabled" label="库路径">
+                <el-form-item v-if="migotoConfig.extra_libraries_enabled" :label="$t('settings.migoto.extraLibrariesPaths')">
                   <el-input
                     v-model="migotoConfig.extra_libraries_paths"
                     type="textarea"
                     :rows="4"
-                    placeholder="每行一个 Linux 路径，例如：&#10;/home/user/libs/reshade.dll&#10;/home/user/libs/custom.dll"
+                    :placeholder="$t('settings.migoto.extraLibrariesPathsPlaceholder')"
                   />
-                  <div class="form-item-hint">每行一个 Linux 路径，启动时自动转换为 Wine 路径。</div>
+                  <div class="form-item-hint">{{ $t('settings.migoto.extraLibrariesPathsHint') }}</div>
                 </el-form-item>
 
               </el-form>
@@ -2044,9 +2382,9 @@ watch(
             <!-- 保存按钮 -->
             <div style="margin-top: 24px; display: flex; gap: 12px;">
               <el-button type="primary" @click="saveMigotoGameConfig" :loading="isMigotoSaving">
-                {{ isMigotoSaving ? '保存中...' : '保存配置' }}
+                {{ isMigotoSaving ? $t('settings.migoto.saving') : $t('settings.migoto.saveConfig') }}
               </el-button>
-              <el-button @click="loadMigotoGameConfig">重新加载</el-button>
+              <el-button @click="loadMigotoGameConfig">{{ $t('settings.migoto.reload') }}</el-button>
             </div>
 
           </template>
@@ -2056,30 +2394,30 @@ watch(
         <div class="section-block" style="margin-top: 28px;">
           <div class="section-header">
             <div>
-              <div class="section-title">XXMI 资源包下载</div>
+              <div class="section-title">{{ $t('settings.migoto.xxmiTitle') }}</div>
               <div class="section-hint">
-                从原版 XXMI 项目 (SpectrumQT) 的 GitHub Releases 下载 3DMigoto 核心库和各游戏导入器包。
+                {{ $t('settings.migoto.xxmiHint') }}
               </div>
             </div>
           </div>
 
           <!-- 包源选择 -->
           <div style="margin-top: 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-            <div class="editor-subtitle" style="margin: 0;">包源</div>
+            <div class="editor-subtitle" style="margin: 0;">{{ $t('settings.migoto.xxmiSource') }}</div>
             <el-select
               v-model="xxmiSelectedSource"
               style="width: 320px;"
               class="dxvk-version-select"
             >
               <el-option
-                v-for="src in xxmiSources"
+                v-for="src in xxmiFilteredSources"
                 :key="src.id"
                 :label="src.display_name"
                 :value="src.id"
               />
             </el-select>
             <el-button size="small" @click="refreshXxmiRemote" :loading="isXxmiFetching">
-              {{ isXxmiFetching ? '获取中...' : '刷新版本' }}
+              {{ isXxmiFetching ? $t('settings.migoto.xxmiFetching') : $t('settings.migoto.xxmiRefresh') }}
             </el-button>
           </div>
 
@@ -2097,7 +2435,7 @@ watch(
 
           <!-- 本地已下载 -->
           <div v-if="xxmiFilteredLocal.length > 0" style="margin-top: 16px;">
-            <div class="editor-subtitle">本地已下载</div>
+            <div class="editor-subtitle">{{ $t('settings.migoto.xxmiLocalTitle') }}</div>
             <div class="xxmi-pkg-list">
               <div v-for="pkg in xxmiFilteredLocal" :key="`${pkg.source_id}-${pkg.version}`" class="xxmi-pkg-item">
                 <div class="xxmi-pkg-info">
@@ -2106,10 +2444,10 @@ watch(
                 </div>
                 <div class="xxmi-pkg-actions">
                   <el-button size="small" type="primary" @click="doDeployXxmi(pkg)">
-                    部署
+                    {{ $t('settings.migoto.xxmiDeploy') }}
                   </el-button>
                   <el-button size="small" type="danger" @click="doDeleteXxmi(pkg)">
-                    删除
+                    {{ $t('settings.migoto.xxmiDelete') }}
                   </el-button>
                 </div>
               </div>
@@ -2118,13 +2456,13 @@ watch(
 
           <!-- 远程可用版本 -->
           <div v-if="xxmiRemoteVersions.length > 0" style="margin-top: 16px;">
-            <div class="editor-subtitle">可下载版本</div>
+            <div class="editor-subtitle">{{ $t('settings.migoto.xxmiRemoteTitle') }}</div>
             <div class="xxmi-pkg-list">
               <div v-for="ver in xxmiRemoteVersions" :key="`${ver.source_id}-${ver.version}`" class="xxmi-pkg-item">
                 <div class="xxmi-pkg-info">
                   <span class="xxmi-pkg-version">{{ ver.version }}</span>
                   <span class="xxmi-pkg-size">{{ formatBytes(ver.asset_size) }}</span>
-                  <el-tag v-if="ver.installed" type="success" size="small" style="margin-left: 6px;">已下载</el-tag>
+                  <el-tag v-if="ver.installed" type="success" size="small" style="margin-left: 6px;">{{ $t('settings.migoto.xxmiInstalled') }}</el-tag>
                 </div>
                 <div class="xxmi-pkg-actions">
                   <el-button
@@ -2135,7 +2473,7 @@ watch(
                     :disabled="isXxmiDownloading"
                     @click="doDownloadXxmi(ver)"
                   >
-                    {{ isXxmiDownloading && xxmiDownloadingVersion === ver.version ? '下载中...' : '下载' }}
+                    {{ isXxmiDownloading && xxmiDownloadingVersion === ver.version ? $t('settings.migoto.xxmiDownloading') : $t('settings.migoto.xxmiDownload') }}
                   </el-button>
                   <span v-if="ver.published_at" class="xxmi-pkg-date">
                     {{ ver.published_at.substring(0, 10) }}
@@ -2147,43 +2485,13 @@ watch(
 
           <!-- 空状态 -->
           <div v-else-if="!isXxmiFetching && xxmiSources.length > 0" style="margin-top: 16px; color: #909399; font-size: 13px;">
-            点击「刷新版本」获取可用的 XXMI 资源包版本。
+            {{ $t('settings.migoto.xxmiEmpty') }}
           </div>
         </div>
       </div>
 
     </div>
 
-    <!-- 下载进度弹窗 -->
-    <el-dialog
-      v-model="dlDialogVisible"
-      :title="dlDialogTitle"
-      width="420px"
-      :close-on-click-modal="dlDialogStatus !== 'downloading'"
-      :close-on-press-escape="dlDialogStatus !== 'downloading'"
-      :show-close="dlDialogStatus !== 'downloading'"
-      align-center
-    >
-      <div class="dl-dialog-body">
-        <div v-if="dlDialogStatus === 'downloading'" class="dl-dialog-loading">
-          <el-icon class="dl-dialog-spinner"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg></el-icon>
-          <div class="dl-dialog-text">{{ dlDialogMessage }}</div>
-        </div>
-        <div v-else-if="dlDialogStatus === 'success'" class="dl-dialog-result dl-dialog-success">
-          <el-icon style="font-size: 32px; color: #67c23a;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></el-icon>
-          <div class="dl-dialog-text">{{ dlDialogMessage }}</div>
-        </div>
-        <div v-else class="dl-dialog-result dl-dialog-error">
-          <el-icon style="font-size: 32px; color: #f56c6c;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></el-icon>
-          <div class="dl-dialog-text">{{ dlDialogMessage }}</div>
-        </div>
-      </div>
-      <template #footer>
-        <el-button v-if="dlDialogStatus !== 'downloading'" type="primary" @click="closeDlDialog">
-          确定
-        </el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
@@ -2569,6 +2877,17 @@ watch(
   flex: 1;
 }
 
+.dxvk-local-actions {
+  flex: 0 0 auto;
+}
+
+.row-sub-path {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .dxvk-count {
   font-size: 13px;
   color: rgba(255, 255, 255, 0.5);
@@ -2602,47 +2921,6 @@ watch(
 
 .text-ok { color: #67c23a; font-weight: 600;}
 .text-err { color: #f56c6c; font-weight: 600;}
-
-/* Dialog Customization */
-.dl-dialog-body {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 20px 0;
-}
-
-.dl-dialog-loading {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 20px;
-}
-
-.dl-dialog-spinner {
-  font-size: 40px;
-  color: #fff;
-  animation: dl-spin 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
-}
-
-@keyframes dl-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-.dl-dialog-result {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
-}
-
-.dl-dialog-text {
-  font-size: 15px;
-  color: #ececec;
-  text-align: center;
-  line-height: 1.6;
-  word-break: break-all;
-}
 
 .dxvk-fetch-warning {
   font-size: 13px;

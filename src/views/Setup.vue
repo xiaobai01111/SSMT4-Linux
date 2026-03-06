@@ -3,9 +3,11 @@ import { computed, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { appSettings } from '../store';
 import { openFileDialog } from '../api';
+import { useI18n } from 'vue-i18n';
 
 const router = useRouter();
 const route = useRoute();
+const { t } = useI18n();
 const restartMode = String(route.query.restart || '').trim() === '1';
 const step = ref(restartMode ? 1 : (appSettings.initialized ? 3 : 1));
 const selectedDir = ref(appSettings.dataDir || '');
@@ -18,7 +20,7 @@ const selectDir = async () => {
   const selected = await openFileDialog({
     directory: true,
     multiple: false,
-    title: '选择 SSMT4 数据存储目录'
+    title: t('setup.selectDataDirTitle')
   });
   if (selected && typeof selected === 'string') {
     selectedDir.value = selected;
@@ -52,11 +54,11 @@ const finish = () => {
             <path d="M2 12l10 5 10-5"/>
           </svg>
         </div>
-        <h1 class="setup-title">欢迎使用 SSMT4</h1>
-        <p class="setup-desc">Linux Game Launcher & Manager</p>
-        <p class="setup-hint">首次使用需要进行简单配置，共两步即可完成。</p>
+        <h1 class="setup-title">{{ t('setup.welcomeTitle') }}</h1>
+        <p class="setup-desc">{{ t('setup.welcomeDesc') }}</p>
+        <p class="setup-hint">{{ t('setup.welcomeHint') }}</p>
         <button class="setup-btn primary" @click="step = 2">
-          开始配置
+          {{ t('setup.startSetup') }}
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="9 18 15 12 9 6"/>
@@ -66,21 +68,21 @@ const finish = () => {
 
       <!-- Step 2: 选择数据目录 -->
       <template v-if="step === 2">
-        <h2 class="setup-title">选择数据目录</h2>
+        <h2 class="setup-title">{{ t('setup.dataDirTitle') }}</h2>
         <p class="setup-desc">
-          SSMT4 需要一个目录来存放所有数据，包括：
+          {{ t('setup.dataDirDesc') }}
         </p>
         <ul class="setup-list">
-          <li>游戏配置文件</li>
-          <li>游戏下载与安装</li>
-          <li>Wine 前缀</li>
-          <li>Mod 缓存与工具</li>
-          <li>日志文件</li>
+          <li>{{ t('setup.dataDirItems.config') }}</li>
+          <li>{{ t('setup.dataDirItems.download') }}</li>
+          <li>{{ t('setup.dataDirItems.prefix') }}</li>
+          <li>{{ t('setup.dataDirItems.mod') }}</li>
+          <li>{{ t('setup.dataDirItems.log') }}</li>
         </ul>
 
         <div class="dir-section">
           <div class="dir-current" v-if="selectedDir">
-            <span class="dir-label">已选择：</span>
+            <span class="dir-label">{{ t('setup.selectedLabel') }}</span>
             <span class="dir-path">{{ selectedDir }}</span>
           </div>
           <div class="dir-actions">
@@ -89,19 +91,19 @@ const finish = () => {
                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
               </svg>
-              选择目录
+              {{ t('setup.selectDir') }}
             </button>
             <button class="setup-btn secondary" @click="useDefault">
-              使用默认路径
+              {{ t('setup.useDefault') }}
             </button>
           </div>
           <p class="setup-hint default-hint">
-            默认路径：~/.config/ssmt4 + ~/.local/share/ssmt4（分散在系统目录中）
+            {{ t('setup.defaultPathHint') }}
           </p>
         </div>
 
         <button class="setup-btn primary finish-btn" @click="step = 3">
-          下一步：风险确认
+          {{ t('setup.nextRisk') }}
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="9 18 15 12 9 6"/>
@@ -111,26 +113,26 @@ const finish = () => {
 
       <!-- Step 3: 风险确认 -->
       <template v-if="step === 3">
-        <h2 class="setup-title">使用条款与风险确认</h2>
+        <h2 class="setup-title">{{ t('setup.riskTitle') }}</h2>
         <p class="setup-desc">
-          本工具为非官方 Linux 启动器。继续使用前，请阅读并确认以下内容：
+          {{ t('setup.riskDesc') }}
         </p>
 
         <div class="risk-box">
           <ul class="setup-list">
-            <li>本工具与游戏厂商无关联，不提供官方担保。</li>
-            <li>在 Wine/Proton 环境运行游戏，可能被反作弊误判。</li>
-            <li>你需要自行承担包括账号处罚在内的潜在风险。</li>
-            <li>请仅在你理解风险且愿意承担后继续。</li>
+            <li>{{ t('setup.riskItems.unofficial') }}</li>
+            <li>{{ t('setup.riskItems.anticheat') }}</li>
+            <li>{{ t('setup.riskItems.account') }}</li>
+            <li>{{ t('setup.riskItems.confirm') }}</li>
           </ul>
 
           <label class="risk-check">
             <input v-model="confirmUnofficial" type="checkbox" />
-            我已知晓这是非官方工具
+            {{ t('setup.riskChecks.unofficial') }}
           </label>
           <label class="risk-check">
             <input v-model="confirmRisk" type="checkbox" />
-            我已知晓并愿意自行承担账号风险
+            {{ t('setup.riskChecks.account') }}
           </label>
         </div>
 
@@ -140,14 +142,14 @@ const finish = () => {
             class="setup-btn secondary"
             @click="step = 2"
           >
-            返回上一步
+            {{ t('setup.back') }}
           </button>
           <button
             class="setup-btn primary"
             :disabled="!canFinish"
             @click="finish"
           >
-            完成配置，进入 SSMT4
+            {{ t('setup.finish') }}
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
               fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="20 6 9 17 4 12"/>

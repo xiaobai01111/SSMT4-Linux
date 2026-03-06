@@ -107,6 +107,11 @@ pub fn ensure_directory(path: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn path_exists(path: &str) -> bool {
+    Path::new(path).exists()
+}
+
+#[tauri::command]
 pub fn open_in_explorer(path: &str) -> Result<(), String> {
     std::process::Command::new("xdg-open")
         .arg(path)

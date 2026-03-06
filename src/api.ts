@@ -758,6 +758,12 @@ export async function downloadProton(downloadUrl: string, tag: string, variant: 
   return result;
 }
 
+export async function deleteLocalProton(path: string): Promise<string> {
+  const result = invoke<string>('delete_local_proton', { path });
+  result.then(() => invalidateCache('scan_wine_versions'));
+  return result;
+}
+
 export async function getGameWineConfig(gameId: string): Promise<GameWineConfig> {
   return invoke<GameWineConfig>('get_game_wine_config', { gameId });
 }
@@ -811,6 +817,12 @@ export async function downloadDxvk(version: string, variant: string): Promise<st
   return result;
 }
 
+export async function deleteLocalDxvk(version: string, variant: string): Promise<string> {
+  const result = invoke<string>('delete_local_dxvk', { version, variant });
+  result.then(() => invalidateCache('scan_local_dxvk'));
+  return result;
+}
+
 export async function installVkd3d(gameId: string, version: string): Promise<string> {
   const result = invoke<string>('install_vkd3d', { gameId, version });
   result.then(() => invalidateCache('scan_local_vkd3d'));
@@ -837,6 +849,12 @@ export async function fetchVkd3dVersions(): Promise<Vkd3dRemoteVersion[]> {
 
 export async function downloadVkd3d(version: string): Promise<string> {
   const result = invoke<string>('download_vkd3d', { version });
+  result.then(() => invalidateCache('scan_local_vkd3d'));
+  return result;
+}
+
+export async function deleteLocalVkd3d(version: string): Promise<string> {
+  const result = invoke<string>('delete_local_vkd3d', { version });
   result.then(() => invalidateCache('scan_local_vkd3d'));
   return result;
 }
@@ -1071,6 +1089,10 @@ export async function resolveDownloadedGameExecutable(
 
 export function convertFileSrc(path: string, protocol?: string): string {
   return tauriConvertFileSrc(path, protocol);
+}
+
+export async function pathExists(path: string): Promise<boolean> {
+  return invoke<boolean>('path_exists', { path });
 }
 
 export async function joinPath(...parts: string[]): Promise<string> {

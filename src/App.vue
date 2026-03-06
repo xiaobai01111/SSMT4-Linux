@@ -5,6 +5,7 @@ import { appSettings, BGType } from "./store";
 import TitleBar from "./components/TitleBar.vue";
 import FeatureOnboarding from "./components/FeatureOnboarding.vue";
 import { ElMessage, ElNotification } from "element-plus";
+import { dismissTask, taskNotifications } from "./taskNotifications";
 
 
 
@@ -144,6 +145,46 @@ onUnmounted(() => {
     </el-config-provider>
 
     <FeatureOnboarding />
+
+    <div class="task-toast-stack">
+      <transition-group name="task-toast">
+        <div
+          v-for="task in taskNotifications"
+          :key="task.id"
+          class="task-toast"
+          :class="`is-${task.status}`"
+        >
+          <div class="task-toast-head">
+            <div class="task-toast-title">{{ task.title }}</div>
+            <button
+              v-if="task.status !== 'running'"
+              class="task-toast-close"
+              type="button"
+              @click="dismissTask(task.id)"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
+                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+          <div class="task-toast-body">
+            <div class="task-toast-text">{{ task.message }}</div>
+            <div class="task-toast-progress">
+              <div
+                class="task-toast-progress-bar"
+                :class="{ indeterminate: task.status === 'running' && task.progress == null }"
+                :style="task.progress == null ? undefined : { width: `${task.progress}%` }"
+              ></div>
+            </div>
+            <div v-if="task.status === 'running' && task.progress != null" class="task-toast-meta">
+              {{ Math.round(task.progress) }}%
+            </div>
+          </div>
+        </div>
+      </transition-group>
+    </div>
   </template>
 </template>
 
@@ -178,6 +219,139 @@ input, textarea {
 */
 .el-message, .el-notification, .el-message-box__wrapper {
   z-index: 99999 !important;
+}
+
+.task-toast-stack {
+  position: fixed;
+  top: 44px;
+  right: 16px;
+  z-index: 100001;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.task-toast {
+  width: min(360px, calc(100vw - 24px));
+  padding: 14px 14px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 240, 255, 0.24);
+  background: rgba(8, 14, 18, 0.96);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.4);
+  pointer-events: auto;
+  backdrop-filter: blur(10px);
+}
+
+.task-toast.is-success {
+  border-color: rgba(103, 194, 58, 0.34);
+}
+
+.task-toast.is-error {
+  border-color: rgba(245, 108, 108, 0.34);
+}
+
+.task-toast-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.task-toast-title {
+  color: #00f0ff;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+
+.task-toast.is-success .task-toast-title {
+  color: #67c23a;
+}
+
+.task-toast.is-error .task-toast-title {
+  color: #f56c6c;
+}
+
+.task-toast-close {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.5);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.task-toast-close:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.task-toast-body {
+  margin-top: 8px;
+}
+
+.task-toast-text {
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.task-toast-progress {
+  margin-top: 10px;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.task-toast-progress-bar {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(0, 240, 255, 0.45), #00f0ff);
+  transition: width 0.18s ease;
+}
+
+.task-toast.is-success .task-toast-progress-bar {
+  background: linear-gradient(90deg, rgba(103, 194, 58, 0.45), #67c23a);
+}
+
+.task-toast.is-error .task-toast-progress-bar {
+  background: linear-gradient(90deg, rgba(245, 108, 108, 0.4), #f56c6c);
+}
+
+.task-toast-progress-bar.indeterminate {
+  width: 42%;
+  animation: task-toast-indeterminate 1.15s ease-in-out infinite;
+}
+
+.task-toast-meta {
+  margin-top: 7px;
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 12px;
+  text-align: right;
+}
+
+.task-toast-enter-active,
+.task-toast-leave-active {
+  transition: all 0.2s ease;
+}
+
+.task-toast-enter-from,
+.task-toast-leave-to {
+  opacity: 0;
+  transform: translateY(-8px) translateX(12px);
+}
+
+@keyframes task-toast-indeterminate {
+  0% { transform: translateX(-65%); }
+  100% { transform: translateX(220%); }
 }
 
 

@@ -83,6 +83,10 @@ pub struct ProtonFamilyRemoteGroup {
     pub items: Vec<ProtonRemoteVersionItem>,
 }
 
+fn is_unsupported_proton_family_key(family_key: &str) -> bool {
+    matches!(family_key.trim().to_ascii_lowercase().as_str(), "custom" | "proton-tkg")
+}
+
 fn default_true() -> bool {
     true
 }
@@ -94,6 +98,9 @@ fn default_asset_index() -> i64 {
 pub fn load_catalog_from_db() -> Result<ProtonCatalog, String> {
     let mut families = Vec::new();
     for row in database::list_proton_family_rows() {
+        if is_unsupported_proton_family_key(&row.family_key) {
+            continue;
+        }
         let patterns =
             serde_json::from_str::<Vec<String>>(&row.detect_patterns_json).unwrap_or_default();
         families.push(ProtonFamily {
@@ -108,6 +115,9 @@ pub fn load_catalog_from_db() -> Result<ProtonCatalog, String> {
 
     let mut sources = Vec::new();
     for row in database::list_proton_source_rows() {
+        if is_unsupported_proton_family_key(&row.family_key) {
+            continue;
+        }
         sources.push(ProtonSource {
             id: row.id,
             family_key: row.family_key,
@@ -140,6 +150,7 @@ pub fn save_catalog_to_db(catalog: &ProtonCatalog) -> Result<(), String> {
     let family_rows = catalog
         .families
         .iter()
+        .filter(|f| !is_unsupported_proton_family_key(&f.family_key))
         .map(|f| {
             let detect_patterns_json = serde_json::to_string(&f.detect_patterns)
                 .map_err(|e| format!("序列化 detect_patterns 失败 ({}): {}", f.family_key, e))?;
@@ -157,6 +168,7 @@ pub fn save_catalog_to_db(catalog: &ProtonCatalog) -> Result<(), String> {
     let source_rows = catalog
         .sources
         .iter()
+        .filter(|s| !is_unsupported_proton_family_key(&s.family_key))
         .map(|s| database::ProtonSourceRecord {
             id: s.id,
             family_key: s.family_key.trim().to_string(),
@@ -281,10 +293,62 @@ fn matches_pattern(input: &str, pattern: &str) -> bool {
     input.to_lowercase().contains(&p.to_lowercase())
 }
 
+fn normalize_asset_name_tokens(name: &str) -> String {
+    let mut normalized = String::with_capacity(name.len() + 2);
+    normalized.push(' ');
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            normalized.push(ch.to_ascii_lowercase());
+        } else {
+            normalized.push(' ');
+        }
+    }
+    normalized.push(' ');
+    normalized
+}
+
+fn is_explicit_x86_64_asset(name: &str) -> bool {
+    let normalized = normalize_asset_name_tokens(name);
+    [
+        " x86 64 ",
+        " amd64 ",
+        " x64 ",
+        " win64 ",
+        " 64 bit ",
+    ]
+    .iter()
+    .any(|token| normalized.contains(token))
+}
+
+fn is_supported_x86_64_proton_asset(name: &str) -> bool {
+    if is_explicit_x86_64_asset(name) {
+        return true;
+    }
+
+    let normalized = normalize_asset_name_tokens(name);
+    ![
+        " arm64 ",
+        " aarch64 ",
+        " armv6 ",
+        " armv7 ",
+        " armv8 ",
+        " armhf ",
+        " armel ",
+        " arm ",
+        " i386 ",
+        " i686 ",
+        " win32 ",
+        " 32 bit ",
+        " x86 ",
+    ]
+    .iter()
+    .any(|token| normalized.contains(token))
+}
+
 pub fn classify_local_runner(name: &str, families: &[ProtonFamily]) -> String {
     let input = name.trim();
     for family in families.iter().filter(|f| f.enabled) {
-        if family.family_key.eq_ignore_ascii_case("custom") {
+        if is_unsupported_proton_family_key(&family.family_key) {
             continue;
         }
         if family
@@ -295,19 +359,7 @@ pub fn classify_local_runner(name: &str, families: &[ProtonFamily]) -> String {
             return family.family_key.clone();
         }
     }
-
-    if families
-        .iter()
-        .any(|f| f.enabled && f.family_key.eq_ignore_ascii_case("custom"))
-    {
-        return "custom".to_string();
-    }
-
-    families
-        .iter()
-        .find(|f| f.enabled)
-        .map(|f| f.family_key.clone())
-        .unwrap_or_default()
+    String::new()
 }
 
 pub fn scan_local_grouped(custom_paths: &[String]) -> Result<Vec<ProtonFamilyLocalGroup>, String> {
@@ -332,10 +384,10 @@ pub fn scan_local_grouped(custom_paths: &[String]) -> Result<Vec<ProtonFamilyLoc
 
     for version in versions {
         let family_key = classify_local_runner(&version.name, &catalog.families);
-        let idx = idx_map
-            .get(&family_key.to_lowercase())
-            .copied()
-            .or_else(|| idx_map.get("custom").copied());
+        if family_key.is_empty() {
+            continue;
+        }
+        let idx = idx_map.get(&family_key.to_lowercase()).copied();
         if let Some(i) = idx {
             groups[i].items.push(ProtonLocalVersionItem {
                 id: version.id,
@@ -443,7 +495,12 @@ pub async fn fetch_remote_by_catalog(
         if total_items == 0 {
             warn!("Proton 远程源全部失败: {}", joined);
         } else {
-            info!("部分 Proton 远程源失败（已忽略）: {}", joined);
+            let brief = failures
+                .iter()
+                .map(|entry| summarize_source_failure(entry))
+                .collect::<Vec<_>>()
+                .join(" | ");
+            info!("部分 Proton 远程源失败（已忽略）: {}", brief);
         }
     }
 
@@ -489,7 +546,9 @@ async fn fetch_source_releases(
         }
         if source.provider == "github_releases" {
             if let Some(token) = github_token.map(|v| v.trim()).filter(|v| !v.is_empty()) {
-                req = req.bearer_auth(token);
+                if should_attach_github_token(api_url) {
+                    req = req.bearer_auth(token);
+                }
             }
         }
 
@@ -559,16 +618,31 @@ async fn fetch_source_releases(
             .to_string();
 
         if let Some(assets) = release.get("assets").and_then(|v| v.as_array()) {
+            let supported_assets: Vec<&serde_json::Value> = assets
+                .iter()
+                .filter(|asset| {
+                    let asset_name = asset.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    is_supported_x86_64_proton_asset(asset_name)
+                })
+                .collect();
+            if supported_assets.is_empty() {
+                continue;
+            }
+
             let pick_by_pattern = || {
-                assets.iter().find(|asset| {
+                supported_assets.iter().copied().find(|asset| {
                     let asset_name = asset.get("name").and_then(|v| v.as_str()).unwrap_or("");
                     matches_pattern(asset_name, &source.asset_pattern)
                 })
             };
 
             let selected_asset = if source.asset_index >= 0 {
-                let direct = assets.get(source.asset_index as usize);
-                if direct.is_none() && !logged_asset_index_fallback {
+                let direct_raw = assets.get(source.asset_index as usize);
+                let direct = direct_raw.filter(|asset| {
+                    let asset_name = asset.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    is_supported_x86_64_proton_asset(asset_name)
+                });
+                if direct_raw.is_none() && !logged_asset_index_fallback {
                     info!(
                         "Proton source asset_index 越界，回退匹配: family={}, repo={}, asset_index={}, assets_len={}",
                         source.family_key,
@@ -582,9 +656,11 @@ async fn fetch_source_releases(
                     );
                     logged_asset_index_fallback = true;
                 }
-                direct.or_else(pick_by_pattern).or_else(|| assets.first())
+                direct
+                    .or_else(pick_by_pattern)
+                    .or_else(|| supported_assets.first().copied())
             } else {
-                pick_by_pattern().or_else(|| assets.first())
+                pick_by_pattern().or_else(|| supported_assets.first().copied())
             };
 
             if let Some(asset) = selected_asset {
@@ -664,6 +740,39 @@ fn add_or_replace_query_param(url: &str, key: &str, value: &str) -> String {
     }
 }
 
+fn should_attach_github_token(url: &str) -> bool {
+    reqwest::Url::parse(url)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(|host| host.to_ascii_lowercase()))
+        .map(|host| host == "api.github.com" || host == "github.com")
+        .unwrap_or(false)
+}
+
+fn summarize_source_failure(message: &str) -> String {
+    if let Some(rest) = message.strip_prefix("请求 ") {
+        if let Some((source, detail)) = rest.split_once(" 失败: ") {
+            let reason = if detail.contains("HTTP 401") {
+                "认证失败"
+            } else if detail.contains("HTTP 403") {
+                "请求受限"
+            } else if detail.contains("timed out") || detail.contains("deadline has elapsed") {
+                "请求超时"
+            } else if detail.contains("dns")
+                || detail.contains("lookup")
+                || detail.contains("failed to lookup address")
+            {
+                "DNS 解析失败"
+            } else if detail.contains("error sending request") {
+                "网络请求失败"
+            } else {
+                "请求失败"
+            };
+            return format!("{} ({})", source, reason);
+        }
+    }
+    message.to_string()
+}
+
 async fn fetch_source_github_actions(
     client: &reqwest::Client,
     source: &ProtonSource,
@@ -684,7 +793,9 @@ async fn fetch_source_github_actions(
         .header("User-Agent", "SSMT4/0.1")
         .header("Accept", "application/vnd.github.v3+json");
     if let Some(token) = github_token.map(|v| v.trim()).filter(|v| !v.is_empty()) {
-        req = req.bearer_auth(token);
+        if should_attach_github_token(&api_url) {
+            req = req.bearer_auth(token);
+        }
     }
 
     let response = req
@@ -764,24 +875,24 @@ mod tests {
                 detect_patterns: vec!["(?i)ge-proton".to_string()],
                 builtin: true,
             },
-            ProtonFamily {
-                family_key: "custom".to_string(),
-                display_name: "Custom".to_string(),
-                enabled: true,
-                sort_order: 1,
-                detect_patterns: vec![],
-                builtin: true,
-            },
         ];
 
         assert_eq!(
             classify_local_runner("GE-Proton10-30", &families),
             "ge-proton".to_string()
         );
-        assert_eq!(
-            classify_local_runner("unknown-runner", &families),
-            "custom".to_string()
-        );
+        assert_eq!(classify_local_runner("unknown-runner", &families), "");
+    }
+
+    #[test]
+    fn proton_asset_arch_filter_keeps_x86_64_and_rejects_arm() {
+        assert!(is_supported_x86_64_proton_asset("GE-Proton10-32.tar.gz"));
+        assert!(is_supported_x86_64_proton_asset("dwproton-10.0-18-x86_64.tar.xz"));
+        assert!(is_supported_x86_64_proton_asset("wine-10.0-amd64.tar.xz"));
+
+        assert!(!is_supported_x86_64_proton_asset("dwproton-10.0-18-arm64.tar.xz"));
+        assert!(!is_supported_x86_64_proton_asset("wine-10.0-aarch64.tar.xz"));
+        assert!(!is_supported_x86_64_proton_asset("wine-10.0-i386.tar.xz"));
     }
 
     #[test]

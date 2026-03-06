@@ -36,6 +36,7 @@ struct GameConfig {
 
 struct MigotoConfig {
     bool use_hook = true;           // true=Hook injection, false=Direct injection
+    bool use_dll_drop = false;      // DLL Proxy Chain: copy DLLs to game dir (no injection)
     bool enforce_rendering = true;
     bool enable_hunting = false;
     bool dump_shaders = false;

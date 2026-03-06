@@ -51,7 +51,8 @@ import GameInfoVersionSection from './game-info/GameInfoVersionSection.vue';
 import GameInfoPresetSection from './game-info/GameInfoPresetSection.vue';
 import GameInfoAssetsSection from './game-info/GameInfoAssetsSection.vue';
 
-const { t } = useI18n();
+const { t, te } = useI18n();
+const tr = (key: string, fallback: string) => (te(key) ? t(key) : fallback);
 const notify = inject<any>('notify');
 
 const props = defineProps<{
@@ -245,7 +246,7 @@ const saveWineConfig = async () => {
     await saveConfig();
   } catch (e) {
     console.error('Failed to save wine config:', e);
-    notify?.error('保存失败', `Wine 配置保存失败: ${e}`);
+    notify?.error(tr('gamesettingsmodal.message.error.title', '保存失败'), tr('gamesettingsmodal.messages.wineSaveFailed', `Wine 配置保存失败: ${e}`).replace('{error}', String(e)));
   }
 };
 
@@ -257,9 +258,9 @@ const saveSystemOptions = async () => {
     await saveConfig();
     // 同步保存 Proton 设置（沙盒等）
     await saveWineConfig();
-    notify?.success('保存成功', '系统选项已保存');
+    notify?.success(tr('gamesettingsmodal.messages.successTitle', '保存成功'), tr('gamesettingsmodal.messages.systemOptionsSaved', '系统选项已保存'));
   } catch (e) {
-    notify?.error('保存失败', `系统选项保存失败: ${e}`);
+    notify?.error(tr('gamesettingsmodal.message.error.title', '保存失败'), tr('gamesettingsmodal.messages.systemOptionsSaveFailed', `系统选项保存失败: ${e}`).replace('{error}', String(e)));
   }
 };
 
@@ -322,7 +323,7 @@ const doInstallJadeite = async () => {
     await showMessage(result, { title: 'Jadeite', kind: 'info' });
     await loadJadeiteState();
   } catch (e) {
-    await showMessage(`安装 jadeite 失败: ${e}`, { title: '错误', kind: 'error' });
+    await showMessage(tr('gamesettingsmodal.messages.jadeiteInstallFailed', `安装 jadeite 失败: ${e}`).replace('{error}', String(e)), { title: tr('gamesettingsmodal.message.error.title', '错误'), kind: 'error' });
   } finally {
     isJadeiteInstalling.value = false;
   }
@@ -431,12 +432,12 @@ const doInstallDxvk = async () => {
   try {
     isDxvkBusy.value = true;
     const label = dxvkVariantLabel(variant);
-    notify?.info(label, `正在应用 ${label} ${version}...`);
+    notify?.info(label, tr('gamesettingsmodal.messages.applyingVersion', `正在应用 ${label} ${version}...`).replace('{label}', label).replace('{version}', version));
     const result = await installDxvk(props.gameName, version, variant);
-    notify?.success(`${label} 应用完成`, result);
+    notify?.success(tr('gamesettingsmodal.messages.applyDone', `${label} 应用完成`).replace('{label}', label), result);
     await loadDxvkState();
   } catch (e) {
-    notify?.error('DXVK 应用失败', `${e}`);
+    notify?.error(tr('gamesettingsmodal.messages.dxvkApplyFailedTitle', 'DXVK 应用失败'), `${e}`);
   } finally {
     isDxvkBusy.value = false;
   }
@@ -444,15 +445,15 @@ const doInstallDxvk = async () => {
 
 const doUninstallDxvk = async () => {
   if (isDxvkBusy.value) return;
-  const confirmed = await askConfirm('确定要从当前 Prefix 中卸载 DXVK 吗？', { title: 'DXVK', kind: 'warning' });
+  const confirmed = await askConfirm(tr('gamesettingsmodal.messages.dxvkUninstallConfirm', '确定要从当前 Prefix 中卸载 DXVK 吗？'), { title: 'DXVK', kind: 'warning' });
   if (!confirmed) return;
   try {
     isDxvkBusy.value = true;
     const result = await uninstallDxvk(props.gameName);
-    notify?.success('DXVK 卸载完成', result);
+    notify?.success(tr('gamesettingsmodal.messages.dxvkUninstallDone', 'DXVK 卸载完成'), result);
     await loadDxvkState();
   } catch (e) {
-    notify?.error('DXVK 卸载失败', `${e}`);
+    notify?.error(tr('gamesettingsmodal.messages.dxvkUninstallFailed', 'DXVK 卸载失败'), `${e}`);
   } finally {
     isDxvkBusy.value = false;
   }
@@ -503,12 +504,12 @@ const doInstallVkd3d = async () => {
   if (isVkd3dBusy.value || !vkd3dSelectedVersion.value) return;
   try {
     isVkd3dBusy.value = true;
-    notify?.info('VKD3D-Proton', `正在应用 VKD3D-Proton ${vkd3dSelectedVersion.value}...`);
+    notify?.info('VKD3D-Proton', tr('gamesettingsmodal.messages.vkd3dApplying', `正在应用 VKD3D-Proton ${vkd3dSelectedVersion.value}...`).replace('{version}', vkd3dSelectedVersion.value));
     const result = await installVkd3d(props.gameName, vkd3dSelectedVersion.value);
-    notify?.success('VKD3D 应用完成', result);
+    notify?.success(tr('gamesettingsmodal.messages.vkd3dApplyDone', 'VKD3D 应用完成'), result);
     await loadVkd3dState();
   } catch (e) {
-    notify?.error('VKD3D 应用失败', `${e}`);
+    notify?.error(tr('gamesettingsmodal.messages.vkd3dApplyFailed', 'VKD3D 应用失败'), `${e}`);
   } finally {
     isVkd3dBusy.value = false;
   }
@@ -516,15 +517,15 @@ const doInstallVkd3d = async () => {
 
 const doUninstallVkd3d = async () => {
   if (isVkd3dBusy.value) return;
-  const confirmed = await askConfirm('确定要从当前 Prefix 中卸载 VKD3D 吗？', { title: 'VKD3D', kind: 'warning' });
+  const confirmed = await askConfirm(tr('gamesettingsmodal.messages.vkd3dUninstallConfirm', '确定要从当前 Prefix 中卸载 VKD3D 吗？'), { title: 'VKD3D', kind: 'warning' });
   if (!confirmed) return;
   try {
     isVkd3dBusy.value = true;
     const result = await uninstallVkd3d(props.gameName);
-    notify?.success('VKD3D 卸载完成', result);
+    notify?.success(tr('gamesettingsmodal.messages.vkd3dUninstallDone', 'VKD3D 卸载完成'), result);
     await loadVkd3dState();
   } catch (e) {
-    notify?.error('VKD3D 卸载失败', `${e}`);
+    notify?.error(tr('gamesettingsmodal.messages.vkd3dUninstallFailed', 'VKD3D 卸载失败'), `${e}`);
   } finally {
     isVkd3dBusy.value = false;
   }
@@ -533,11 +534,11 @@ const doUninstallVkd3d = async () => {
 // Tabs（参考 Lutris 风格：5个标签页）
 const activeTab = ref('info');
 const tabs = computed(() => [
-  { id: 'info', label: '游戏信息' },
-  { id: 'game', label: '游戏选项' },
+  { id: 'info', label: tr('gamesettingsmodal.tabs.info', '游戏信息') },
+  { id: 'game', label: tr('gamesettingsmodal.tabs.game', '游戏选项') },
   { id: 'migoto', label: t('gamesettingsmodal.migoto.tabLabel') },
-  { id: 'runtime', label: '运行环境' },
-  { id: 'system', label: '系统选项' },
+  { id: 'runtime', label: tr('gamesettingsmodal.tabs.runtime', '运行环境') },
+  { id: 'system', label: tr('gamesettingsmodal.tabs.system', '系统选项') },
 ]);
 
 // 3DMigoto 启用状态（详细配置在 Settings > 3DMIGOTO 管理）
@@ -580,7 +581,7 @@ const focusRuntimeSetup = (message?: string, focusTarget: RuntimeFocusTarget = '
   activeTab.value = 'runtime';
   runtimeFocusTarget.value = focusTarget;
   runtimeAttentionMessage.value =
-    message?.trim() || '请先在此完成运行环境配置（Proton / DXVK / VKD3D）。';
+    message?.trim() || tr('gamesettingsmodal.messages.runtimeAttentionDefault', '请先在此完成运行环境配置（Proton / DXVK / VKD3D）。');
   runtimeAttention.value = false;
   requestAnimationFrame(() => {
     runtimeAttention.value = true;
@@ -650,10 +651,10 @@ const saveInfoMetaSection = async () => {
     await saveInfoMetaRaw(props.gameName);
     syncInfoConfigToLegacyState();
     await loadJadeiteState();
-    notify?.success('保存成功', '游戏信息已保存');
+    notify?.success(tr('gamesettingsmodal.messages.successTitle', '保存成功'), tr('gamesettingsmodal.messages.infoSaved', '游戏信息已保存'));
   } catch (e) {
     console.error('[GameInfoV2] save meta failed:', e);
-    notify?.error('保存失败', `游戏信息保存失败: ${e}`);
+    notify?.error(tr('gamesettingsmodal.message.error.title', '保存失败'), tr('gamesettingsmodal.messages.infoSaveFailed', `游戏信息保存失败: ${e}`).replace('{error}', String(e)));
   }
 };
 
@@ -664,7 +665,7 @@ const saveInfoRuntimeSection = async () => {
     syncInfoConfigToLegacyState();
   } catch (e) {
     console.error('[GameInfoV2] save runtime failed:', e);
-    notify?.error('保存失败', `运行环境保存失败: ${e}`);
+    notify?.error(tr('gamesettingsmodal.message.error.title', '保存失败'), tr('gamesettingsmodal.messages.runtimeSaveFailed', `运行环境保存失败: ${e}`).replace('{error}', String(e)));
   }
 };
 
@@ -672,9 +673,9 @@ const saveRuntimeTabSettings = async () => {
   try {
     await saveInfoRuntimeSection();
     await saveWineConfig();
-    notify?.success('保存成功', '运行环境配置已保存');
+    notify?.success(tr('gamesettingsmodal.messages.successTitle', '保存成功'), tr('gamesettingsmodal.messages.runtimeSaved', '运行环境配置已保存'));
   } catch (e) {
-    notify?.error('保存失败', `运行环境配置保存失败: ${e}`);
+    notify?.error(tr('gamesettingsmodal.message.error.title', '保存失败'), tr('gamesettingsmodal.messages.runtimeSaveConfigFailed', `运行环境配置保存失败: ${e}`).replace('{error}', String(e)));
   }
 };
 
@@ -836,10 +837,10 @@ const resetToDefault = async () => {
       loadInfoConfig(),
       loadGames(),
     ]);
-    notify?.success('重置成功', '游戏配置已恢复默认');
+    notify?.success(tr('gamesettingsmodal.messages.resetSuccessTitle', '重置成功'), tr('gamesettingsmodal.messages.resetSuccess', '游戏配置已恢复默认'));
   } catch (e) {
     console.error('Reset failed:', e);
-    notify?.error('重置失败', `${e}`);
+    notify?.error(tr('gamesettingsmodal.messages.resetFailedTitle', '重置失败'), `${e}`);
   } finally {
     isLoading.value = false;
   }
@@ -855,11 +856,11 @@ const selectIcon = async () => {
     if (file) {
       await apiSetGameIcon(props.gameName, file);
       await Promise.all([loadInfoConfig(), loadGames()]);
-      notify?.success('图标已更新', '游戏图标设置成功');
+      notify?.success(tr('gamesettingsmodal.messages.iconUpdatedTitle', '图标已更新'), tr('gamesettingsmodal.messages.iconUpdated', '游戏图标设置成功'));
     }
   } catch (e) {
     console.error(e);
-    notify?.error('图标设置失败', `${e}`);
+    notify?.error(tr('gamesettingsmodal.messages.iconUpdateFailed', '图标设置失败'), `${e}`);
   }
 };
 
@@ -870,11 +871,11 @@ const selectBackground = async () => {
     if (file) {
       await apiSetGameBackground(props.gameName, file, infoConfig.value.assets.backgroundType);
       await Promise.all([loadInfoConfig(), loadGames()]);
-      notify?.success('背景已更新', '背景图片设置成功');
+      notify?.success(tr('gamesettingsmodal.messages.backgroundUpdatedTitle', '背景已更新'), tr('gamesettingsmodal.messages.backgroundUpdated', '背景图片设置成功'));
     }
   } catch (e) {
     console.error(e);
-    notify?.error('背景设置失败', `${e}`);
+    notify?.error(tr('gamesettingsmodal.messages.backgroundUpdateFailed', '背景设置失败'), `${e}`);
   }
 };
 
@@ -889,10 +890,10 @@ const resetBackgroundToDefault = async () => {
       loadInfoConfig(),
       loadGames(),
     ]);
-    notify?.success('恢复成功', '图标和背景已恢复默认');
+    notify?.success(tr('gamesettingsmodal.messages.restoreSuccessTitle', '恢复成功'), tr('gamesettingsmodal.messages.restoreSuccess', '图标和背景已恢复默认'));
   } catch (e) {
     console.error('[GameInfoV2] reset background failed:', e);
-    notify?.error('恢复失败', `${e}`);
+    notify?.error(tr('gamesettingsmodal.messages.restoreFailedTitle', '恢复失败'), `${e}`);
   }
 };
 
@@ -904,8 +905,8 @@ const pickGameExe = async () => {
   try {
     const selected = await openFileDialog({
       multiple: false,
-      filters: [{ name: '可执行文件', extensions: ['exe', 'sh', 'AppImage', 'desktop', '*'] }],
-      title: '选择游戏可执行文件'
+      filters: [{ name: tr('gamesettingsmodal.filePicker.filterName', '可执行文件'), extensions: ['exe', 'sh', 'AppImage', 'desktop', '*'] }],
+      title: tr('gamesettingsmodal.filePicker.title', '选择游戏可执行文件')
     });
     if (selected && typeof selected === 'string') {
       config.other.gamePath = selected;
@@ -952,11 +953,11 @@ const createNewConfig = async () => {
       switchToGame(newGame);
     }
 
-    notify?.success('创建成功', `配置 "${configName.value}" 已创建`);
+    notify?.success(tr('gamesettingsmodal.messages.createSuccessTitle', '创建成功'), tr('gamesettingsmodal.messages.configCreated', `配置 "${configName.value}" 已创建`).replace('{name}', configName.value));
     await close();
   } catch (e) {
     console.error(t('gamesettingsmodal.log.configCreateFailed', { error: e }));
-    notify?.error('创建失败', `${e}`);
+    notify?.error(tr('gamesettingsmodal.messages.createFailedTitle', '创建失败'), `${e}`);
   } finally {
     isLoading.value = false;
   }
@@ -965,8 +966,8 @@ const createNewConfig = async () => {
 const deleteCurrentConfig = async () => {
   if (!props.gameName) return;
 
-  const yes = await askConfirm(`确定要删除配置 "${props.gameName}" 吗？此操作不可逆。`, {
-    title: '删除确认',
+  const yes = await askConfirm(tr('gamesettingsmodal.messages.deleteConfirm', `确定要删除配置 "${props.gameName}" 吗？此操作不可逆。`).replace('{name}', props.gameName), {
+    title: tr('gamesettingsmodal.messages.deleteConfirmTitle', '删除确认'),
     kind: 'warning',
   });
   if (!yes) return;
@@ -978,11 +979,11 @@ const deleteCurrentConfig = async () => {
 
     // Refresh games list and close
     await loadGames();
-    notify?.success('删除成功', `配置 "${props.gameName}" 已删除`);
+    notify?.success(tr('gamesettingsmodal.messages.deleteSuccessTitle', '删除成功'), tr('gamesettingsmodal.messages.configDeleted', `配置 "${props.gameName}" 已删除`).replace('{name}', props.gameName));
     await close();
   } catch (e) {
     console.error('Failed to delete config:', e);
-    notify?.error('删除失败', `${e}`);
+    notify?.error(tr('gamesettingsmodal.messages.deleteFailedTitle', '删除失败'), `${e}`);
   } finally {
     isLoading.value = false;
   }
@@ -1094,7 +1095,7 @@ defineExpose({
             <div v-show="activeTab === 'info'" class="tab-pane" data-onboarding="game-settings-info-tab">
               <div v-if="infoConfig.readOnly || infoPageReadOnly" class="info-readonly-banner">
                 <template v-if="infoPageReadOnly">
-                  游戏信息页当前为只读展示模式（仅背景资源可修改）。
+                  {{ tr('gamesettingsmodal.info.readonlyBanner', '游戏信息页当前为只读展示模式（仅背景资源可修改）。') }}
                 </template>
                 <template v-else>
                 {{ infoReadonlyWarning || t('gamesettingsmodal.info.readonlyGeneric') }}
@@ -1156,53 +1157,53 @@ defineExpose({
             <!-- ==================== Tab 2: 游戏选项 ==================== -->
             <div v-show="activeTab === 'game'" class="tab-pane" data-onboarding="game-settings-game-tab">
               <div class="setting-group" data-onboarding="game-settings-game-exe">
-                <div class="setting-label">主程序</div>
-                <input v-model="config.other.gamePath" type="text" class="custom-input" placeholder="选择游戏可执行文件（如 StarRail.exe）..." />
+                <div class="setting-label">{{ tr('gamesettingsmodal.gameTab.mainExe', '主程序') }}</div>
+                <input v-model="config.other.gamePath" type="text" class="custom-input" :placeholder="tr('gamesettingsmodal.gameTab.mainExePlaceholder', '选择游戏可执行文件（如 StarRail.exe）...')" />
                 <div class="button-row">
-                  <button class="action-btn" @click="pickGameExe">选择文件</button>
+                  <button class="action-btn" @click="pickGameExe">{{ tr('gamesettingsmodal.gameTab.selectFile', '选择文件') }}</button>
                 </div>
               </div>
 
               <div class="setting-group">
-                <div class="setting-label">启动参数</div>
-                <input v-model="config.other.launchArgs" type="text" class="custom-input" placeholder="可选，如 -screen-fullscreen 0 -popupwindow" />
+                <div class="setting-label">{{ tr('gamesettingsmodal.gameTab.launchArgs', '启动参数') }}</div>
+                <input v-model="config.other.launchArgs" type="text" class="custom-input" :placeholder="tr('gamesettingsmodal.gameTab.launchArgsPlaceholder', '可选，如 -screen-fullscreen 0 -popupwindow')" />
               </div>
 
               <div class="setting-group">
-                <div class="setting-label">工作目录</div>
-                <input v-model="config.other.workingDir" type="text" class="custom-input" placeholder="留空则使用主程序所在目录" />
+                <div class="setting-label">{{ tr('gamesettingsmodal.gameTab.workingDir', '工作目录') }}</div>
+                <input v-model="config.other.workingDir" type="text" class="custom-input" :placeholder="tr('gamesettingsmodal.gameTab.workingDirPlaceholder', '留空则使用主程序所在目录')" />
               </div>
 
               <div class="setting-group">
-                <div class="setting-label">容器目录（Wine Prefix）</div>
+                <div class="setting-label">{{ tr('gamesettingsmodal.gameTab.prefixDir', '容器目录（Wine Prefix）') }}</div>
                 <div class="info-text" v-if="prefixInfo">
                   <span :class="prefixInfo.exists ? 'text-ok' : 'text-err'">
-                    {{ prefixInfo.exists ? '✓ 已创建' : '✗ 未创建（首次启动时自动创建）' }}
+                    {{ prefixInfo.exists ? tr('gamesettingsmodal.gameTab.prefixCreated', '✓ 已创建') : tr('gamesettingsmodal.gameTab.prefixNotCreated', '✗ 未创建（首次启动时自动创建）') }}
                   </span>
                   <div class="wine-path">{{ prefixInfo.path }}</div>
                   <div v-if="prefixInfo.exists && prefixInfo.size_bytes > 0" class="info-sub">
-                    大小：{{ (prefixInfo.size_bytes / 1024 / 1024).toFixed(1) }} MB
+                    {{ tr('gamesettingsmodal.gameTab.sizeLabel', '大小') }}：{{ (prefixInfo.size_bytes / 1024 / 1024).toFixed(1) }} MB
                   </div>
                 </div>
-                <div v-else class="info-text text-muted">加载中...</div>
+                <div v-else class="info-text text-muted">{{ tr('gamesettingsmodal.gameTab.loading', '加载中...') }}</div>
               </div>
 
               <!-- Jadeite 反作弊补丁（仅 HoYoverse 游戏） -->
               <div v-if="isHoyoverse" class="setting-group">
-                <div class="setting-label">Jadeite 反作弊补丁</div>
+                <div class="setting-label">{{ tr('gamesettingsmodal.gameTab.jadeiteTitle', 'Jadeite 反作弊补丁') }}</div>
                 <div class="info-text" v-if="jadeiteStatus">
                   <span :class="jadeiteStatus.installed ? 'text-ok' : 'text-err'">
-                    {{ jadeiteStatus.installed ? `✓ 已安装 (v${jadeiteStatus.localVersion})` : '✗ 未安装（HoYoverse 游戏必需）' }}
+                    {{ jadeiteStatus.installed ? tr('gamesettingsmodal.gameTab.jadeiteInstalled', `✓ 已安装 (v${jadeiteStatus.localVersion})`).replace('{version}', jadeiteStatus.localVersion || '') : tr('gamesettingsmodal.gameTab.jadeiteNotInstalled', '✗ 未安装（HoYoverse 游戏必需）') }}
                   </span>
                   <div class="wine-path">{{ jadeiteStatus.patchDir }}</div>
                 </div>
                 <div class="button-row">
                   <button class="action-btn highlight" @click="doInstallJadeite" :disabled="isJadeiteInstalling">
-                    {{ isJadeiteInstalling ? '安装中...' : (jadeiteStatus?.installed ? '更新 Jadeite' : '安装 Jadeite') }}
+                    {{ isJadeiteInstalling ? tr('gamesettingsmodal.gameTab.installing', '安装中...') : (jadeiteStatus?.installed ? tr('gamesettingsmodal.gameTab.updateJadeite', '更新 Jadeite') : tr('gamesettingsmodal.gameTab.installJadeite', '安装 Jadeite')) }}
                   </button>
                 </div>
                 <div class="info-sub" style="margin-top:6px;">
-                  Jadeite 用于在 Linux 上绕过 HoYoverse 反作弊，启动时自动通过 jadeite.exe 包装游戏。
+                  {{ tr('gamesettingsmodal.gameTab.jadeiteHint', 'Jadeite 用于在 Linux 上绕过 HoYoverse 反作弊，启动时自动通过 jadeite.exe 包装游戏。') }}
                 </div>
               </div>
             </div>
@@ -1231,7 +1232,7 @@ defineExpose({
                   </button>
                 </div>
                 <div class="info-sub" style="margin-top: 12px;">
-                  如需配置 3DMigoto 路径、注入方式、Mod 文件夹等详细设置，请前往<strong>「设置 → 3DMIGOTO 管理」</strong>页面。
+                  <span v-html="tr('gamesettingsmodal.migoto.gotoSettingsHint', '如需配置 3DMigoto 路径、注入方式、Mod 文件夹等详细设置，请前往<strong>「设置 → 3DMIGOTO 管理」</strong>页面。')"></span>
                 </div>
               </div>
             </div>
@@ -1272,8 +1273,8 @@ defineExpose({
                 data-onboarding="game-settings-runtime-wine"
                 :class="{ 'runtime-section-attention': runtimeAttention && runtimeFocusTarget === 'wine_version' }"
               >
-                <div class="setting-label">Wine / Proton 版本（本地已安装）</div>
-                <el-select v-model="selectedWineVersionId" placeholder="选择 Wine/Proton 版本..." class="custom-select" filterable style="width: 100%">
+                <div class="setting-label">{{ tr('gamesettingsmodal.runtimeTab.wineVersionTitle', 'Wine / Proton 版本（本地已安装）') }}</div>
+                <el-select v-model="selectedWineVersionId" :placeholder="tr('gamesettingsmodal.runtimeTab.wineVersionPlaceholder', '选择 Wine/Proton 版本...')" class="custom-select" filterable style="width: 100%">
                   <el-option-group
                     v-for="group in [
                       { label: 'GE-Proton', items: wineVersions.filter(v => v.variant === 'geproton') },
@@ -1296,14 +1297,14 @@ defineExpose({
                   <span class="wine-path">{{ selectedWineVersion.path }}</span>
                 </div>
                 <div class="info-sub" style="margin-top:6px;">
-                  共检测到 {{ wineVersions.length }} 个本地 Wine/Proton 版本。
+                  {{ tr('gamesettingsmodal.runtimeTab.wineVersionCount', '共检测到 {count} 个本地 Wine/Proton 版本。').replace('{count}', String(wineVersions.length)) }}
                 </div>
               </div>
 
               <!-- Proton 版本提示 -->
               <div class="setting-group">
                 <div class="info-sub" style="margin-top:4px;">
-                  如需下载更多 Proton 版本，请前往「设置 → Proton 管理」页面。
+                  {{ tr('gamesettingsmodal.runtimeTab.protonHint', '如需下载更多 Proton 版本，请前往「设置 → Proton 管理」页面。') }}
                 </div>
               </div>
 
@@ -1314,23 +1315,23 @@ defineExpose({
                 data-onboarding="game-settings-runtime-dxvk"
                 :class="{ 'runtime-section-attention': runtimeAttention && runtimeFocusTarget === 'dxvk' }"
               >
-                <div class="setting-label">DXVK (DirectX → Vulkan)</div>
+                <div class="setting-label">{{ tr('gamesettingsmodal.runtimeTab.dxvkTitle', 'DXVK (DirectX → Vulkan)') }}</div>
 
                 <!-- 当前安装状态 -->
                 <div class="info-card" style="margin-bottom: 10px;">
                   <div v-if="dxvkInstalledStatus" class="info-grid" style="grid-template-columns: 100px 1fr;">
-                    <span class="info-key">安装状态</span>
+                    <span class="info-key">{{ tr('gamesettingsmodal.runtimeTab.installStatus', '安装状态') }}</span>
                     <span :class="dxvkInstalledStatus.installed ? 'text-ok' : 'text-err'">
-                      {{ dxvkInstalledStatus.installed ? '✓ 已安装' : '✗ 未安装' }}
+                      {{ dxvkInstalledStatus.installed ? tr('gamesettingsmodal.runtimeTab.installed', '✓ 已安装') : tr('gamesettingsmodal.runtimeTab.notInstalled', '✗ 未安装') }}
                     </span>
                     <template v-if="dxvkInstalledStatus.installed">
-                      <span class="info-key">当前版本</span>
-                      <span class="info-val">{{ dxvkInstalledStatus.version || '未知' }}</span>
-                      <span class="info-key">DLL 文件</span>
+                      <span class="info-key">{{ tr('gamesettingsmodal.runtimeTab.currentVersion', '当前版本') }}</span>
+                      <span class="info-val">{{ dxvkInstalledStatus.version || tr('gamesettingsmodal.runtimeTab.unknown', '未知') }}</span>
+                      <span class="info-key">{{ tr('gamesettingsmodal.runtimeTab.dllFiles', 'DLL 文件') }}</span>
                       <span class="info-val">{{ dxvkInstalledStatus.dlls_found.join(', ') }}</span>
                     </template>
                   </div>
-                  <div v-else class="text-muted" style="font-size:13px">加载中...</div>
+                  <div v-else class="text-muted" style="font-size:13px">{{ tr('gamesettingsmodal.runtimeTab.loading', '加载中...') }}</div>
                 </div>
 
                 <!-- 本地版本安装/卸载 -->
@@ -1338,7 +1339,7 @@ defineExpose({
                   <div class="flex-row" style="align-items:flex-end; gap:8px; margin-top:8px;">
                     <div style="flex:1">
                       <select v-model="dxvkSelectedKey" class="custom-input" style="width:100%">
-                        <option value="" disabled>选择本地已缓存的 DXVK 版本...</option>
+                        <option value="" disabled>{{ tr('gamesettingsmodal.runtimeTab.selectLocalDxvk', '选择本地已缓存的 DXVK 版本...') }}</option>
                         <optgroup
                           v-for="group in dxvkGroupedLocalVersions"
                           :key="group.variant"
@@ -1357,16 +1358,16 @@ defineExpose({
                   </div>
                   <div class="button-row" style="margin-top:8px;">
                     <button class="action-btn highlight" @click="doInstallDxvk" :disabled="isDxvkBusy || !dxvkSelectedKey">
-                      {{ isDxvkBusy ? '应用中...' : '应用 / 切换版本' }}
+                      {{ isDxvkBusy ? tr('gamesettingsmodal.runtimeTab.applying', '应用中...') : tr('gamesettingsmodal.runtimeTab.applyOrSwitch', '应用 / 切换版本') }}
                     </button>
                     <button class="action-btn delete" @click="doUninstallDxvk" :disabled="isDxvkBusy || !dxvkInstalledStatus?.installed">
-                      卸载 DXVK
+                      {{ tr('gamesettingsmodal.runtimeTab.uninstallDxvk', '卸载 DXVK') }}
                     </button>
                   </div>
                 </div>
 
                 <div class="info-sub" style="margin-top:8px;">
-                  如需下载更多 DXVK 版本，请前往「设置 → DXVK 管理」页面。
+                  {{ tr('gamesettingsmodal.runtimeTab.dxvkHint', '如需下载更多 DXVK 版本，请前往「设置 → DXVK 管理」页面。') }}
                 </div>
               </div>
 
@@ -1377,30 +1378,30 @@ defineExpose({
                 data-onboarding="game-settings-runtime-vkd3d"
                 :class="{ 'runtime-section-attention': runtimeAttention && runtimeFocusTarget === 'vkd3d' }"
               >
-                <div class="setting-label">VKD3D-Proton (D3D12 → Vulkan)</div>
+                <div class="setting-label">{{ tr('gamesettingsmodal.runtimeTab.vkd3dTitle', 'VKD3D-Proton (D3D12 → Vulkan)') }}</div>
 
                 <!-- 当前安装状态 -->
                 <div class="info-card" style="margin-bottom: 10px;">
                   <div v-if="vkd3dInstalledStatus" class="info-grid" style="grid-template-columns: 100px 1fr;">
-                    <span class="info-key">安装状态</span>
+                    <span class="info-key">{{ tr('gamesettingsmodal.runtimeTab.installStatus', '安装状态') }}</span>
                     <span :class="vkd3dInstalledStatus.installed ? 'text-ok' : 'text-err'">
-                      {{ vkd3dInstalledStatus.installed ? '✓ 已安装' : '✗ 未安装' }}
+                      {{ vkd3dInstalledStatus.installed ? tr('gamesettingsmodal.runtimeTab.installed', '✓ 已安装') : tr('gamesettingsmodal.runtimeTab.notInstalled', '✗ 未安装') }}
                     </span>
                     <template v-if="vkd3dInstalledStatus.installed">
-                      <span class="info-key">当前版本</span>
-                      <span class="info-val">{{ vkd3dInstalledStatus.version || '未知' }}</span>
-                      <span class="info-key">DLL 文件</span>
+                      <span class="info-key">{{ tr('gamesettingsmodal.runtimeTab.currentVersion', '当前版本') }}</span>
+                      <span class="info-val">{{ vkd3dInstalledStatus.version || tr('gamesettingsmodal.runtimeTab.unknown', '未知') }}</span>
+                      <span class="info-key">{{ tr('gamesettingsmodal.runtimeTab.dllFiles', 'DLL 文件') }}</span>
                       <span class="info-val">{{ vkd3dInstalledStatus.dlls_found.join(', ') }}</span>
                     </template>
                   </div>
-                  <div v-else class="text-muted" style="font-size:13px">加载中...</div>
+                  <div v-else class="text-muted" style="font-size:13px">{{ tr('gamesettingsmodal.runtimeTab.loading', '加载中...') }}</div>
                 </div>
 
                 <div v-if="vkd3dLocalVersions.length > 0">
                   <div class="flex-row" style="align-items:flex-end; gap:8px; margin-top:8px;">
                     <div style="flex:1">
                       <select v-model="vkd3dSelectedVersion" class="custom-input" style="width:100%">
-                        <option value="" disabled>选择本地已缓存的 VKD3D 版本...</option>
+                        <option value="" disabled>{{ tr('gamesettingsmodal.runtimeTab.selectLocalVkd3d', '选择本地已缓存的 VKD3D 版本...') }}</option>
                         <option
                           v-for="lv in vkd3dLocalVersions"
                           :key="lv.version"
@@ -1413,73 +1414,73 @@ defineExpose({
                   </div>
                   <div class="button-row" style="margin-top:8px;">
                     <button class="action-btn highlight" @click="doInstallVkd3d" :disabled="isVkd3dBusy || !vkd3dSelectedVersion">
-                      {{ isVkd3dBusy ? '应用中...' : '应用 / 切换版本' }}
+                      {{ isVkd3dBusy ? tr('gamesettingsmodal.runtimeTab.applying', '应用中...') : tr('gamesettingsmodal.runtimeTab.applyOrSwitch', '应用 / 切换版本') }}
                     </button>
                     <button class="action-btn delete" @click="doUninstallVkd3d" :disabled="isVkd3dBusy || !vkd3dInstalledStatus?.installed">
-                      卸载 VKD3D
+                      {{ tr('gamesettingsmodal.runtimeTab.uninstallVkd3d', '卸载 VKD3D') }}
                     </button>
                   </div>
                 </div>
                 <div v-else class="info-sub" style="margin-top:8px;">
-                  本地暂无缓存 VKD3D 版本，请前往「设置 → VKD3D 管理」下载后再应用。
+                  {{ tr('gamesettingsmodal.runtimeTab.noLocalVkd3d', '本地暂无缓存 VKD3D 版本，请前往「设置 → VKD3D 管理」下载后再应用。') }}
                 </div>
 
                 <div class="info-sub" style="margin-top:8px;">
-                  VKD3D 默认不强制安装，仅在需要 D3D12 转译时建议启用。
+                  {{ tr('gamesettingsmodal.runtimeTab.vkd3dOptionalHint', 'VKD3D 默认不强制安装，仅在需要 D3D12 转译时建议启用。') }}
                 </div>
               </div>
 
               <!-- Proton 设置 -->
               <div class="setting-group">
-                <div class="setting-label">Proton 设置</div>
+                <div class="setting-label">{{ tr('gamesettingsmodal.runtimeTab.protonSettings', 'Proton 设置') }}</div>
                 <div class="setting-checkbox-row">
-                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.use_umu_run" /> 使用 umu-run 启动（鸣潮默认开启）</label>
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.use_umu_run" /> {{ tr('gamesettingsmodal.runtimeTab.useUmuRun', '使用 umu-run 启动（鸣潮默认开启）') }}</label>
                 </div>
                 <div class="setting-checkbox-row">
-                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.use_pressure_vessel" /> 使用 Pressure Vessel 容器</label>
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.use_pressure_vessel" /> {{ tr('gamesettingsmodal.runtimeTab.usePressureVessel', '使用 Pressure Vessel 容器') }}</label>
                 </div>
                 <div class="setting-checkbox-row">
-                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.proton_enable_wayland" /> 启用 Wayland</label>
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.proton_enable_wayland" /> {{ tr('gamesettingsmodal.runtimeTab.enableWayland', '启用 Wayland') }}</label>
                 </div>
                 <div class="setting-checkbox-row">
-                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.proton_no_d3d12" /> 禁用 D3D12</label>
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.proton_no_d3d12" /> {{ tr('gamesettingsmodal.runtimeTab.disableD3d12', '禁用 D3D12') }}</label>
                 </div>
                 <div class="setting-checkbox-row">
-                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.proton_media_use_gst" /> 使用 GStreamer 媒体</label>
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.proton_media_use_gst" /> {{ tr('gamesettingsmodal.runtimeTab.useGstreamer', '使用 GStreamer 媒体') }}</label>
                 </div>
                 <div class="setting-checkbox-row">
-                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.mangohud" /> MangoHud 性能覆盖</label>
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.mangohud" /> {{ tr('gamesettingsmodal.runtimeTab.enableMangoHud', 'MangoHud 性能覆盖') }}</label>
                 </div>
                 <div class="setting-checkbox-row">
-                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.steam_deck_compat" /> Steam Deck 兼容模式</label>
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.steam_deck_compat" /> {{ tr('gamesettingsmodal.runtimeTab.steamDeckCompat', 'Steam Deck 兼容模式') }}</label>
                 </div>
                 <div class="setting-checkbox-row">
-                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.steamos_compat" /> SteamOS 兼容模式</label>
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.steamos_compat" /> {{ tr('gamesettingsmodal.runtimeTab.steamosCompat', 'SteamOS 兼容模式') }}</label>
                 </div>
               </div>
 
               <!-- DXVK/VKD3D 设置 -->
               <div class="setting-group">
-                <div class="setting-label">DXVK / 图形设置</div>
+                <div class="setting-label">{{ tr('gamesettingsmodal.runtimeTab.dxvkGraphics', 'DXVK / 图形设置') }}</div>
                 <div class="setting-checkbox-row">
-                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.dxvk_async" /> DXVK 异步着色器编译</label>
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.dxvk_async" /> {{ tr('gamesettingsmodal.runtimeTab.dxvkAsync', 'DXVK 异步着色器编译') }}</label>
                 </div>
                 <div class="setting-checkbox-row">
-                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.disable_gpu_filter" /> 禁用 GPU 自动过滤</label>
+                  <label class="checkbox-label"><input type="checkbox" v-model="protonSettings.disable_gpu_filter" /> {{ tr('gamesettingsmodal.runtimeTab.disableGpuFilter', '禁用 GPU 自动过滤') }}</label>
                 </div>
                 <div class="setting-inline-row">
                   <span class="setting-inline-label">DXVK HUD</span>
                   <select v-model="protonSettings.dxvk_hud" class="custom-input" style="flex: 1;">
-                    <option value="">关闭</option>
-                    <option value="version">版本号</option>
-                    <option value="fps">帧率</option>
-                    <option value="version,fps">版本 + 帧率</option>
-                    <option value="full">完整信息</option>
+                    <option value="">{{ tr('gamesettingsmodal.runtimeTab.hudOff', '关闭') }}</option>
+                    <option value="version">{{ tr('gamesettingsmodal.runtimeTab.hudVersion', '版本号') }}</option>
+                    <option value="fps">{{ tr('gamesettingsmodal.runtimeTab.hudFps', '帧率') }}</option>
+                    <option value="version,fps">{{ tr('gamesettingsmodal.runtimeTab.hudVersionFps', '版本 + 帧率') }}</option>
+                    <option value="full">{{ tr('gamesettingsmodal.runtimeTab.hudFull', '完整信息') }}</option>
                   </select>
                 </div>
                 <div class="setting-inline-row">
-                  <span class="setting-inline-label">帧率限制</span>
-                  <input v-model.number="protonSettings.dxvk_frame_rate" type="number" class="custom-input" style="flex: 1;" placeholder="0 = 不限制" min="0" />
+                  <span class="setting-inline-label">{{ tr('gamesettingsmodal.runtimeTab.frameRateLimit', '帧率限制') }}</span>
+                  <input v-model.number="protonSettings.dxvk_frame_rate" type="number" class="custom-input" style="flex: 1;" :placeholder="tr('gamesettingsmodal.runtimeTab.frameRateLimitPlaceholder', '0 = 不限制')" min="0" />
                 </div>
               </div>
 
@@ -1491,7 +1492,7 @@ defineExpose({
 
               <!-- 自定义环境变量 -->
               <div class="setting-group">
-                <div class="setting-label">自定义环境变量</div>
+                <div class="setting-label">{{ tr('gamesettingsmodal.runtimeTab.customEnv', '自定义环境变量') }}</div>
                 <div v-for="(val, key) in protonSettings.custom_env" :key="key" class="env-row">
                   <span class="env-key">{{ key }}</span>
                   <span class="env-val">{{ val }}</span>
@@ -1500,13 +1501,13 @@ defineExpose({
                 <div class="env-add-row">
                   <input v-model="newEnvKey" type="text" class="custom-input env-input" placeholder="KEY" />
                   <input v-model="newEnvValue" type="text" class="custom-input env-input" placeholder="VALUE" />
-                  <button class="action-btn" style="flex: 0 0 auto;" @click="addCustomEnv">添加</button>
+                  <button class="action-btn" style="flex: 0 0 auto;" @click="addCustomEnv">{{ tr('gamesettingsmodal.runtimeTab.add', '添加') }}</button>
                 </div>
               </div>
 
               <!-- 保存 -->
               <div class="button-row">
-                <button class="action-btn highlight" @click="saveRuntimeTabSettings">保存运行环境配置</button>
+                <button class="action-btn highlight" @click="saveRuntimeTabSettings">{{ tr('gamesettingsmodal.runtimeTab.save', '保存运行环境配置') }}</button>
               </div>
             </div>
 
@@ -1515,53 +1516,53 @@ defineExpose({
 
               <!-- 系统信息 -->
               <div v-if="displayInfo" class="setting-group info-card">
-                <div class="setting-label">系统信息</div>
+                <div class="setting-label">{{ tr('gamesettingsmodal.systemTab.systemInfo', '系统信息') }}</div>
                 <div class="info-grid">
-                  <span class="info-key">显示服务器</span>
+                  <span class="info-key">{{ tr('gamesettingsmodal.systemTab.displayServer', '显示服务器') }}</span>
                   <span class="info-val">{{ displayInfo.server }}{{ displayInfo.wayland_compositor ? ` (${displayInfo.wayland_compositor})` : '' }}</span>
-                  <span class="info-key">GPU 驱动</span>
-                  <span class="info-val">{{ displayInfo.gpu_driver || '未知' }}</span>
+                  <span class="info-key">{{ tr('gamesettingsmodal.systemTab.gpuDriver', 'GPU 驱动') }}</span>
+                  <span class="info-val">{{ displayInfo.gpu_driver || tr('gamesettingsmodal.systemTab.unknown', '未知') }}</span>
                   <span class="info-key">Vulkan</span>
                   <span class="info-val" :class="{ 'text-ok': vulkanInfo?.available, 'text-err': !vulkanInfo?.available }">
-                    {{ vulkanInfo?.available ? `✓ ${vulkanInfo.version || ''}` : '✗ 未检测到' }}
+                    {{ vulkanInfo?.available ? `✓ ${vulkanInfo.version || ''}` : tr('gamesettingsmodal.systemTab.notDetected', '✗ 未检测到') }}
                   </span>
-                  <span class="info-key">游戏手柄</span>
-                  <span class="info-val">{{ displayInfo.gamepad_detected ? '✓ 已检测' : '— 未检测到' }}</span>
+                  <span class="info-key">{{ tr('gamesettingsmodal.systemTab.gamepad', '游戏手柄') }}</span>
+                  <span class="info-val">{{ displayInfo.gamepad_detected ? tr('gamesettingsmodal.systemTab.detected', '✓ 已检测') : tr('gamesettingsmodal.systemTab.notDetectedDash', '— 未检测到') }}</span>
                 </div>
               </div>
 
               <!-- GPU 选择（多显卡切换） -->
               <div class="setting-group" data-onboarding="game-settings-system-gpu">
-                <div class="setting-label">指定显卡</div>
+                <div class="setting-label">{{ tr('gamesettingsmodal.systemTab.gpuSelect', '指定显卡') }}</div>
                 <div v-if="displayInfo && displayInfo.gpus.length > 0">
                   <select v-model="selectedGpuIndex" class="custom-input" style="width:100%">
-                    <option value="-1">自动（系统默认）</option>
+                    <option value="-1">{{ tr('gamesettingsmodal.systemTab.gpuAuto', '自动（系统默认）') }}</option>
                     <option v-for="gpu in displayInfo.gpus" :key="gpu.index" :value="gpu.index">
                       GPU {{ gpu.index }}: {{ gpu.name }} ({{ gpu.driver }})
                     </option>
                   </select>
                   <div class="info-sub" style="margin-top:6px;">
-                    <template v-if="selectedGpuIndex === -1">使用系统默认 GPU。</template>
+                    <template v-if="selectedGpuIndex === -1">{{ tr('gamesettingsmodal.systemTab.gpuAutoHint', '使用系统默认 GPU。') }}</template>
                     <template v-else>
-                      将通过环境变量
+                      {{ tr('gamesettingsmodal.systemTab.gpuEnvPrefix', '将通过环境变量') }}
                       <template v-if="displayInfo.gpus[selectedGpuIndex]?.driver === 'nvidia'">
                         <code>__NV_PRIME_RENDER_OFFLOAD=1</code> + <code>__GLX_VENDOR_LIBRARY_NAME=nvidia</code>
                       </template>
                       <template v-else>
                         <code>DRI_PRIME={{ selectedGpuIndex }}</code>
                       </template>
-                      指定使用此显卡启动游戏。
+                      {{ tr('gamesettingsmodal.systemTab.gpuEnvSuffix', '指定使用此显卡启动游戏。') }}
                     </template>
                   </div>
                 </div>
-                <div v-else class="info-sub">未检测到多个 GPU，无需手动指定。</div>
+                <div v-else class="info-sub">{{ tr('gamesettingsmodal.systemTab.gpuNoNeed', '未检测到多个 GPU，无需手动指定。') }}</div>
               </div>
 
               <!-- 语言设置 -->
               <div class="setting-group">
-                <div class="setting-label">游戏语言</div>
+                <div class="setting-label">{{ tr('gamesettingsmodal.systemTab.gameLanguage', '游戏语言') }}</div>
                 <select v-model="gameLang" class="custom-input" style="width:100%">
-                  <option value="">跟随系统</option>
+                  <option value="">{{ tr('gamesettingsmodal.systemTab.followSystem', '跟随系统') }}</option>
                   <option value="zh_CN">简体中文 (zh_CN)</option>
                   <option value="zh_TW">繁体中文 (zh_TW)</option>
                   <option value="en_US">English (en_US)</option>
@@ -1577,31 +1578,31 @@ defineExpose({
                   <option value="id_ID">Bahasa Indonesia (id_ID)</option>
                 </select>
                 <div class="info-sub" style="margin-top:6px;">
-                  设置 <code>LANG</code> 环境变量，部分游戏会根据此值自动切换语言。
+                  {{ tr('gamesettingsmodal.systemTab.langHint', '设置 LANG 环境变量，部分游戏会根据此值自动切换语言。') }}
                 </div>
               </div>
 
               <!-- 沙盒设置 -->
               <div class="setting-group">
-                <div class="setting-label">沙盒设置</div>
+                <div class="setting-label">{{ tr('gamesettingsmodal.systemTab.sandbox', '沙盒设置') }}</div>
 
                 <div class="setting-checkbox-row">
                   <label class="checkbox-label">
                     <input type="checkbox" v-model="protonSettings.sandbox_enabled" />
-                    启用 bwrap 沙盒
+                    {{ tr('gamesettingsmodal.systemTab.enableSandbox', '启用 bwrap 沙盒') }}
                   </label>
                 </div>
                 <div class="setting-checkbox-row">
                   <label class="checkbox-label">
                     <input type="checkbox" v-model="protonSettings.sandbox_isolate_home" :disabled="!protonSettings.sandbox_enabled" />
-                    隔离 HOME（更严格，兼容性更低）
+                    {{ tr('gamesettingsmodal.systemTab.isolateHome', '隔离 HOME（更严格，兼容性更低）') }}
                   </label>
                 </div>
               </div>
 
               <!-- 保存 -->
               <div class="button-row">
-                <button class="action-btn highlight" @click="saveSystemOptions">保存系统选项</button>
+                <button class="action-btn highlight" @click="saveSystemOptions">{{ tr('gamesettingsmodal.systemTab.save', '保存系统选项') }}</button>
               </div>
             </div>
           </div>

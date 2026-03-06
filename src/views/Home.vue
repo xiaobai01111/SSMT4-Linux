@@ -110,7 +110,7 @@ const ensureSettingsGameSelected = async (): Promise<boolean> => {
     return true;
   }
 
-  await showMessage('请先在游戏库添加并选择一个游戏配置。', { title: '提示', kind: 'info' });
+  await showMessage(t('home.messages.needGameInLibrary'), { title: t('home.messages.title.info'), kind: 'info' });
   return false;
 };
 
@@ -307,8 +307,8 @@ const checkExecutablePathMismatch = async (gameName: string, gameConfig: any) =>
   }
 
   await showMessage(
-    `检测到主程序路径可能不匹配。\n当前配置：${configuredPath}\n推荐主程序：${detected}\n\n已自动跳转到“游戏设置 -> 游戏选项”。本次不会阻止启动。`,
-    { title: '主程序路径提醒', kind: 'warning' },
+    t('home.messages.exeMismatch', { configuredPath, detected }),
+    { title: t('home.messages.title.exeMismatch'), kind: 'warning' },
   );
   await openGameSettingsGameTab();
 };
@@ -332,11 +332,11 @@ const ensureRuntimeReady = async (gameName: string, gameConfig: any, wineVersion
   ]);
 
   if (wineResult.status === 'rejected') {
-    await showMessage(`运行环境扫描失败，请在"游戏设置 -> 运行环境"检查 Proton 配置：${wineResult.reason}`, {
-      title: '运行环境检查失败',
+    await showMessage(t('home.messages.runtimeScanFailed', { reason: String(wineResult.reason) }), {
+      title: t('home.messages.title.runtimeScanFailed'),
       kind: 'error',
     });
-    await openGlobalSettingsMenu('proton', '运行环境扫描失败，请先配置 Proton');
+    await openGlobalSettingsMenu('proton', t('home.messages.reason.runtimeScanFailed'));
     return false;
   }
   versions = wineResult.value;
@@ -356,38 +356,38 @@ const ensureRuntimeReady = async (gameName: string, gameConfig: any, wineVersion
 
   if (versions.length === 0) {
     await showMessage(
-      '未检测到任何 Wine/Proton 版本。\n请先打开“设置 -> Proton 管理”下载安装版本后再启动。',
-      { title: '缺少 Proton', kind: 'warning' },
+      t('home.messages.noProton'),
+      { title: t('home.messages.title.noProton'), kind: 'warning' },
     );
-    await openGlobalSettingsMenu('proton', '请先在此下载 Proton 版本。');
+    await openGlobalSettingsMenu('proton', t('home.messages.reason.noProton'));
     return false;
   }
 
   if (localDxvk.length === 0 && !dxvkInstalledInPrefix) {
     await showMessage(
-      '未检测到可用 DXVK（本地无缓存且当前 Prefix 未安装）。\n请先打开“设置 -> DXVK 管理”下载安装版本。',
-      { title: '缺少 DXVK', kind: 'warning' },
+      t('home.messages.noDxvk'),
+      { title: t('home.messages.title.noDxvk'), kind: 'warning' },
     );
-    await openGlobalSettingsMenu('dxvk', '请先在此下载 DXVK 版本。');
+    await openGlobalSettingsMenu('dxvk', t('home.messages.reason.noDxvk'));
     return false;
   }
 
   if (!wineVersionId?.trim()) {
     await showMessage(
-      '当前游戏尚未选择 Wine/Proton 版本。\n请先打开“游戏设置 -> 运行环境”进行设置。',
-      { title: '未设置 Proton', kind: 'warning' },
+      t('home.messages.protonNotConfigured'),
+      { title: t('home.messages.title.protonNotConfigured'), kind: 'warning' },
     );
-    await openRuntimeSettings('请先在此选择或下载 Wine/Proton 版本。', 'wine_version');
+    await openRuntimeSettings(t('home.messages.reason.protonNotConfigured'), 'wine_version');
     return false;
   }
 
   const selected = versions.find((v) => v.id === wineVersionId);
   if (!selected) {
     await showMessage(
-      `当前配置的 Wine/Proton 版本不存在：${wineVersionId}\n请在“游戏设置 -> 运行环境”重新选择可用版本。`,
-      { title: 'Proton 配置无效', kind: 'warning' },
+      t('home.messages.invalidProtonVersion', { wineVersionId }),
+      { title: t('home.messages.title.invalidProtonVersion'), kind: 'warning' },
     );
-    await openRuntimeSettings('当前 Wine/Proton 配置无效，请重新选择。', 'wine_version');
+    await openRuntimeSettings(t('home.messages.reason.invalidProtonVersion'), 'wine_version');
     return false;
   }
 
@@ -395,16 +395,16 @@ const ensureRuntimeReady = async (gameName: string, gameConfig: any, wineVersion
     const dxvkStatus = dxvkStatusCached || (await detectDxvkStatus(gameName));
     if (!dxvkStatus.installed) {
       const openNow = await askConfirm(
-        '检测到当前 Prefix 未安装 DXVK。\n这可能导致 DirectX 11/12 游戏黑屏、崩溃或无法启动。\n\n是否现在打开“游戏设置 -> 运行环境”安装 DXVK？',
+        t('home.messages.dxvkNotInstalledConfirm'),
         {
-          title: '缺少 DXVK',
+          title: t('home.messages.title.noDxvk'),
           kind: 'warning',
-          okLabel: '打开运行环境',
-          cancelLabel: '继续启动',
+          okLabel: t('home.messages.ok.openRuntime'),
+          cancelLabel: t('home.messages.cancel.continueLaunch'),
         },
       );
       if (openNow) {
-        await openRuntimeSettings('请在此安装 DXVK（建议优先官方 DXVK）。', 'dxvk');
+        await openRuntimeSettings(t('home.messages.reason.installDxvk'), 'dxvk');
         return false;
       }
     }
@@ -462,23 +462,23 @@ const ensureRiskAcknowledged = async () => {
   if (appSettings.tosRiskAcknowledged) return true;
 
   const accepted = await askConfirm(
-    '本启动器为非官方工具，与游戏厂商无关。\n\n在 Linux/Wine/Proton 环境运行游戏，可能被反作弊误判，存在账号处罚（包括封禁）风险。\n\n是否确认你已理解并愿意自行承担风险？',
+    t('home.messages.tosPrimary'),
     {
-      title: 'ToS / 封禁风险提示',
+      title: t('home.messages.title.tosRisk'),
       kind: 'warning',
-      okLabel: '我已理解风险',
-      cancelLabel: '取消',
+      okLabel: t('home.messages.ok.riskUnderstood'),
+      cancelLabel: t('home.messages.cancel.cancel'),
     }
   );
   if (!accepted) return false;
 
   const second = await askConfirm(
-    '请再次确认：继续使用即表示你了解这是非官方方案，且可能导致账号风险。',
+    t('home.messages.tosSecondary'),
     {
-      title: '二次确认',
+      title: t('home.messages.title.secondConfirm'),
       kind: 'warning',
-      okLabel: '确认继续',
-      cancelLabel: '返回',
+      okLabel: t('home.messages.ok.confirmContinue'),
+      cancelLabel: t('home.messages.cancel.back'),
     }
   );
   if (!second) return false;
@@ -514,8 +514,8 @@ const ensureProtectionEnabled = async (gameName: string, gameConfig: any) => {
       const missing = Array.isArray(status?.missing) ? status.missing : [];
       if (missing.length > 0) {
         await showMessage(
-          `当前为告警模式，不阻止启动。\n建议处理以下项：\n- ${missing.join('\n- ')}`,
-          { title: '防护告警', kind: 'warning' },
+          t('home.messages.protectionWarnMode', { missing: missing.join('\n- ') }),
+          { title: t('home.messages.title.protectionWarn'), kind: 'warning' },
         );
       }
       return true;
@@ -525,17 +525,17 @@ const ensureProtectionEnabled = async (gameName: string, gameConfig: any) => {
     if (enabled) return true;
 
     const missing = Array.isArray(status?.missing) && status.missing.length > 0
-      ? `\n\n未满足项：\n- ${status.missing.join('\n- ')}`
+      ? `\n\n${t('home.messages.missingItemsLabel')}:\n- ${status.missing.join('\n- ')}`
       : '';
 
     await showMessage(
-      `未启用应用防护，当前禁止启动游戏。\n请通过菜单"下载/防护管理"应用安全防护。${missing}`,
-      { title: '需要应用防护', kind: 'warning' }
+      t('home.messages.protectionRequired', { missing }),
+      { title: t('home.messages.title.protectionRequired'), kind: 'warning' }
     );
     showDownload.value = true;
     return false;
   } catch (e: any) {
-    await showMessage(`无法确认防护状态，已阻止启动：${e}`, { title: '防护检查失败', kind: 'error' });
+    await showMessage(t('home.messages.protectionCheckFailed', { error: String(e) }), { title: t('home.messages.title.protectionCheckFailed'), kind: 'error' });
     showDownload.value = true;
     return false;
   }
@@ -552,7 +552,7 @@ const launchGame = async () => {
 
   const gameName = appSettings.currentConfigName;
   if (!gameName || gameName === 'Default') {
-    await showMessage('请先选择一个游戏配置', { title: '提示', kind: 'info' });
+    await showMessage(t('home.messages.needSelectGame'), { title: t('home.messages.title.info'), kind: 'info' });
     isLaunching.value = false;
     return;
   }
@@ -581,7 +581,7 @@ const launchGame = async () => {
       }
       
       if (!gameExePath) {
-        await showMessage('请先在游戏设置中配置游戏可执行文件路径', { title: '提示', kind: 'info' });
+        await showMessage(t('home.messages.needGameExePath'), { title: t('home.messages.title.info'), kind: 'info' });
         isLaunching.value = false;
         return;
       }
@@ -609,33 +609,33 @@ const launchGame = async () => {
       errText.includes('启动配置错误')
     ) {
       const openNow = await askConfirm(
-        `启动失败（运行环境问题）：\n${errText}\n\n是否现在打开“游戏设置 -> 运行环境”进行修复？`,
+        t('home.messages.runtimeLaunchFailedConfirm', { error: errText }),
         {
-          title: '运行环境错误',
+          title: t('home.messages.title.runtimeError'),
           kind: 'error',
-          okLabel: '打开运行环境',
-          cancelLabel: '稍后处理',
+          okLabel: t('home.messages.ok.openRuntime'),
+          cancelLabel: t('home.messages.cancel.later'),
         },
       );
       if (openNow) {
-        await openRuntimeSettings('请先修复运行环境配置（Proton / DXVK）。', 'wine_version');
+        await openRuntimeSettings(t('home.messages.reason.fixRuntime'), 'wine_version');
         return;
       }
     }
-    await showMessage(`启动失败: ${errText}`, { title: '错误', kind: 'error' });
+    await showMessage(t('home.messages.launchFailed', { error: errText }), { title: t('home.messages.title.error'), kind: 'error' });
   }
 }
 
 const openCurrentGameLog = async () => {
   const gameName = appSettings.currentConfigName;
   if (!gameName || gameName === 'Default') {
-    await showMessage('请先选择一个游戏配置', { title: '提示', kind: 'info' });
+    await showMessage(t('home.messages.needSelectGame'), { title: t('home.messages.title.info'), kind: 'info' });
     return;
   }
   try {
     await openGameLogWindow(gameName);
   } catch (e: any) {
-    await showMessage(`打开游戏日志窗口失败: ${e}`, { title: '错误', kind: 'error' });
+    await showMessage(t('home.messages.openGameLogFailed', { error: String(e) }), { title: t('home.messages.title.error'), kind: 'error' });
   }
 }
 
@@ -675,7 +675,7 @@ onMounted(async () => {
   });
   unlistenAnticheat = await listenEvent('game-anticheat-warning', (event: any) => {
     const data = event.payload;
-    showMessage(data.message, { title: '⚠️ 反作弊风险警告', kind: 'warning' });
+    showMessage(data.message, { title: t('home.messages.title.anticheatWarning'), kind: 'warning' });
   });
 });
 
@@ -716,7 +716,7 @@ onUnmounted(() => {
         <!-- Game Selection (Dock) -->
         <div class="games-dock" data-onboarding="home-games-dock">
           <!-- Empty state: guide to Game Library -->
-          <el-tooltip v-if="sidebarGames.length === 0" content="添加游戏到侧边栏" placement="top" effect="dark" popper-class="game-tooltip">
+          <el-tooltip v-if="sidebarGames.length === 0" :content="t('home.tooltips.addToSidebar')" placement="top" effect="dark" popper-class="game-tooltip">
             <div class="dock-icon add-game-btn" @click="router.push('/games')">
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <line x1="12" y1="5" x2="12" y2="19"></line>
@@ -749,7 +749,7 @@ onUnmounted(() => {
                  <div v-else-if="isGameRunning" class="running-indicator"></div>
                  <svg v-else xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
                </div>
-               <span class="btn-text">{{ isGameRunning ? '游戏中' : (gameHasExe ? t('home.css.startgame') : t('home.css.downloadgame')) }}</span>
+               <span class="btn-text">{{ isGameRunning ? t('home.status.running') : (gameHasExe ? t('home.css.startgame') : t('home.css.downloadgame')) }}</span>
              </div>
           </div>
 
@@ -769,13 +769,13 @@ onUnmounted(() => {
                 <el-dropdown-item divided @click="showDownload = true" :disabled="!hasCurrentGame">
                   <span style="display: flex; align-items: center; gap: 8px;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17V3"></path><path d="m6 11 6 6 6-6"></path><path d="M19 21H5"></path></svg>
-                    下载/防护管理
+                    {{ t('home.dropdown.downloadProtection') }}
                   </span>
                 </el-dropdown-item>
                 <el-dropdown-item divided @click="openCurrentGameLog" :disabled="!hasCurrentGame">
                   <span style="display: flex; align-items: center; gap: 8px;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20v-6"></path><path d="M9 20h6"></path><path d="M5 8a7 7 0 1 1 14 0v6a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z"></path></svg>
-                    打开游戏日志窗口
+                    {{ t('home.dropdown.openGameLog') }}
                   </span>
                 </el-dropdown-item>
               </el-dropdown-menu>
@@ -790,7 +790,7 @@ onUnmounted(() => {
         <div v-if="dlState.active && !showDownload" class="mini-dl-bar glass-panel" @click="showDownload = true">
           <div class="mini-dl-info">
             <span class="mini-dl-name">{{ dlState.displayName || dlState.gameName }}</span>
-            <span class="mini-dl-phase">{{ dlState.phase === 'verifying' ? '校验中' : (dlState.progress?.phase === 'install' ? '安装中' : '下载中') }}</span>
+            <span class="mini-dl-phase">{{ dlState.phase === 'verifying' ? t('home.downloadPhase.verifying') : (dlState.progress?.phase === 'install' ? t('home.downloadPhase.installing') : t('home.downloadPhase.downloading')) }}</span>
             <span class="mini-dl-pct" v-if="dlState.progress && dlState.progress.total_size > 0">
               {{ Math.round((dlState.progress.finished_size / dlState.progress.total_size) * 100) }}%
             </span>
@@ -806,7 +806,7 @@ onUnmounted(() => {
         <div v-if="componentDlProgress" class="mini-dl-bar glass-panel component-dl">
           <div class="mini-dl-info">
             <span class="mini-dl-name">{{ componentDlProgress.component }}</span>
-            <span class="mini-dl-phase">{{ componentDlProgress.phase === 'downloading' ? '下载中' : componentDlProgress.phase === 'extracting' ? '解压中' : componentDlProgress.phase }}</span>
+            <span class="mini-dl-phase">{{ componentDlProgress.phase === 'downloading' ? t('home.componentPhase.downloading') : componentDlProgress.phase === 'extracting' ? t('home.componentPhase.extracting') : componentDlProgress.phase }}</span>
             <span class="mini-dl-pct" v-if="componentDlProgress.total > 0 && componentDlProgress.phase === 'downloading'">
               {{ Math.round(componentDlProgress.downloaded / componentDlProgress.total * 100) }}%
             </span>

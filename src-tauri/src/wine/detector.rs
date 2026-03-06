@@ -2,6 +2,54 @@ use crate::configs::wine_config::{ProtonVariant, WineArch, WineVersion};
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
+fn normalize_asset_name_tokens(name: &str) -> String {
+    let mut normalized = String::with_capacity(name.len() + 2);
+    normalized.push(' ');
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            normalized.push(ch.to_ascii_lowercase());
+        } else {
+            normalized.push(' ');
+        }
+    }
+    normalized.push(' ');
+    normalized
+}
+
+fn is_supported_x86_64_proton_asset(name: &str) -> bool {
+    let normalized = normalize_asset_name_tokens(name);
+    if [
+        " x86 64 ",
+        " amd64 ",
+        " x64 ",
+        " win64 ",
+        " 64 bit ",
+    ]
+    .iter()
+    .any(|token| normalized.contains(token))
+    {
+        return true;
+    }
+
+    ![
+        " arm64 ",
+        " aarch64 ",
+        " armv6 ",
+        " armv7 ",
+        " armv8 ",
+        " armhf ",
+        " armel ",
+        " arm ",
+        " i386 ",
+        " i686 ",
+        " win32 ",
+        " 32 bit ",
+        " x86 ",
+    ]
+    .iter()
+    .any(|token| normalized.contains(token))
+}
+
 /// Scan all available Wine and Proton versions on the system
 pub fn scan_all_versions(custom_paths: &[String]) -> Vec<WineVersion> {
     let mut versions = Vec::new();
@@ -659,7 +707,9 @@ async fn fetch_github_releases(
         if let Some(assets) = assets {
             for asset in assets {
                 let name = asset.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                if name.ends_with(".tar.gz") || name.ends_with(".tar.xz") {
+                if (name.ends_with(".tar.gz") || name.ends_with(".tar.xz"))
+                    && is_supported_x86_64_proton_asset(name)
+                {
                     let download_url = asset
                         .get("browser_download_url")
                         .and_then(|v| v.as_str())
@@ -696,6 +746,42 @@ fn get_wine_runners_dir() -> PathBuf {
 /// 获取 Proton 安装目录（优先自定义数据目录）
 fn get_proton_install_dir() -> PathBuf {
     crate::configs::app_config::get_app_data_dir().join("proton")
+}
+
+pub fn delete_local_proton(path: &str) -> Result<String, String> {
+    let target = PathBuf::from(path);
+    if !target.exists() {
+        return Err(format!("目标不存在: {}", target.display()));
+    }
+
+    let canonical = target
+        .canonicalize()
+        .map_err(|e| format!("解析路径失败: {}", e))?;
+    let proton_root = get_proton_install_dir()
+        .canonicalize()
+        .unwrap_or_else(|_| get_proton_install_dir());
+    let wine_root = get_wine_runners_dir()
+        .canonicalize()
+        .unwrap_or_else(|_| get_wine_runners_dir());
+
+    if !canonical.starts_with(&proton_root) && !canonical.starts_with(&wine_root) {
+        return Err("仅允许删除 SSMT4 下载并管理的 Proton/Wine 版本".to_string());
+    }
+
+    let display_name = canonical
+        .file_name()
+        .map(|v| v.to_string_lossy().to_string())
+        .unwrap_or_else(|| canonical.display().to_string());
+
+    if canonical.is_dir() {
+        std::fs::remove_dir_all(&canonical)
+            .map_err(|e| format!("删除目录失败: {}", e))?;
+    } else {
+        std::fs::remove_file(&canonical)
+            .map_err(|e| format!("删除文件失败: {}", e))?;
+    }
+
+    Ok(format!("{} 已删除", display_name))
 }
 
 /// 下载并安装 Wine/Proton 版本
@@ -768,6 +854,12 @@ pub async fn download_and_install_proton(
     let mut downloaded: u64 = 0;
     let mut stream = resp.bytes_stream();
     use futures_util::StreamExt;
+    let component_id = format!(
+        "proton:{}:{}",
+        if is_wine { "wine" } else { "proton" },
+        tag
+    );
+    let component_name = format!("{} {}", kind, tag);
 
     let emit_progress = |phase: &str, current: u64, total: u64| {
         if let Some(ref a) = app {
@@ -775,7 +867,8 @@ pub async fn download_and_install_proton(
             a.emit(
                 "component-download-progress",
                 serde_json::json!({
-                    "component": format!("{} {}", kind, tag),
+                    "componentId": &component_id,
+                    "component": &component_name,
                     "phase": phase,
                     "downloaded": current,
                     "total": total,

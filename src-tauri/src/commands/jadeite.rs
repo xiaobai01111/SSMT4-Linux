@@ -1,7 +1,98 @@
 use std::path::PathBuf;
-use tracing::info;
+use std::time::Duration;
+use tracing::{info, warn};
 
-const JADEITE_API_URL: &str = "https://codeberg.org/api/v1/repos/mkrsym1/jadeite/releases/latest";
+/// 默认 API URL 列表（按优先级尝试）
+const JADEITE_API_URLS: &[&str] = &[
+    "https://codeberg.org/api/v1/repos/mkrsym1/jadeite/releases/latest",
+];
+
+/// 用户自定义镜像 URL 的数据库设置 key
+const JADEITE_MIRROR_KEY: &str = "jadeite.mirror_api_url";
+
+/// 每个 URL 的最大重试次数
+const MAX_RETRIES: u32 = 2;
+
+fn build_api_urls() -> Vec<String> {
+    let mut urls: Vec<String> = Vec::new();
+
+    // 优先使用用户自定义镜像
+    if let Some(mirror) = crate::configs::database::get_setting(JADEITE_MIRROR_KEY) {
+        let mirror = mirror.trim().to_string();
+        if !mirror.is_empty() {
+            info!("[jadeite] 使用自定义镜像: {}", mirror);
+            urls.push(mirror);
+        }
+    }
+
+    // 追加默认 URL
+    for url in JADEITE_API_URLS {
+        urls.push(url.to_string());
+    }
+    urls
+}
+
+fn build_http_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(60))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))
+}
+
+async fn fetch_release_info(
+    client: &reqwest::Client,
+) -> Result<serde_json::Value, String> {
+    let urls = build_api_urls();
+    let mut last_error = String::from("无可用 API URL");
+
+    for url in &urls {
+        for attempt in 1..=MAX_RETRIES {
+            info!(
+                "[jadeite] 尝试获取版本信息: {} (第 {}/{} 次)",
+                url, attempt, MAX_RETRIES
+            );
+            match client
+                .get(url)
+                .header("User-Agent", "SSMT4")
+                .send()
+                .await
+            {
+                Ok(response) => match response.json::<serde_json::Value>().await {
+                    Ok(data) => {
+                        if data.get("tag_name").is_some() {
+                            return Ok(data);
+                        }
+                        last_error = format!("API 返回数据缺少 tag_name: {}", url);
+                        warn!("[jadeite] {}", last_error);
+                    }
+                    Err(e) => {
+                        last_error = format!("解析响应失败 ({}): {}", url, e);
+                        warn!("[jadeite] {}", last_error);
+                    }
+                },
+                Err(e) => {
+                    last_error = format!("连接失败 ({}): {}", url, e);
+                    warn!("[jadeite] {}", last_error);
+                }
+            }
+
+            if attempt < MAX_RETRIES {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        }
+    }
+
+    Err(format!(
+        "安装 jadeite 失败: {}。\n\n\
+        可能原因：网络无法访问 codeberg.org（DNS 污染或 GFW 阻断）。\n\
+        解决方法：\n\
+        1. 检查 DNS 设置，确保 codeberg.org 解析到正确 IP（217.197.84.140）\n\
+        2. 使用代理或 VPN 后重试\n\
+        3. 手动下载 jadeite 并解压到 patch 目录",
+        last_error
+    ))
+}
 
 /// 获取 jadeite 最新版本信息
 #[tauri::command]
@@ -32,18 +123,9 @@ pub async fn install_jadeite(_app: tauri::AppHandle, game_name: String) -> Resul
     let patch_dir = resolve_patch_dir(&game_name)?;
     std::fs::create_dir_all(&patch_dir).map_err(|e| format!("创建 patch 目录失败: {}", e))?;
 
-    // 获取最新 release 信息
     info!("[jadeite] 正在获取最新版本...");
-    let client = reqwest::Client::new();
-    let resp: serde_json::Value = client
-        .get(JADEITE_API_URL)
-        .header("User-Agent", "SSMT4")
-        .send()
-        .await
-        .map_err(|e| format!("请求 jadeite API 失败: {}", e))?
-        .json()
-        .await
-        .map_err(|e| format!("解析 jadeite API 响应失败: {}", e))?;
+    let client = build_http_client()?;
+    let resp = fetch_release_info(&client).await?;
 
     let tag = resp
         .get("tag_name")
@@ -60,14 +142,31 @@ pub async fn install_jadeite(_app: tauri::AppHandle, game_name: String) -> Resul
 
     info!("[jadeite] 版本: {}, 下载: {}", tag, download_url);
 
-    // 下载 zip
+    // 下载 zip（带重试）
     let zip_path = patch_dir.join("jadeite.zip");
-    let response = client
-        .get(download_url)
-        .header("User-Agent", "SSMT4")
-        .send()
-        .await
-        .map_err(|e| format!("下载 jadeite 失败: {}", e))?;
+    let mut response = None;
+    for attempt in 1..=MAX_RETRIES {
+        info!("[jadeite] 下载中... (第 {}/{} 次)", attempt, MAX_RETRIES);
+        match client
+            .get(download_url)
+            .header("User-Agent", "SSMT4")
+            .send()
+            .await
+        {
+            Ok(r) => {
+                response = Some(r);
+                break;
+            }
+            Err(e) => {
+                warn!("[jadeite] 下载失败 (第 {} 次): {}", attempt, e);
+                if attempt == MAX_RETRIES {
+                    return Err(format!("下载 jadeite 失败（已重试 {} 次）: {}", MAX_RETRIES, e));
+                }
+                tokio::time::sleep(Duration::from_secs(3)).await;
+            }
+        }
+    }
+    let response = response.unwrap();
 
     // 流式写入临时文件，避免全量驻留内存
     {

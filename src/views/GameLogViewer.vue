@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { readGameLogSnapshot, type GameLogSnapshot } from '../api';
+import { useI18n } from 'vue-i18n';
 
+const { t } = useI18n();
 const snapshot = ref<GameLogSnapshot>({
   active: false,
   gameName: '',
@@ -71,22 +73,22 @@ onUnmounted(() => {
 <template>
   <div class="game-log-viewer">
     <div class="toolbar">
-      <span class="title">游戏日志</span>
+      <span class="title">{{ t('gamelogviewer.title') }}</span>
       <span class="meta" v-if="snapshot.active">
         {{ snapshot.gameName }} | lines={{ snapshot.lineCount }} | started={{ snapshot.startedAt }}
       </span>
-      <span class="meta" v-else>未开启日志会话</span>
+      <span class="meta" v-else>{{ t('gamelogviewer.noSession') }}</span>
       <div class="actions">
         <label class="auto-scroll-label">
           <input type="checkbox" v-model="autoScroll" />
-          自动滚动
+          {{ t('gamelogviewer.autoScroll') }}
         </label>
-        <button class="btn" @click="loadLogs" :disabled="isLoading">刷新</button>
-        <button class="btn" @click="copyLogs">复制全部</button>
+        <button class="btn" @click="loadLogs" :disabled="isLoading">{{ t('gamelogviewer.refresh') }}</button>
+        <button class="btn" @click="copyLogs">{{ t('gamelogviewer.copyAll') }}</button>
       </div>
     </div>
     <div class="content" ref="logContainer">
-      <pre>{{ snapshot.content || '暂无日志...' }}</pre>
+      <pre>{{ snapshot.content || t('gamelogviewer.empty') }}</pre>
     </div>
   </div>
 </template>

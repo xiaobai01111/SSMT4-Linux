@@ -262,7 +262,7 @@ fn default_max_count() -> i64 {
 }
 
 fn default_proton_seed_schema() -> u32 {
-    1
+    2
 }
 
 fn load_proton_catalog_seed() -> Result<ProtonCatalogSeed, String> {
@@ -649,9 +649,21 @@ fn ensure_proton_catalog_seed(conn: &Connection) {
          SET asset_index = 0,
              updated_at = datetime('now')
          WHERE family_key = 'proton-tkg'
-           AND provider = 'github_actions'
-           AND endpoint LIKE '%/wine-tkg-git/actions/workflows/29873769/runs%'
-           AND asset_index = -1",
+          AND provider = 'github_actions'
+          AND endpoint LIKE '%/wine-tkg-git/actions/workflows/29873769/runs%'
+          AND asset_index = -1",
+        [],
+    );
+
+    // 兼容清理：移除不再支持下载二进制/压缩包的家族。
+    let _ = conn.execute(
+        "DELETE FROM proton_sources
+         WHERE family_key IN ('proton-tkg', 'custom')",
+        [],
+    );
+    let _ = conn.execute(
+        "DELETE FROM proton_families
+         WHERE family_key IN ('proton-tkg', 'custom')",
         [],
     );
 }

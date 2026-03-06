@@ -1272,21 +1272,41 @@ pub async fn fetch_vkd3d_releases(
 }
 
 /// 仅下载并解压 VKD3D-Proton 到本地缓存（不安装到任何 Prefix）
-pub async fn download_vkd3d_only(vkd3d_version: &str) -> Result<String, String> {
+pub async fn download_vkd3d_only(
+    vkd3d_version: &str,
+    app: Option<tauri::AppHandle>,
+) -> Result<String, String> {
     let cache_dir = crate::utils::file_manager::get_tools_dir().join("vkd3d");
     crate::utils::file_manager::ensure_dir(&cache_dir)?;
 
     let (archive_name, extract_dir_name) = vkd3d_names(vkd3d_version);
     let archive_path = cache_dir.join(&archive_name);
     let extract_dir = cache_dir.join(&extract_dir_name);
+    let component_id = format!("vkd3d:{}", vkd3d_version);
+    let component = format!("VKD3D-Proton {}", vkd3d_version);
 
     if !archive_path.exists() {
         let url = vkd3d_download_url(vkd3d_version, &archive_name);
         info!("Downloading VKD3D-Proton {} from {}", vkd3d_version, url);
-        download_tool(&url, &archive_path).await?;
+        download_tool(
+            &url,
+            &archive_path,
+            app.as_ref(),
+            Some(&component_id),
+            Some(&component),
+        )
+        .await?;
     }
 
     if !extract_dir.exists() {
+        emit_component_download_progress(
+            app.as_ref(),
+            Some(&component_id),
+            Some(&component),
+            "extracting",
+            0,
+            0,
+        );
         extract_tar_zst(&archive_path, &cache_dir).await?;
     }
 
@@ -1424,13 +1444,19 @@ fn dxvk_download_url(version: &str, variant: &str, archive_name: &str) -> String
 }
 
 /// 仅下载并解压 DXVK 到本地缓存（不安装到任何 Prefix）
-pub async fn download_dxvk_only(dxvk_version: &str, variant: &str) -> Result<String, String> {
+pub async fn download_dxvk_only(
+    dxvk_version: &str,
+    variant: &str,
+    app: Option<tauri::AppHandle>,
+) -> Result<String, String> {
     let cache_dir = crate::utils::file_manager::get_tools_dir().join("dxvk");
     crate::utils::file_manager::ensure_dir(&cache_dir)?;
 
     let (archive_name, extract_dir_name) = dxvk_names(dxvk_version, variant);
     let archive_path = cache_dir.join(&archive_name);
     let extract_dir = cache_dir.join(&extract_dir_name);
+    let component_id = format!("dxvk:{}:{}", variant, dxvk_version);
+    let component = format!("{} {}", dxvk_variant_display_name(variant), dxvk_version);
 
     if !archive_path.exists() {
         let url = dxvk_download_url(dxvk_version, variant, &archive_name);
@@ -1438,10 +1464,25 @@ pub async fn download_dxvk_only(dxvk_version: &str, variant: &str) -> Result<Str
             "Downloading DXVK {} ({}) from {}",
             dxvk_version, variant, url
         );
-        download_tool(&url, &archive_path).await?;
+        download_tool(
+            &url,
+            &archive_path,
+            app.as_ref(),
+            Some(&component_id),
+            Some(&component),
+        )
+        .await?;
     }
 
     if !extract_dir.exists() {
+        emit_component_download_progress(
+            app.as_ref(),
+            Some(&component_id),
+            Some(&component),
+            "extracting",
+            0,
+            0,
+        );
         extract_tar_gz(&archive_path, &cache_dir)?;
     }
 
@@ -1474,7 +1515,7 @@ pub async fn install_dxvk(
             "Downloading DXVK {} ({}) from {}",
             dxvk_version, variant, url
         );
-        download_tool(&url, &archive_path).await?;
+        download_tool(&url, &archive_path, None, None, None).await?;
     }
 
     // Extract if not already
@@ -1584,7 +1625,7 @@ pub async fn install_vkd3d(prefix_path: &Path, vkd3d_version: &str) -> Result<St
     if !archive_path.exists() {
         let url = vkd3d_download_url(vkd3d_version, &archive_name);
         info!("Downloading VKD3D-Proton {} from {}", vkd3d_version, url);
-        download_tool(&url, &archive_path).await?;
+        download_tool(&url, &archive_path, None, None, None).await?;
     }
 
     if !extract_dir.exists() {
@@ -1713,7 +1754,105 @@ fn copy_vkd3d_dlls(src_dir: &Path, dst_dir: &Path) -> Result<usize, String> {
     Ok(copied)
 }
 
-async fn download_tool(url: &str, dest: &Path) -> Result<(), String> {
+fn emit_component_download_progress(
+    app: Option<&tauri::AppHandle>,
+    component_id: Option<&str>,
+    component: Option<&str>,
+    phase: &str,
+    downloaded: u64,
+    total: u64,
+) {
+    let Some(app) = app else { return; };
+    let component_id = component_id
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.to_string());
+    let component = component
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.to_string());
+
+    if component_id.is_none() && component.is_none() {
+        return;
+    }
+
+    use tauri::Emitter;
+    app.emit(
+        "component-download-progress",
+        serde_json::json!({
+            "componentId": component_id,
+            "component": component,
+            "phase": phase,
+            "downloaded": downloaded,
+            "total": total,
+        }),
+    )
+    .ok();
+}
+
+pub fn delete_local_dxvk_version(dxvk_version: &str, variant: &str) -> Result<String, String> {
+    let cache_dir = crate::utils::file_manager::get_tools_dir().join("dxvk");
+    let (archive_name, extract_dir_name) = dxvk_names(dxvk_version, variant);
+    let archive_path = cache_dir.join(&archive_name);
+    let extract_dir = cache_dir.join(&extract_dir_name);
+
+    let mut removed = 0usize;
+    if archive_path.exists() {
+        std::fs::remove_file(&archive_path)
+            .map_err(|e| format!("删除 DXVK 压缩包失败: {}", e))?;
+        removed += 1;
+    }
+    if extract_dir.exists() {
+        std::fs::remove_dir_all(&extract_dir)
+            .map_err(|e| format!("删除 DXVK 目录失败: {}", e))?;
+        removed += 1;
+    }
+
+    if removed == 0 {
+        return Err(format!(
+            "未找到可删除的 DXVK 缓存：{} {}",
+            dxvk_variant_display_name(variant),
+            dxvk_version
+        ));
+    }
+
+    Ok(format!(
+        "{} {} 已删除",
+        dxvk_variant_display_name(variant),
+        dxvk_version
+    ))
+}
+
+pub fn delete_local_vkd3d_version(vkd3d_version: &str) -> Result<String, String> {
+    let cache_dir = crate::utils::file_manager::get_tools_dir().join("vkd3d");
+    let (archive_name, extract_dir_name) = vkd3d_names(vkd3d_version);
+    let archive_path = cache_dir.join(&archive_name);
+    let extract_dir = cache_dir.join(&extract_dir_name);
+
+    let mut removed = 0usize;
+    if archive_path.exists() {
+        std::fs::remove_file(&archive_path)
+            .map_err(|e| format!("删除 VKD3D 压缩包失败: {}", e))?;
+        removed += 1;
+    }
+    if extract_dir.exists() {
+        std::fs::remove_dir_all(&extract_dir)
+            .map_err(|e| format!("删除 VKD3D 目录失败: {}", e))?;
+        removed += 1;
+    }
+
+    if removed == 0 {
+        return Err(format!("未找到可删除的 VKD3D 缓存：{}", vkd3d_version));
+    }
+
+    Ok(format!("VKD3D-Proton {} 已删除", vkd3d_version))
+}
+
+async fn download_tool(
+    url: &str,
+    dest: &Path,
+    app: Option<&tauri::AppHandle>,
+    component_id: Option<&str>,
+    component: Option<&str>,
+) -> Result<(), String> {
     let client = reqwest::Client::new();
     let resp = client
         .get(url)
@@ -1734,6 +1873,9 @@ async fn download_tool(url: &str, dest: &Path) -> Result<(), String> {
     let mut downloaded: u64 = 0;
     let mut header_buf = [0u8; 6];
     let mut header_filled: usize = 0;
+    let total = resp.content_length().unwrap_or(0);
+
+    emit_component_download_progress(app, component_id, component, "downloading", 0, total);
 
     {
         use futures_util::StreamExt;
@@ -1742,6 +1884,7 @@ async fn download_tool(url: &str, dest: &Path) -> Result<(), String> {
         let mut file = tokio::fs::File::create(dest)
             .await
             .map_err(|e| format!("Failed to create file {}: {}", dest.display(), e))?;
+        let mut last_emit = std::time::Instant::now();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| format!("Failed to read download stream: {}", e))?;
             if header_filled < 6 {
@@ -1753,11 +1896,23 @@ async fn download_tool(url: &str, dest: &Path) -> Result<(), String> {
                 .await
                 .map_err(|e| format!("Failed to write chunk: {}", e))?;
             downloaded += chunk.len() as u64;
+            if last_emit.elapsed() >= std::time::Duration::from_millis(200) {
+                emit_component_download_progress(
+                    app,
+                    component_id,
+                    component,
+                    "downloading",
+                    downloaded,
+                    total,
+                );
+                last_emit = std::time::Instant::now();
+            }
         }
         file.flush()
             .await
             .map_err(|e| format!("Failed to flush file: {}", e))?;
     }
+    emit_component_download_progress(app, component_id, component, "downloading", downloaded, total);
 
     // 完整性校验：最小大小（防止空文件/截断/HTML 错误页面）
     const MIN_TOOL_SIZE: u64 = 10_000; // 10KB
@@ -1781,6 +1936,8 @@ async fn download_tool(url: &str, dest: &Path) -> Result<(), String> {
             url
         ));
     }
+
+    emit_component_download_progress(app, component_id, component, "extracting", downloaded, total);
 
     Ok(())
 }

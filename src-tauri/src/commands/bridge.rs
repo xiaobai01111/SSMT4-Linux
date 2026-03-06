@@ -57,6 +57,7 @@ pub struct BridgeGameConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BridgeMigotoConfig {
     pub use_hook: bool,
+    pub use_dll_drop: bool,
     pub enforce_rendering: bool,
     pub enable_hunting: bool,
     pub dump_shaders: bool,
@@ -100,6 +101,7 @@ pub struct BridgeJadeite {
 }
 
 /// Message received from bridge stdout (one JSON object per line).
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct BridgeMessage {
     #[serde(rename = "type")]
@@ -131,6 +133,7 @@ pub fn linux_to_wine_path(linux_path: &str) -> String {
 
 /// Get the path to the bridge executable.
 /// The bridge is deployed at: <app_root>/Windows/ssmt4-bridge.exe
+#[allow(dead_code)]
 pub fn get_bridge_exe_path(app_root: &Path) -> PathBuf {
     app_root.join("Windows").join("ssmt4-bridge.exe")
 }
@@ -268,6 +271,7 @@ pub fn build_bridge_config(
         },
         migoto: BridgeMigotoConfig {
             use_hook: gs.get("use_hook").and_then(|v| v.as_bool()).unwrap_or(true),
+            use_dll_drop: gs.get("use_dll_drop").and_then(|v| v.as_bool()).unwrap_or(false),
             enforce_rendering: gs
                 .get("enforce_rendering")
                 .and_then(|v| v.as_bool())
@@ -452,6 +456,7 @@ pub fn write_bridge_config(
 /// - DLL injection requires shared process address space
 /// - Windows API calls (EnumWindows, CreateToolhelp32Snapshot) need the same session
 /// - File paths inside the container are relative to the Wine prefix
+#[allow(dead_code)]
 pub async fn run_bridge(
     app: &tauri::AppHandle,
     game_name: &str,
@@ -631,8 +636,9 @@ pub async fn run_bridge(
                     }
                 }
             }
-            Err(e) => {
+            Err(err) => {
                 // Non-JSON line from bridge (e.g. Wine debug output)
+                debug!("[bridge parse] {}", err);
                 debug!("[bridge raw] {}", line);
             }
         }

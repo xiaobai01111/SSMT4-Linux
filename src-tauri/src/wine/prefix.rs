@@ -561,34 +561,6 @@ fn ensure_font_substitutes(pfx_dir: &Path) {
     }
     info!("使用 CJK 字体 '{}' 配置 Wine 注册表替换", fallback_font);
 
-    // 构造注册表补丁
-    let reg_patch = format!(
-        r#"REGEDIT4
-
-[HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\FontSubstitutes]
-"MS Shell Dlg"="{font}"
-"MS Shell Dlg 2"="{font}"
-"MS UI Gothic"="{font}"
-"SimSun"="{font}"
-"NSimSun"="{font}"
-"PMingLiU"="{font}"
-"MingLiU"="{font}"
-"Microsoft YaHei"="{font}"
-"Microsoft YaHei UI"="{font}"
-"宋体"="{font}"
-"新宋体"="{font}"
-
-[HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\FontLink\SystemLink]
-"Tahoma"="{font}"
-"Microsoft Sans Serif"="{font}"
-"Arial"="{font}"
-"Segoe UI"="{font}"
-"Lucida Sans Unicode"="{font}"
-
-"#,
-        font = fallback_font
-    );
-
     // 写入临时 .reg 文件，用 regedit 导入
     // 直接追加到 system.reg 更可靠（Wine regedit 可能不可用）
     let patch_marker = format!("\n;; SSMT4 CJK FontSubstitutes ({})\n", fallback_font);

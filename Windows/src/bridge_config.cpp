@@ -194,6 +194,7 @@ BridgeConfig BridgeConfig::load(const std::wstring& json_path) {
     cJSON* migoto = cJSON_GetObjectItemCaseSensitive(root, "migoto");
     if (migoto) {
         cfg.migoto.use_hook           = json_bool(migoto, "use_hook", true);
+        cfg.migoto.use_dll_drop       = json_bool(migoto, "use_dll_drop", false);
         cfg.migoto.enforce_rendering  = json_bool(migoto, "enforce_rendering", true);
         cfg.migoto.enable_hunting     = json_bool(migoto, "enable_hunting", false);
         cfg.migoto.dump_shaders       = json_bool(migoto, "dump_shaders", false);

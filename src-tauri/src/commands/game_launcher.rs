@@ -856,23 +856,25 @@ async fn start_game_internal(
         );
 
         // 自动注入 Jadeite：如果是 HoYoverse 游戏且检测到已安装的 jadeite.exe，
-        // 将路径传入 bridge config，让 bridge 通过 jadeite.exe 启动游戏以绕过反作弊
+        // 将路径传入 bridge config，让 bridge 通过 jadeite.exe 启动游戏以绕过反作弊。
+        // jadeite 负责 ACE 反作弊绕过，bridge 用 hook 注入加载 3DMigoto。
         if let Some(ref jade) = jadeite_exe {
             let jade_wine = super::bridge::linux_to_wine_path(&jade.to_string_lossy());
             bridge_config.jadeite = super::bridge::BridgeJadeite {
                 enabled: true,
                 exe_path: jade_wine.clone(),
             };
-            info!("3DMigoto + Jadeite: bridge 将通过 {} 启动游戏", jade.display());
+            info!("3DMigoto + Jadeite: hook 注入模式，通过 {} 启动游戏", jade.display());
         }
 
         let config_path = super::bridge::write_bridge_config(&bridge_config, &app_data_dir)?;
         let config_wine_path = super::bridge::linux_to_wine_path(&config_path.to_string_lossy());
 
-        // 注意: 不要设置 WINEDLLOVERRIDES d3d11=n,b
-        // 3DMigoto 的 d3d11.dll 是代理 DLL，其 DllMain 会内部 LoadLibrary("d3d11")
-        // 来获取"真正的"系统 d3d11.dll（DXVK）。如果设置 d3d11=n,b，
-        // Wine 会再次找到 3DMigoto 自己 → 循环依赖 → ERROR_DLL_INIT_FAILED (1114)。
+        // 注意：不要设置 BREAK_CRYPTCAT=1！
+        // 从游戏日志证实：BREAK_CRYPTCAT 会让 jadeite 跳过 WriteTextureStatisticUserData
+        // 的 patch（hsr.c: unityplayer_callback = NULL），导致未 patch 的 WTSUD 调用
+        // 被 stub 的 MHYPBase.dll → Access Violation (0xc0000005) → 游戏崩溃。
+        // 正确做法：让 jadeite 使用正常模式 patch WTSUD + core_setup_patcher。
 
         // 3DMigoto 强制 DX11 模式，DXVK 负责 DX11→Vulkan 翻译。
         // 启用异步着色器编译减少首次运行卡顿（用户可通过自定义环境变量覆盖）。

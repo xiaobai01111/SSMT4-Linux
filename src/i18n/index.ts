@@ -1,7 +1,5 @@
 import { createI18n } from 'vue-i18n'
-import en from '../../internationalization/en.json'
-import zhs from '../../internationalization/zhs.json'
-import zht from '../../internationalization/zht.json'
+import { en, zhs, zht } from '../../internationalization'
 
 export const messages = {
     en,
