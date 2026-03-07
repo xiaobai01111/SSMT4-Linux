@@ -1,17 +1,18 @@
 {
-  "name": "ssmt4",
+  "name": "ssmt4-linux",
   "private": true,
   "version": "0.0.7-beta",
+  "packageManager": "pnpm@10.30.3",
   "type": "module",
   "scripts": {
+    "preinstall": "node -e \"const ua = process.env.npm_config_user_agent || ''; const execPath = process.env.npm_execpath || ''; if (!ua.includes('pnpm') && !execPath.includes('pnpm')) { console.error('This project uses pnpm. Run corepack enable once, then pnpm install.'); process.exit(1); }\"",
     "sync-version": "bash scripts/sync-version.sh",
     "package:linux": "bash scripts/build-install-packages.sh",
     "package:appimage": "bash scripts/build-install-packages.sh --appimage-only",
-    "dev": "pnpm run sync-version && vite",
-    "build": "pnpm run sync-version && vue-tsc --noEmit && vite build",
+    "dev": "bash scripts/sync-version.sh && vite",
+    "build": "bash scripts/sync-version.sh && vue-tsc --noEmit && vite build",
     "preview": "vite preview",
-    "tauri": "tauri",
-    "gen-i18n-types": "bun scripts/gen-i18n-types.js"
+    "tauri": "bash scripts/tauri.sh"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
@@ -21,7 +22,6 @@
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-shell": "^2.3.5",
     "element-plus": "^2.13.2",
-    "puppeteer": "^24.37.5",
     "vue": "^3.5.13",
     "vue-i18n": "^11.2.8",
     "vue-router": "^4.5.1"
@@ -29,6 +29,7 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "@vitejs/plugin-vue": "^5.2.1",
+    "puppeteer": "^24.37.5",
     "typescript": "~5.6.2",
     "unplugin-auto-import": "^21.0.0",
     "unplugin-vue-components": "^31.0.0",

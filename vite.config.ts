@@ -8,7 +8,7 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
-export default defineConfig(async () => ({
+export default defineConfig(({ command }) => ({
   plugins: [
     vue(),
     AutoImport({
@@ -18,6 +18,13 @@ export default defineConfig(async () => ({
       resolvers: [ElementPlusResolver()],
     }),
   ],
+  esbuild:
+    command === "build"
+      ? {
+          drop: ["debugger"],
+          pure: ["console.log", "console.debug", "console.info"],
+        }
+      : undefined,
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

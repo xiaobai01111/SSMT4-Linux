@@ -93,27 +93,45 @@ fn read_raw_file(path: &Path) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-fn resolve_version_file_paths(app: &tauri::AppHandle) -> Vec<PathBuf> {
+fn push_unique_path(paths: &mut Vec<PathBuf>, candidate: PathBuf) {
+    if !paths.iter().any(|existing| existing == &candidate) {
+        paths.push(candidate);
+    }
+}
+
+fn build_version_file_search_bases(
+    resource_dir: Option<PathBuf>,
+    exe_dir: Option<PathBuf>,
+) -> Vec<PathBuf> {
     let mut bases = Vec::<PathBuf>::new();
 
-    if let Some(root) = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    if let Some(resource_dir) = resource_dir {
+        push_unique_path(&mut bases, resource_dir);
+    }
+
+    if let Some(exe_dir) = exe_dir {
+        push_unique_path(&mut bases, exe_dir);
+    }
+
+    #[cfg(debug_assertions)]
+    if let Some(source_root) = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .map(|p| p.to_path_buf())
     {
-        bases.push(root);
-    }
-
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        bases.push(resource_dir);
-    }
-
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            bases.push(dir.to_path_buf());
-        }
+        // 仅开发态回退到源码树，避免 release 包误读打包机/本机残留的工作区文件。
+        push_unique_path(&mut bases, source_root);
     }
 
     bases
+}
+
+fn resolve_version_file_paths(app: &tauri::AppHandle) -> Vec<PathBuf> {
+    let resource_dir = app.path().resource_dir().ok();
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf()));
+
+    build_version_file_search_bases(resource_dir, exe_dir)
 }
 
 async fn fetch_remote_data_parameters_version() -> Result<String, String> {
@@ -632,7 +650,8 @@ fn normalize_background_path_for_match(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::is_legacy_default_background_path;
+    use super::{build_version_file_search_bases, is_legacy_default_background_path};
+    use std::path::PathBuf;
 
     #[test]
     fn legacy_background_path_plain() {
@@ -674,6 +693,34 @@ mod tests {
         assert!(is_legacy_default_background_path(
             "asset://localhost/%2Ftmp%2F.mount_SSMT4-pagEcf%2Fusr%2Flib%2FSSMT4-Linux%2Fresources%2FBackground.png"
         ));
+    }
+
+    #[test]
+    fn version_file_paths_prefer_packaged_locations() {
+        let resource_dir = PathBuf::from("/tmp/app/resources");
+        let exe_dir = PathBuf::from("/tmp/app/bin");
+        let bases = build_version_file_search_bases(Some(resource_dir.clone()), Some(exe_dir.clone()));
+
+        assert_eq!(bases[0], resource_dir);
+        assert_eq!(bases[1], exe_dir);
+
+        #[cfg(debug_assertions)]
+        {
+            let source_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("source root")
+                .to_path_buf();
+            assert_eq!(bases[2], source_root);
+        }
+    }
+
+    #[test]
+    fn version_file_paths_deduplicate_packaged_locations() {
+        let shared = PathBuf::from("/tmp/app/shared");
+        let bases = build_version_file_search_bases(Some(shared.clone()), Some(shared.clone()));
+
+        assert_eq!(bases[0], shared);
+        assert_eq!(bases.iter().filter(|path| *path == &shared).count(), 1);
     }
 }
 

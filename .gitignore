@@ -6,6 +6,8 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+package-lock.json
+bun.lock
 
 node_modules
 dist
@@ -26,7 +28,9 @@ dist-ssr
 # Project specific ignores
 packaging/
 pkg/
-src-tauri/target/release/bundle/
+target/
+src-tauri/target/
+src-tauri/localhost-recording.json
 
 # Exclude build and untracked wiki/installation package
 Installation package/
@@ -42,6 +46,7 @@ aur/
 scripts/*
 !scripts/sync-version.sh
 !scripts/build-install-packages.sh
+!scripts/tauri.sh
 !scripts/aur/
 !scripts/aur/**
 

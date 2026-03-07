@@ -445,7 +445,6 @@ pub fn list_game_templates(app: tauri::AppHandle) -> Result<Vec<GameTemplateInfo
         return Ok(Vec::new());
     }
 
-    let _ = app;
     let games_dir = get_user_games_dir()?;
 
     let entries =
@@ -495,7 +494,7 @@ pub fn list_game_templates(app: tauri::AppHandle) -> Result<Vec<GameTemplateInfo
             game_id,
             display_name,
             icon_path: if has_icon {
-                icon_path.to_string_lossy().to_string()
+                crate::commands::common::allow_asset_file(&app, &icon_path)
             } else {
                 String::new()
             },

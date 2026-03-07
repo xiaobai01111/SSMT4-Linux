@@ -9,13 +9,15 @@ import { i18n } from "./i18n";
 import { watch } from "vue";
 import { appSettings } from "./store";
 
-// F12 开发者工具快捷键（仅 devtools feature 编译时后端可用）
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'F12') {
-    e.preventDefault();
-    invoke('toggle_devtools').catch(() => {});
-  }
-});
+if (import.meta.env.DEV) {
+  // F12 开发者工具快捷键（仅开发态注册，后端由 devtools feature 提供）
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'F12') {
+      e.preventDefault();
+      invoke('toggle_devtools').catch(() => {});
+    }
+  });
+}
 
 const app = createApp(App);
 

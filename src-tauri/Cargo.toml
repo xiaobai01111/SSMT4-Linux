@@ -10,7 +10,7 @@ name = "ssmt4_lib"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["devtools"]
+default = []
 devtools = ["tauri/devtools"]
 
 [build-dependencies]

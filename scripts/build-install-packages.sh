@@ -43,12 +43,7 @@ run_tauri_bundle_build() {
   mkdir -p "$TAURI_CACHE_HOME"
   local -a tauri_args
   tauri_args=(--bundles "$bundles")
-  if command -v bun >/dev/null 2>&1; then
-    XDG_CACHE_HOME="$TAURI_CACHE_HOME" npm run tauri build -- "${tauri_args[@]}" -- --no-default-features
-  else
-    tauri_args+=(--config '{"build":{"beforeBuildCommand":"npx vue-tsc --noEmit && npx vite build"}}')
-    XDG_CACHE_HOME="$TAURI_CACHE_HOME" npm run tauri build -- "${tauri_args[@]}" -- --no-default-features
-  fi
+  XDG_CACHE_HOME="$TAURI_CACHE_HOME" pnpm run tauri build -- "${tauri_args[@]}"
 }
 
 resolve_appimagetool_bin() {
@@ -308,8 +303,8 @@ run_appimage_build_with_retry() {
   return $rc
 }
 
-if ! command -v npm >/dev/null 2>&1; then
-  echo "错误: 未找到 npm，请先安装 Node.js/npm" >&2
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "错误: 未找到 pnpm，请先执行 corepack enable 并安装 pnpm 依赖" >&2
   exit 1
 fi
 if [[ "$APPIMAGE_ONLY" != "1" ]] && ! command -v makepkg >/dev/null 2>&1; then

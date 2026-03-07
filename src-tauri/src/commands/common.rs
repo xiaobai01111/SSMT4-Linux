@@ -9,11 +9,29 @@ pub fn greet(name: &str) -> String {
     format!("Hello, {}! Welcome to SSMT4 Linux.", name)
 }
 
-/// 规范化路径并动态加入 asset protocol 白名单，确保前端 convertFileSrc 可访问。
+/// 规范化路径并逐文件加入 asset protocol 白名单，确保前端 convertFileSrc 可访问。
 /// 返回规范化后的路径字符串。
 pub fn allow_asset_file(app: &tauri::AppHandle, path: &Path) -> String {
     let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let _ = app.asset_protocol_scope().allow_file(&resolved);
+
+    match std::fs::metadata(&resolved) {
+        Ok(meta) if meta.is_file() => {
+            if let Err(err) = app.asset_protocol_scope().allow_file(&resolved) {
+                warn!("asset protocol 放行失败: path={}, err={}", resolved.display(), err);
+            }
+        }
+        Ok(_) => {
+            warn!("拒绝放行非文件路径: {}", resolved.display());
+        }
+        Err(err) => {
+            warn!(
+                "asset protocol 放行前读取文件元数据失败: path={}, err={}",
+                resolved.display(),
+                err
+            );
+        }
+    }
+
     resolved.to_string_lossy().to_string()
 }
 
