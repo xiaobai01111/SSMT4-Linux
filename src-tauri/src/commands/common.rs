@@ -17,7 +17,11 @@ pub fn allow_asset_file(app: &tauri::AppHandle, path: &Path) -> String {
     match std::fs::metadata(&resolved) {
         Ok(meta) if meta.is_file() => {
             if let Err(err) = app.asset_protocol_scope().allow_file(&resolved) {
-                warn!("asset protocol 放行失败: path={}, err={}", resolved.display(), err);
+                warn!(
+                    "asset protocol 放行失败: path={}, err={}",
+                    resolved.display(),
+                    err
+                );
             }
         }
         Ok(_) => {

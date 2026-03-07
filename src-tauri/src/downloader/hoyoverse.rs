@@ -283,12 +283,11 @@ pub async fn fetch_resource_list(res_list_url: &str) -> Result<Vec<ResourceEntry
 }
 
 fn parse_u64(value: Option<&Value>) -> Option<u64> {
-    value
-        .and_then(|v| {
-            v.as_u64()
-                .or_else(|| v.as_i64().and_then(|n| u64::try_from(n).ok()))
-                .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
-        })
+    value.and_then(|v| {
+        v.as_u64()
+            .or_else(|| v.as_i64().and_then(|n| u64::try_from(n).ok()))
+            .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+    })
 }
 
 fn parse_non_empty_string(value: Option<&Value>) -> Option<String> {

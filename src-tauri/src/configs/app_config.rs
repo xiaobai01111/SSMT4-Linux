@@ -1,10 +1,24 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
-/// 用户自定义的数据根目录（全局，启动时从 settings.json 读取后设置）
+const BOOTSTRAP_SETTINGS_FILE: &str = "bootstrap-settings.json";
+
+/// 用户自定义的数据根目录（全局，启动时从轻量引导缓存恢复）
 static CUSTOM_DATA_DIR: once_cell::sync::Lazy<RwLock<Option<PathBuf>>> =
     once_cell::sync::Lazy::new(|| RwLock::new(None));
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct BootstrapSettings {
+    data_dir: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BootstrapDataDir {
+    Missing,
+    Value(String),
+}
 
 /// 启动时设置自定义数据根目录
 pub fn set_custom_data_dir(dir: PathBuf) {
@@ -52,6 +66,47 @@ pub fn expand_user_path(raw: &str) -> PathBuf {
 
 pub fn expand_user_path_string(raw: &str) -> String {
     expand_user_path(raw).to_string_lossy().to_string()
+}
+
+pub fn get_bootstrap_settings_path() -> PathBuf {
+    get_app_config_dir().join(BOOTSTRAP_SETTINGS_FILE)
+}
+
+fn read_bootstrap_data_dir_from_path(path: &Path) -> BootstrapDataDir {
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(_) => return BootstrapDataDir::Missing,
+    };
+
+    match serde_json::from_str::<BootstrapSettings>(&content) {
+        Ok(settings) => BootstrapDataDir::Value(settings.data_dir.trim().to_string()),
+        Err(err) => {
+            tracing::warn!("解析引导设置失败 {}: {}", path.display(), err);
+            BootstrapDataDir::Missing
+        }
+    }
+}
+
+pub fn read_bootstrap_data_dir() -> BootstrapDataDir {
+    read_bootstrap_data_dir_from_path(&get_bootstrap_settings_path())
+}
+
+fn write_bootstrap_data_dir_to_path(path: &Path, value: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("创建引导设置目录失败 {}: {}", parent.display(), e))?;
+    }
+
+    let payload = BootstrapSettings {
+        data_dir: value.trim().to_string(),
+    };
+    let json = serde_json::to_vec(&payload)
+        .map_err(|e| format!("序列化引导设置失败 {}: {}", path.display(), e))?;
+    std::fs::write(path, json).map_err(|e| format!("写入引导设置失败 {}: {}", path.display(), e))
+}
+
+pub fn write_bootstrap_data_dir(value: &str) -> Result<(), String> {
+    write_bootstrap_data_dir_to_path(&get_bootstrap_settings_path(), value)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -181,5 +236,52 @@ pub fn get_app_cache_dir() -> PathBuf {
         PathBuf::from(home).join(".cache").join("ssmt4")
     } else {
         PathBuf::from("/tmp/ssmt4/cache")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        read_bootstrap_data_dir_from_path, write_bootstrap_data_dir_to_path, BootstrapDataDir,
+    };
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_path(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_nanos();
+        std::env::temp_dir()
+            .join("ssmt4-tests")
+            .join(format!("{}-{}", label, nonce))
+    }
+
+    #[test]
+    fn bootstrap_data_dir_roundtrip_preserves_value() {
+        let path = unique_temp_path("bootstrap-data-dir").join("bootstrap-settings.json");
+
+        write_bootstrap_data_dir_to_path(&path, "~/Games").expect("write bootstrap config");
+
+        assert_eq!(
+            read_bootstrap_data_dir_from_path(&path),
+            BootstrapDataDir::Value("~/Games".to_string())
+        );
+
+        let _ = std::fs::remove_dir_all(path.parent().expect("parent"));
+    }
+
+    #[test]
+    fn bootstrap_data_dir_empty_value_stops_fallbacks() {
+        let path = unique_temp_path("bootstrap-empty-data-dir").join("bootstrap-settings.json");
+
+        write_bootstrap_data_dir_to_path(&path, "").expect("write bootstrap config");
+
+        assert_eq!(
+            read_bootstrap_data_dir_from_path(&path),
+            BootstrapDataDir::Value(String::new())
+        );
+
+        let _ = std::fs::remove_dir_all(path.parent().expect("parent"));
     }
 }

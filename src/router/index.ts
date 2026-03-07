@@ -1,7 +1,17 @@
-import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
-import { appSettings, settingsLoaded } from '../store'
+import { createRouter, createWebHistory, type RouteRecordName, type RouteRecordRaw } from 'vue-router'
+import { appSettings, settingsLoaded, settingsReady } from '../store'
 
-// 懒加载工厂 + 首次导航后预加载所有路由组件
+type PreloadableRouteName =
+  | 'Home'
+  | 'Setup'
+  | 'GameLibrary'
+  | 'Websites'
+  | 'Settings'
+  | 'Documents'
+  | 'LogViewer'
+  | 'GameLogViewer'
+
+// 懒加载工厂
 const lazyHome = () => import('../views/Home.vue')
 const lazySetup = () => import('../views/Setup.vue')
 const lazyGameLibrary = () => import('../views/GameLibrary.vue')
@@ -10,6 +20,28 @@ const lazySettings = () => import('../views/Settings.vue')
 const lazyDocuments = () => import('../views/Documents.vue')
 const lazyLogViewer = () => import('../views/LogViewer.vue')
 const lazyGameLogViewer = () => import('../views/GameLogViewer.vue')
+
+const routeComponentLoaders: Record<PreloadableRouteName, () => Promise<unknown>> = {
+  Home: lazyHome,
+  Setup: lazySetup,
+  GameLibrary: lazyGameLibrary,
+  Websites: lazyWebsites,
+  Settings: lazySettings,
+  Documents: lazyDocuments,
+  LogViewer: lazyLogViewer,
+  GameLogViewer: lazyGameLogViewer,
+}
+
+const preloadedRoutes = new Set<PreloadableRouteName>()
+
+export const preloadRouteView = (routeName: PreloadableRouteName) => {
+  if (preloadedRoutes.has(routeName)) return
+
+  preloadedRoutes.add(routeName)
+  void routeComponentLoaders[routeName]().catch(() => {
+    preloadedRoutes.delete(routeName)
+  })
+}
 
 const routes: RouteRecordRaw[] = [
   { path: '/', name: 'Home', component: lazyHome },
@@ -27,33 +59,45 @@ const router = createRouter({
   routes,
 })
 
-// 首次启动导航守卫：等待设置加载完成后，未完成初始化或未确认风险时跳转到向导页
-router.beforeEach(async (to) => {
-  // 日志查看器窗口不受初始化/风险确认限制
-  if (to.name === 'LogViewer' || to.name === 'GameLogViewer') return;
-  await settingsLoaded;
-  if ((!appSettings.initialized || !appSettings.tosRiskAcknowledged) && to.name !== 'Setup') {
-    return { name: 'Setup' };
-  }
-})
+const isSetupExemptRoute = (name: RouteRecordName | null | undefined) => {
+  return name === 'LogViewer' || name === 'GameLogViewer'
+}
 
-// 首次导航完成后，后台预加载所有路由组件（消除后续页面切换的编译延迟）
-let prefetched = false
-const idleCallback = typeof requestIdleCallback === 'function'
-  ? requestIdleCallback
-  : (cb: () => void) => setTimeout(cb, 200)
+const needsSetup = () => {
+  return !appSettings.initialized || !appSettings.tosRiskAcknowledged
+}
 
-router.afterEach(() => {
-  if (prefetched) return
-  prefetched = true
-  idleCallback(() => {
-    lazyHome()
-    lazySetup()
-    lazyGameLibrary()
-    lazyWebsites()
-    lazySettings()
-    lazyDocuments()
+let deferredSetupCheckRegistered = false
+
+const registerDeferredSetupCheck = () => {
+  if (deferredSetupCheckRegistered) return
+
+  deferredSetupCheckRegistered = true
+  void settingsLoaded.then(() => {
+    deferredSetupCheckRegistered = false
+
+    const currentRouteName = router.currentRoute.value.name
+    if (isSetupExemptRoute(currentRouteName) || currentRouteName === 'Setup') return
+    if (!needsSetup()) return
+
+    void router.replace({ name: 'Setup' })
   })
+}
+
+// 首次启动导航守卫：设置未就绪时先放行首路由，加载完成后再按需纠偏到向导页。
+router.beforeEach((to) => {
+  if (isSetupExemptRoute(to.name)) return true
+
+  if (!settingsReady.value) {
+    registerDeferredSetupCheck()
+    return true
+  }
+
+  if (needsSetup() && to.name !== 'Setup') {
+    return { name: 'Setup' }
+  }
+
+  return true
 })
 
 export default router

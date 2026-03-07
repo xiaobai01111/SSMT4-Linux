@@ -376,10 +376,7 @@ pub async fn fetch_vkd3d_versions(
 }
 
 #[tauri::command]
-pub async fn download_vkd3d(
-    app: tauri::AppHandle,
-    version: &str,
-) -> Result<String, String> {
+pub async fn download_vkd3d(app: tauri::AppHandle, version: &str) -> Result<String, String> {
     graphics::download_vkd3d_only(version, Some(app)).await
 }
 

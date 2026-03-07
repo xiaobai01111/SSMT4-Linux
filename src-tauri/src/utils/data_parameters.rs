@@ -3,12 +3,14 @@ use once_cell::sync::Lazy;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const DATA_PARAMETERS_REPO_URL: &str = "https://github.com/xiaobai01111/Data-parameters";
+const AUTO_SYNC_MIN_INTERVAL_SECS: u64 = 6 * 60 * 60;
 
 static RESOURCE_DIR: Lazy<RwLock<Option<PathBuf>>> = Lazy::new(|| RwLock::new(None));
+static MANAGED_REPO_SYNC_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 /// 在应用启动后注入 Tauri resource_dir，便于发布版定位资源目录。
 pub fn set_resource_dir(resource_dir: PathBuf) {
@@ -106,6 +108,57 @@ fn backup_broken_repo(repo_dir: &Path) -> Result<(), String> {
     })
 }
 
+fn managed_repo_sync_stamp_path() -> PathBuf {
+    app_config::get_app_cache_dir().join("data-parameters-auto-sync.stamp")
+}
+
+fn current_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn read_last_sync_attempt_secs(path: &Path) -> Option<u64> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+}
+
+fn write_last_sync_attempt_secs(path: &Path, ts: u64) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("创建 Data-parameters 同步戳目录失败: {}", e))?;
+    }
+    std::fs::write(path, ts.to_string())
+        .map_err(|e| format!("写入 Data-parameters 同步戳失败 {}: {}", path.display(), e))
+}
+
+fn sync_attempt_is_due(
+    now_secs: u64,
+    last_attempt_secs: Option<u64>,
+    min_interval_secs: u64,
+) -> bool {
+    match last_attempt_secs {
+        Some(last) => now_secs.saturating_sub(last) >= min_interval_secs,
+        None => true,
+    }
+}
+
+fn managed_repo_is_ready(repo_dir: &Path) -> bool {
+    repo_dir.join(".git").exists() && validate_repo_files(repo_dir).is_ok()
+}
+
+fn should_auto_sync_repo(repo_dir: &Path, now_secs: u64) -> bool {
+    if !managed_repo_is_ready(repo_dir) {
+        return true;
+    }
+
+    let stamp_path = managed_repo_sync_stamp_path();
+    let last_attempt_secs = read_last_sync_attempt_secs(&stamp_path);
+    sync_attempt_is_due(now_secs, last_attempt_secs, AUTO_SYNC_MIN_INTERVAL_SECS)
+}
+
 fn clone_repo(repo_dir: &Path) -> Result<(), String> {
     let repo_dir_str = repo_dir.to_string_lossy().to_string();
     run_git(
@@ -152,13 +205,7 @@ fn restore_worktree(repo_dir: &Path) -> Result<(), String> {
     )
 }
 
-/// 拉取（或首次克隆）Data-parameters 外部仓库。
-///
-/// 说明：
-/// - 首启/损坏场景会自动自愈（重命名旧目录后重新克隆）。
-/// - 失败时返回错误，由调用方决定是否降级继续运行。
-pub fn sync_managed_repo() -> Result<(), String> {
-    let repo_dir = managed_repo_dir();
+fn sync_managed_repo_inner(repo_dir: &Path) -> Result<(), String> {
     let parent = repo_dir
         .parent()
         .ok_or_else(|| format!("Data-parameters 目录非法: {}", repo_dir.display()))?;
@@ -167,25 +214,25 @@ pub fn sync_managed_repo() -> Result<(), String> {
 
     let git_dir = repo_dir.join(".git");
     if git_dir.exists() {
-        if let Err(e) = pull_repo(&repo_dir) {
+        if let Err(e) = pull_repo(repo_dir) {
             tracing::warn!("Data-parameters pull 失败，尝试修复工作区: {}", e);
         }
 
-        if validate_repo_files(&repo_dir).is_ok() {
+        if validate_repo_files(repo_dir).is_ok() {
             return Ok(());
         }
 
-        if let Err(e) = restore_worktree(&repo_dir) {
+        if let Err(e) = restore_worktree(repo_dir) {
             tracing::warn!("修复 Data-parameters 工作区失败: {}", e);
         }
-        if validate_repo_files(&repo_dir).is_ok() {
+        if validate_repo_files(repo_dir).is_ok() {
             return Ok(());
         }
 
         tracing::warn!("Data-parameters 仓库仍不完整，准备重新克隆");
-        backup_broken_repo(&repo_dir)?;
-        clone_repo(&repo_dir)?;
-        return validate_repo_files(&repo_dir);
+        backup_broken_repo(repo_dir)?;
+        clone_repo(repo_dir)?;
+        return validate_repo_files(repo_dir);
     }
 
     if repo_dir.exists() {
@@ -193,13 +240,61 @@ pub fn sync_managed_repo() -> Result<(), String> {
             "Data-parameters 路径已存在但不是 git 仓库，尝试重建: {}",
             repo_dir.display()
         );
-        backup_broken_repo(&repo_dir)?;
-        clone_repo(&repo_dir)?;
-        return validate_repo_files(&repo_dir);
+        backup_broken_repo(repo_dir)?;
+        clone_repo(repo_dir)?;
+        return validate_repo_files(repo_dir);
     }
 
-    clone_repo(&repo_dir)?;
-    validate_repo_files(&repo_dir)
+    clone_repo(repo_dir)?;
+    validate_repo_files(repo_dir)
+}
+
+/// 拉取（或首次克隆）Data-parameters 外部仓库。
+///
+/// 说明：
+/// - 首启/损坏场景会自动自愈（重命名旧目录后重新克隆）。
+/// - 失败时返回错误，由调用方决定是否降级继续运行。
+pub fn sync_managed_repo() -> Result<(), String> {
+    let repo_dir = managed_repo_dir();
+    let _guard = MANAGED_REPO_SYNC_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let stamp_path = managed_repo_sync_stamp_path();
+    let _ = write_last_sync_attempt_secs(&stamp_path, current_unix_secs());
+    sync_managed_repo_inner(&repo_dir)
+}
+
+/// 启动后后台同步 Data-parameters，避免主线程阻塞在 git pull/clone 上。
+pub fn schedule_managed_repo_sync() {
+    let repo_dir = managed_repo_dir();
+    let now_secs = current_unix_secs();
+
+    if !should_auto_sync_repo(&repo_dir, now_secs) {
+        tracing::debug!(
+            "跳过 Data-parameters 自动同步：当前仓库可用，且距离上次尝试不足 {} 秒",
+            AUTO_SYNC_MIN_INTERVAL_SECS
+        );
+        return;
+    }
+
+    let stamp_path = managed_repo_sync_stamp_path();
+    if let Err(e) = write_last_sync_attempt_secs(&stamp_path, now_secs) {
+        tracing::warn!("记录 Data-parameters 自动同步时间失败: {}", e);
+    }
+
+    if let Err(e) = std::thread::Builder::new()
+        .name("data-parameters-sync".to_string())
+        .spawn(|| {
+            if let Err(e) = sync_managed_repo() {
+                tracing::warn!(
+                    "后台同步 Data-parameters 仓库失败（将使用本地已有副本或回退源）: {}",
+                    e
+                );
+            }
+        })
+    {
+        tracing::warn!("启动 Data-parameters 后台同步线程失败: {}", e);
+    }
 }
 
 fn data_parameter_roots() -> Vec<PathBuf> {
@@ -355,4 +450,24 @@ pub fn resolve_games_dirs() -> Vec<PathBuf> {
     }
 
     dirs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sync_attempt_is_due;
+
+    #[test]
+    fn sync_attempt_due_without_previous_timestamp() {
+        assert!(sync_attempt_is_due(1_000, None, 60));
+    }
+
+    #[test]
+    fn sync_attempt_due_when_interval_elapsed() {
+        assert!(sync_attempt_is_due(1_000, Some(900), 60));
+    }
+
+    #[test]
+    fn sync_attempt_not_due_within_interval() {
+        assert!(!sync_attempt_is_due(1_000, Some(950), 60));
+    }
 }

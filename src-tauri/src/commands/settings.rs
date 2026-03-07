@@ -29,6 +29,7 @@ pub fn load_settings(config: State<'_, Mutex<AppConfig>>) -> Result<AppConfig, S
         let expanded = app_config::expand_user_path(&loaded.data_dir);
         app_config::set_custom_data_dir(expanded);
     }
+    sync_bootstrap_data_dir(&loaded);
 
     let mut state = config.lock().map_err(|e| e.to_string())?;
     *state = loaded.clone();
@@ -49,6 +50,7 @@ pub fn save_settings(
 
     // 写入 SQLite
     settings_to_kv(&settings)?;
+    sync_bootstrap_data_dir(&settings);
 
     // 仅在 dataDir 发生变化时同步，避免普通设置保存触发昂贵的符号链接/目录操作。
     if previous_data_dir != settings.data_dir {
@@ -350,6 +352,12 @@ fn settings_to_kv(cfg: &AppConfig) -> Result<(), String> {
     ));
 
     db::set_settings_batch(&entries)
+}
+
+fn sync_bootstrap_data_dir(cfg: &AppConfig) {
+    if let Err(err) = app_config::write_bootstrap_data_dir(&cfg.data_dir) {
+        tracing::warn!("写入 dataDir 引导缓存失败: {}", err);
+    }
 }
 
 /// SQLite KV → AppConfig 读取
@@ -699,7 +707,8 @@ mod tests {
     fn version_file_paths_prefer_packaged_locations() {
         let resource_dir = PathBuf::from("/tmp/app/resources");
         let exe_dir = PathBuf::from("/tmp/app/bin");
-        let bases = build_version_file_search_bases(Some(resource_dir.clone()), Some(exe_dir.clone()));
+        let bases =
+            build_version_file_search_bases(Some(resource_dir.clone()), Some(exe_dir.clone()));
 
         assert_eq!(bases[0], resource_dir);
         assert_eq!(bases[1], exe_dir);
@@ -756,7 +765,8 @@ pub fn get_xxmi_package_sources() -> Vec<crate::utils::migoto_packages::XxmiPack
 }
 
 #[tauri::command]
-pub fn scan_local_xxmi_packages() -> Result<crate::utils::migoto_packages::XxmiLocalStatus, String> {
+pub fn scan_local_xxmi_packages() -> Result<crate::utils::migoto_packages::XxmiLocalStatus, String>
+{
     Ok(crate::utils::migoto_packages::scan_local_xxmi_packages())
 }
 
@@ -769,12 +779,8 @@ pub async fn fetch_xxmi_remote_versions(
         let s = settings.lock().map_err(|e| e.to_string())?;
         s.github_token.clone()
     };
-    crate::utils::migoto_packages::fetch_xxmi_remote_versions(
-        source_id,
-        20,
-        Some(&github_token),
-    )
-    .await
+    crate::utils::migoto_packages::fetch_xxmi_remote_versions(source_id, 20, Some(&github_token))
+        .await
 }
 
 #[tauri::command]
@@ -796,9 +802,6 @@ pub fn deploy_xxmi_package(
 }
 
 #[tauri::command]
-pub fn delete_local_xxmi_package(
-    source_id: &str,
-    version: &str,
-) -> Result<String, String> {
+pub fn delete_local_xxmi_package(source_id: &str, version: &str) -> Result<String, String> {
     crate::utils::migoto_packages::delete_local_xxmi_package(source_id, version)
 }

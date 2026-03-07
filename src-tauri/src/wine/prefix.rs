@@ -152,12 +152,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
             copy_dir_recursive(&from, &to)?;
         } else if file_type.is_file() {
             std::fs::copy(&from, &to).map_err(|e| {
-                format!(
-                    "复制文件失败 {} -> {}: {}",
-                    from.display(),
-                    to.display(),
-                    e
-                )
+                format!("复制文件失败 {} -> {}: {}", from.display(), to.display(), e)
             })?;
         }
     }
@@ -175,18 +170,10 @@ fn migrate_legacy_prefix(legacy: &Path, preferred: &Path) -> Result<(), String> 
         Err(rename_err) => {
             // rename 在跨磁盘/不同挂载点时常失败，回退到复制+删除。
             copy_dir_recursive(legacy, preferred).map_err(|copy_err| {
-                format!(
-                    "rename 失败: {}; copy 回退失败: {}",
-                    rename_err, copy_err
-                )
+                format!("rename 失败: {}; copy 回退失败: {}", rename_err, copy_err)
             })?;
-            std::fs::remove_dir_all(legacy).map_err(|e| {
-                format!(
-                    "copy 成功但删除旧目录失败 {}: {}",
-                    legacy.display(),
-                    e
-                )
-            })?;
+            std::fs::remove_dir_all(legacy)
+                .map_err(|e| format!("copy 成功但删除旧目录失败 {}: {}", legacy.display(), e))?;
         }
     }
 

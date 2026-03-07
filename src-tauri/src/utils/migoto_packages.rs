@@ -144,9 +144,18 @@ pub fn scan_local_xxmi_packages() -> XxmiLocalStatus {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_dir() {
-                    let dir_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    let dir_name = path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
                     // 目录名即版本号（如 "v0.7.9"）
-                    if dir_name.starts_with('v') || dir_name.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+                    if dir_name.starts_with('v')
+                        || dir_name
+                            .chars()
+                            .next()
+                            .map_or(false, |c| c.is_ascii_digit())
+                    {
                         let size = dir_size(&path);
                         packages.push(XxmiLocalPackage {
                             source_id: source.id.clone(),
@@ -210,11 +219,7 @@ pub async fn fetch_xxmi_remote_versions(
         .map_err(|e| format!("获取 {} 版本列表失败: {}", source.display_name, e))?;
 
     if !resp.status().is_success() {
-        return Err(format!(
-            "GitHub API 返回 HTTP {}: {}",
-            resp.status(),
-            url
-        ));
+        return Err(format!("GitHub API 返回 HTTP {}: {}", resp.status(), url));
     }
 
     let releases: Vec<GhRelease> = resp
@@ -234,10 +239,10 @@ pub async fn fetch_xxmi_remote_versions(
     let mut versions = Vec::new();
     for rel in releases {
         // 找到 zip 资产（排除 Manifest.json）
-        let zip_asset = rel.assets.iter().find(|a| {
-            a.name.starts_with(&source.asset_prefix)
-                && a.name.ends_with(".zip")
-        });
+        let zip_asset = rel
+            .assets
+            .iter()
+            .find(|a| a.name.starts_with(&source.asset_prefix) && a.name.ends_with(".zip"));
 
         if let Some(asset) = zip_asset {
             let installed = local_versions.contains(&rel.tag_name);
@@ -279,8 +284,7 @@ pub async fn download_xxmi_package(
         .ok_or_else(|| format!("未知的包源 ID: {}", source_id))?;
 
     let cache_dir = packages_cache_dir().join(&source.id);
-    std::fs::create_dir_all(&cache_dir)
-        .map_err(|e| format!("创建包缓存目录失败: {}", e))?;
+    std::fs::create_dir_all(&cache_dir).map_err(|e| format!("创建包缓存目录失败: {}", e))?;
 
     let zip_name = format!("{}-{}.zip", source.asset_prefix, version);
     let zip_path = cache_dir.join(&zip_name);
@@ -317,10 +321,7 @@ pub async fn download_xxmi_package(
         warn!("清理 zip 文件失败（非致命）: {}", e);
     }
 
-    Ok(format!(
-        "{} {} 下载完成",
-        source.display_name, version
-    ))
+    Ok(format!("{} {} 下载完成", source.display_name, version))
 }
 
 /// 将已下载的包部署到指定的 importer 目录
@@ -333,40 +334,27 @@ pub fn deploy_xxmi_package(
     let extract_dir = cache_dir.join(version);
 
     if !extract_dir.exists() {
-        return Err(format!(
-            "包 {} {} 尚未下载，请先下载",
-            source_id, version
-        ));
+        return Err(format!("包 {} {} 尚未下载，请先下载", source_id, version));
     }
 
     let target = Path::new(target_dir);
-    std::fs::create_dir_all(target)
-        .map_err(|e| format!("创建目标目录失败: {}", e))?;
+    std::fs::create_dir_all(target).map_err(|e| format!("创建目标目录失败: {}", e))?;
 
     // 递归复制解压目录的内容到目标
     copy_dir_contents(&extract_dir, target)?;
 
-    info!(
-        "已部署包 {} {} 到 {}",
-        source_id, version, target_dir
-    );
+    info!("已部署包 {} {} 到 {}", source_id, version, target_dir);
     Ok(format!("部署完成: {} -> {}", version, target_dir))
 }
 
 /// 删除本地已下载的包
-pub fn delete_local_xxmi_package(
-    source_id: &str,
-    version: &str,
-) -> Result<String, String> {
+pub fn delete_local_xxmi_package(source_id: &str, version: &str) -> Result<String, String> {
     let cache_dir = packages_cache_dir().join(source_id);
     let extract_dir = cache_dir.join(version);
-    let zip_name_candidates = vec![
-        format!("{}.zip", version),
-    ];
+    let zip_name_candidates = vec![format!("{}.zip", version)];
 
     if extract_dir.exists() {
-        std::fs::remove_dir_all(&extract_dir)
-            .map_err(|e| format!("删除包目录失败: {}", e))?;
+        std::fs::remove_dir_all(&extract_dir).map_err(|e| format!("删除包目录失败: {}", e))?;
     }
 
     // 也尝试删除 zip
@@ -417,27 +405,20 @@ async fn download_file(url: &str, dest: &Path) -> Result<(), String> {
 
     // zip 魔数校验
     if bytes.len() >= 4 && &bytes[..4] != b"PK\x03\x04" {
-        return Err(format!(
-            "下载的文件不是有效 ZIP 格式: {}",
-            url
-        ));
+        return Err(format!("下载的文件不是有效 ZIP 格式: {}", url));
     }
 
-    std::fs::write(dest, &bytes)
-        .map_err(|e| format!("写入文件失败: {}", e))?;
+    std::fs::write(dest, &bytes).map_err(|e| format!("写入文件失败: {}", e))?;
 
     info!("下载完成: {} ({} bytes)", dest.display(), bytes.len());
     Ok(())
 }
 
 fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
-    let file = std::fs::File::open(zip_path)
-        .map_err(|e| format!("打开 ZIP 失败: {}", e))?;
-    let mut archive = zip::ZipArchive::new(file)
-        .map_err(|e| format!("解析 ZIP 失败: {}", e))?;
+    let file = std::fs::File::open(zip_path).map_err(|e| format!("打开 ZIP 失败: {}", e))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("解析 ZIP 失败: {}", e))?;
 
-    std::fs::create_dir_all(dest)
-        .map_err(|e| format!("创建解压目录失败: {}", e))?;
+    std::fs::create_dir_all(dest).map_err(|e| format!("创建解压目录失败: {}", e))?;
 
     for i in 0..archive.len() {
         let mut entry = archive
@@ -469,7 +450,10 @@ fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
 }
 
 fn copy_dir_contents(src: &Path, dst: &Path) -> Result<(), String> {
-    for entry in walkdir::WalkDir::new(src).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(src)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         let rel = entry
             .path()
             .strip_prefix(src)
@@ -486,6 +470,5 @@ fn copy_dir_contents(src: &Path, dst: &Path) -> Result<(), String> {
                 .map_err(|e| format!("复制文件失败 {}: {}", rel.display(), e))?;
         }
     }
-    Ok(()
-    )
+    Ok(())
 }

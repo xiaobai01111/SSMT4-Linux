@@ -205,7 +205,10 @@ pub async fn register_game_process(game_name: String, pid: u32, exe_path: String
     let mut games = RUNNING_GAMES.lock().await;
     let proc = GameProcess { pid };
     games.insert(game_name.clone(), proc);
-    info!("已注册游戏进程: {} (PID: {}, EXE: {})", game_name, pid, exe_path);
+    info!(
+        "已注册游戏进程: {} (PID: {}, EXE: {})",
+        game_name, pid, exe_path
+    );
 }
 
 pub async fn unregister_game_process(game_name: &str) {

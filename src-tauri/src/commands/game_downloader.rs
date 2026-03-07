@@ -504,13 +504,9 @@ pub async fn verify_game_files(
             cdn::fetch_resource_index(&launcher_info.cdn_url, &launcher_info.index_file_url)
                 .await?;
 
-        let result = verifier::verify_game_files(
-            app,
-            &resource_index,
-            &game_path,
-            cancel_token.clone(),
-        )
-        .await?;
+        let result =
+            verifier::verify_game_files(app, &resource_index, &game_path, cancel_token.clone())
+                .await?;
 
         if result.failed.is_empty() {
             write_local_version(&game_path, &launcher_info.version)?;
@@ -975,17 +971,11 @@ pub fn resolve_downloaded_game_executable(
 fn supports_auto_exe_detection(game_preset: &str) -> bool {
     matches!(
         game_preset,
-        "HonkaiStarRail"
-            | "ZenlessZoneZero"
-            | "WutheringWaves"
-            | "SnowbreakContainmentZone"
+        "HonkaiStarRail" | "ZenlessZoneZero" | "WutheringWaves" | "SnowbreakContainmentZone"
     )
 }
 
-fn resolve_known_game_executable(
-    game_preset: &str,
-    game_root: &Path,
-) -> Option<PathBuf> {
+fn resolve_known_game_executable(game_preset: &str, game_root: &Path) -> Option<PathBuf> {
     let mut candidates: Vec<String> = Vec::new();
     match game_preset {
         "HonkaiStarRail" => candidates.push("StarRail.exe".to_string()),
@@ -993,8 +983,7 @@ fn resolve_known_game_executable(
         "WutheringWaves" => {
             // 鸣潮主程序优先使用 UE Shipping 可执行文件，避免误选启动器壳程序。
             candidates.push(
-                "Wuthering Waves Game/Client/Binaries/Win64/Client-Win64-Shipping.exe"
-                    .to_string(),
+                "Wuthering Waves Game/Client/Binaries/Win64/Client-Win64-Shipping.exe".to_string(),
             );
             candidates.push("Client/Binaries/Win64/Client-Win64-Shipping.exe".to_string());
         }
@@ -1797,16 +1786,15 @@ mod tests {
                 .expect("time")
                 .as_nanos()
         ));
-        std::fs::create_dir_all(
-            dir.join("Wuthering Waves Game/Client/Binaries/Win64"),
-        )
-        .expect("create dirs");
+        std::fs::create_dir_all(dir.join("Wuthering Waves Game/Client/Binaries/Win64"))
+            .expect("create dirs");
         std::fs::write(dir.join("Wuthering Waves.exe"), b"launcher").expect("write launcher exe");
-        let shipping = dir.join("Wuthering Waves Game/Client/Binaries/Win64/Client-Win64-Shipping.exe");
+        let shipping =
+            dir.join("Wuthering Waves Game/Client/Binaries/Win64/Client-Win64-Shipping.exe");
         std::fs::write(&shipping, b"shipping").expect("write shipping exe");
 
-        let resolved = resolve_known_game_executable("WutheringWaves", &dir)
-            .expect("resolve known wuwa exe");
+        let resolved =
+            resolve_known_game_executable("WutheringWaves", &dir).expect("resolve known wuwa exe");
         assert_eq!(resolved, shipping);
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -1825,8 +1813,8 @@ mod tests {
         let shipping = dir.join("Client/Binaries/Win64/Client-Win64-Shipping.exe");
         std::fs::write(&shipping, b"shipping").expect("write shipping exe");
 
-        let resolved = resolve_known_game_executable("WutheringWaves", &dir)
-            .expect("resolve known wuwa exe");
+        let resolved =
+            resolve_known_game_executable("WutheringWaves", &dir).expect("resolve known wuwa exe");
         assert_eq!(resolved, shipping);
 
         let _ = std::fs::remove_dir_all(&dir);

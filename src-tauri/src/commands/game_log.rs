@@ -28,7 +28,9 @@ pub struct GameLogSnapshot {
 static GAME_LOG_SESSION: Lazy<Mutex<Option<GameLogSession>>> = Lazy::new(|| Mutex::new(None));
 
 fn now_string() -> String {
-    chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f").to_string()
+    chrono::Local::now()
+        .format("%Y-%m-%d %H:%M:%S%.3f")
+        .to_string()
 }
 
 fn canonical_game_name(raw: &str) -> String {
@@ -56,7 +58,12 @@ pub fn start_game_log_session(game_name: &str) {
         started_at: now_string(),
         lines: VecDeque::with_capacity(512),
     };
-    push_line(&mut session, "INFO", "session", &format!("日志会话已创建: {}", game_name));
+    push_line(
+        &mut session,
+        "INFO",
+        "session",
+        &format!("日志会话已创建: {}", game_name),
+    );
     let mut guard = GAME_LOG_SESSION.lock().unwrap();
     *guard = Some(session);
 }
@@ -75,7 +82,12 @@ pub fn ensure_game_log_session(game_name: &str) {
         started_at: now_string(),
         lines: VecDeque::with_capacity(512),
     };
-    push_line(&mut session, "INFO", "session", &format!("日志会话已创建: {}", canonical));
+    push_line(
+        &mut session,
+        "INFO",
+        "session",
+        &format!("日志会话已创建: {}", canonical),
+    );
     *guard = Some(session);
 }
 

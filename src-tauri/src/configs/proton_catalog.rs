@@ -84,7 +84,10 @@ pub struct ProtonFamilyRemoteGroup {
 }
 
 fn is_unsupported_proton_family_key(family_key: &str) -> bool {
-    matches!(family_key.trim().to_ascii_lowercase().as_str(), "custom" | "proton-tkg")
+    matches!(
+        family_key.trim().to_ascii_lowercase().as_str(),
+        "custom" | "proton-tkg"
+    )
 }
 
 fn default_true() -> bool {
@@ -309,15 +312,9 @@ fn normalize_asset_name_tokens(name: &str) -> String {
 
 fn is_explicit_x86_64_asset(name: &str) -> bool {
     let normalized = normalize_asset_name_tokens(name);
-    [
-        " x86 64 ",
-        " amd64 ",
-        " x64 ",
-        " win64 ",
-        " 64 bit ",
-    ]
-    .iter()
-    .any(|token| normalized.contains(token))
+    [" x86 64 ", " amd64 ", " x64 ", " win64 ", " 64 bit "]
+        .iter()
+        .any(|token| normalized.contains(token))
 }
 
 fn is_supported_x86_64_proton_asset(name: &str) -> bool {
@@ -866,16 +863,14 @@ mod tests {
 
     #[test]
     fn detect_patterns_classify_expected() {
-        let families = vec![
-            ProtonFamily {
-                family_key: "ge-proton".to_string(),
-                display_name: "GE-Proton".to_string(),
-                enabled: true,
-                sort_order: 0,
-                detect_patterns: vec!["(?i)ge-proton".to_string()],
-                builtin: true,
-            },
-        ];
+        let families = vec![ProtonFamily {
+            family_key: "ge-proton".to_string(),
+            display_name: "GE-Proton".to_string(),
+            enabled: true,
+            sort_order: 0,
+            detect_patterns: vec!["(?i)ge-proton".to_string()],
+            builtin: true,
+        }];
 
         assert_eq!(
             classify_local_runner("GE-Proton10-30", &families),
@@ -887,11 +882,17 @@ mod tests {
     #[test]
     fn proton_asset_arch_filter_keeps_x86_64_and_rejects_arm() {
         assert!(is_supported_x86_64_proton_asset("GE-Proton10-32.tar.gz"));
-        assert!(is_supported_x86_64_proton_asset("dwproton-10.0-18-x86_64.tar.xz"));
+        assert!(is_supported_x86_64_proton_asset(
+            "dwproton-10.0-18-x86_64.tar.xz"
+        ));
         assert!(is_supported_x86_64_proton_asset("wine-10.0-amd64.tar.xz"));
 
-        assert!(!is_supported_x86_64_proton_asset("dwproton-10.0-18-arm64.tar.xz"));
-        assert!(!is_supported_x86_64_proton_asset("wine-10.0-aarch64.tar.xz"));
+        assert!(!is_supported_x86_64_proton_asset(
+            "dwproton-10.0-18-arm64.tar.xz"
+        ));
+        assert!(!is_supported_x86_64_proton_asset(
+            "wine-10.0-aarch64.tar.xz"
+        ));
         assert!(!is_supported_x86_64_proton_asset("wine-10.0-i386.tar.xz"));
     }
 

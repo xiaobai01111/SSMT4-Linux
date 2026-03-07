@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { gamesList, switchToGame, appSettings, loadGames } from '../store';
+import { gamesList, gamesLoading, switchToGame, appSettings, loadGames } from '../store';
 import { type CSSProperties, ref, onMounted, onUnmounted, computed } from 'vue';
 import { setGameVisibility, deleteGameConfigFolder, askConfirm, listGameTemplates, importGameTemplate, getGameTemplatesDir, type GameTemplateInfo } from '../api';
 import { useRouter } from 'vue-router';
@@ -28,6 +28,13 @@ const filteredGames = computed(() => {
         const display = (te(`games.${g.name}`) ? t(`games.${g.name}`) : (g.displayName || g.name)).toLowerCase();
         return name.includes(q) || display.includes(q);
     });
+});
+
+const emptyStateText = computed(() => {
+  if (gamesLoading.value && !searchQuery.value) {
+    return 'Scanning game library...';
+  }
+  return 'No matches found.';
 });
 
 const handleContextMenu = (e: MouseEvent, game: any) => {
@@ -450,9 +457,9 @@ const spawnLoveExplosion = (e: MouseEvent) => {
                 <div class="game-label">{{ te(`games.${game.name}`) ? t(`games.${game.name}`) : (game.displayName || game.name) }}</div>
             </div>
             
-            <div v-if="filteredGames.length === 0" class="empty-state">
-                <div class="empty-icon">!</div>
-                <div class="empty-text">No matches found.</div>
+            <div v-if="filteredGames.length === 0" class="empty-state" :class="{ loading: gamesLoading && !searchQuery }">
+                <div class="empty-icon">{{ gamesLoading && !searchQuery ? '...' : '!' }}</div>
+                <div class="empty-text">{{ emptyStateText }}</div>
             </div>
         </div>
 
@@ -852,6 +859,15 @@ const spawnLoveExplosion = (e: MouseEvent) => {
     margin: 0 auto;
     max-width: 1400px;
     contain: layout style;
+}
+
+.empty-state.loading .empty-icon {
+    animation: emptyPulse 1.1s ease-in-out infinite;
+}
+
+@keyframes emptyPulse {
+    0%, 100% { opacity: 0.4; transform: scale(0.96); }
+    50% { opacity: 1; transform: scale(1.04); }
 }
 
 /* --- Bright Tech Sci-Fi Game Cards --- */

@@ -287,9 +287,9 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
         } else {
             String::new()
         };
-        let bg_video_str = bg_video_path.as_deref().map(|p| {
-            crate::commands::common::allow_asset_file(&app, Path::new(p))
-        });
+        let bg_video_str = bg_video_path
+            .as_deref()
+            .map(|p| crate::commands::common::allow_asset_file(&app, Path::new(p)));
 
         games.push(GameInfo {
             name: game_id.clone(),

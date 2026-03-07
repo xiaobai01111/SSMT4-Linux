@@ -1,7 +1,7 @@
 <script setup lang="ts" >
 import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { gamesList, switchToGame, appSettings, loadGames } from '../store'
+import { gamesList, gamesLoading, switchToGame, appSettings, loadGames } from '../store'
 import {
   showMessage,
   askConfirm,
@@ -715,8 +715,13 @@ onUnmounted(() => {
         
         <!-- Game Selection (Dock) -->
         <div class="games-dock" data-onboarding="home-games-dock">
+          <div v-if="sidebarGames.length === 0 && gamesLoading" class="dock-loading">
+            <div class="dock-loading-spinner"></div>
+            <div class="dock-loading-text">Scanning library...</div>
+          </div>
+
           <!-- Empty state: guide to Game Library -->
-          <el-tooltip v-if="sidebarGames.length === 0" :content="t('home.tooltips.addToSidebar')" placement="top" effect="dark" popper-class="game-tooltip">
+          <el-tooltip v-else-if="sidebarGames.length === 0" :content="t('home.tooltips.addToSidebar')" placement="top" effect="dark" popper-class="game-tooltip">
             <div class="dock-icon add-game-btn" @click="router.push('/games')">
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <line x1="12" y1="5" x2="12" y2="19"></line>
@@ -987,6 +992,38 @@ onUnmounted(() => {
 .games-dock::-webkit-scrollbar-track { background: transparent; }
 .games-dock::-webkit-scrollbar-thumb { background: rgba(0, 240, 255, 0.5); border-radius: 2px; }
 .games-dock::-webkit-scrollbar-thumb:hover { background: #00f0ff; }
+
+.dock-loading {
+  min-width: 160px;
+  height: 64px;
+  padding: 0 18px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.dock-loading-spinner {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  border-top-color: #00f0ff;
+  animation: dockSpin 0.8s linear infinite;
+}
+
+.dock-loading-text {
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+@keyframes dockSpin {
+  to { transform: rotate(360deg); }
+}
 
 /* Sci-Fi Crisp Hover Dock Icons */
 .dock-icon {

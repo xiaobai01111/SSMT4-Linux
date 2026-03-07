@@ -124,7 +124,11 @@ fn detect_external_log_level(stream: &str, line: &str) -> &'static str {
     if normalized.contains("unimplemented function") && normalized.contains("aborting") {
         return "ERROR";
     }
-    if stream == "stderr" { "WARN" } else { "DEBUG" }
+    if stream == "stderr" {
+        "WARN"
+    } else {
+        "DEBUG"
+    }
 }
 
 fn detect_external_log_source(stream: &str, line: &str) -> String {
@@ -585,7 +589,11 @@ async fn start_game_internal(
     let steam_runtime = detector::find_steam_linux_runtime();
     append_game_log(
         &game_name,
-        if steam_runtime.is_some() { "INFO" } else { "WARN" },
+        if steam_runtime.is_some() {
+            "INFO"
+        } else {
+            "WARN"
+        },
         "container",
         format!(
             "pressure-vessel runtime path: {}",
@@ -784,10 +792,7 @@ async fn start_game_internal(
     }
 
     // 检测 jadeite 补丁（HoYoverse 游戏反作弊包装器）
-    let is_hoyoverse = matches!(
-        game_preset.as_str(),
-        "HonkaiStarRail" | "ZenlessZoneZero"
-    );
+    let is_hoyoverse = matches!(game_preset.as_str(), "HonkaiStarRail" | "ZenlessZoneZero");
     let jadeite_exe = if is_hoyoverse {
         // 使用与 install_jadeite 相同的 resolve_patch_dir（从配置读取 gameFolder）
         super::jadeite::resolve_patch_dir(&game_name)
@@ -864,7 +869,10 @@ async fn start_game_internal(
                 enabled: true,
                 exe_path: jade_wine.clone(),
             };
-            info!("3DMigoto + Jadeite: hook 注入模式，通过 {} 启动游戏", jade.display());
+            info!(
+                "3DMigoto + Jadeite: hook 注入模式，通过 {} 启动游戏",
+                jade.display()
+            );
         }
 
         let config_path = super::bridge::write_bridge_config(&bridge_config, &app_data_dir)?;
@@ -901,10 +909,7 @@ async fn start_game_internal(
             ),
         );
 
-        (
-            bridge_exe,
-            vec!["--config".to_string(), config_wine_path],
-        )
+        (bridge_exe, vec!["--config".to_string(), config_wine_path])
     } else if let Some(ref jade) = jadeite_exe {
         info!("使用 jadeite 反作弊补丁: {}", jade.display());
         let win_game_path = format!("Z:{}", launch_exe.to_string_lossy().replace('/', "\\"));
@@ -1017,9 +1022,19 @@ async fn start_game_internal(
         launch_profile.runtime_flags.region = launch_region.clone();
     }
 
-    append_game_log(&game_name, "DEBUG", "host-env", "---- host environment begin ----");
+    append_game_log(
+        &game_name,
+        "DEBUG",
+        "host-env",
+        "---- host environment begin ----",
+    );
     append_host_env_snapshot(&game_name);
-    append_game_log(&game_name, "DEBUG", "host-env", "---- host environment end ----");
+    append_game_log(
+        &game_name,
+        "DEBUG",
+        "host-env",
+        "---- host environment end ----",
+    );
 
     let command_spec = resolve_launch_command(
         &game_preset,
@@ -1219,18 +1234,10 @@ async fn start_game_internal(
     .ok();
 
     if let Some(stdout) = child.stdout.take() {
-        spawn_launch_log_pipe(
-            game_name.clone(),
-            "stdout",
-            stdout,
-        );
+        spawn_launch_log_pipe(game_name.clone(), "stdout", stdout);
     }
     if let Some(stderr) = child.stderr.take() {
-        spawn_launch_log_pipe(
-            game_name.clone(),
-            "stderr",
-            stderr,
-        );
+        spawn_launch_log_pipe(game_name.clone(), "stderr", stderr);
     }
 
     let app_clone = app.clone();
@@ -1275,7 +1282,9 @@ async fn start_game_internal(
                 // Proton 会吞掉 GUI 子系统应用的 stdout，所以 bridge 同时写文件日志
                 {
                     let bridge_log = crate::configs::app_config::get_app_data_dir()
-                        .join("Cache").join("bridge").join("bridge-output.log");
+                        .join("Cache")
+                        .join("bridge")
+                        .join("bridge-output.log");
                     if bridge_log.exists() {
                         if let Ok(content) = std::fs::read_to_string(&bridge_log) {
                             let level = if crashed { "WARN" } else { "INFO" };
@@ -1879,11 +1888,8 @@ fn build_pressure_vessel_command(
     Some((entry_point, args))
 }
 
-fn spawn_launch_log_pipe<R>(
-    game_name: String,
-    stream: &'static str,
-    pipe: R,
-) where
+fn spawn_launch_log_pipe<R>(game_name: String, stream: &'static str, pipe: R)
+where
     R: AsyncRead + Unpin + Send + 'static,
 {
     tokio::spawn(async move {
@@ -2265,8 +2271,7 @@ fn resolve_preferred_launch_exe(game_preset: &str, game_exe: &Path) -> PathBuf {
         // 仅在用户配置了包装器 exe 时，自动回退到 Shipping 主程序。
         if file_name.eq_ignore_ascii_case("Wuthering Waves.exe") {
             if let Some(game_root) = game_exe.parent() {
-                let shipping =
-                    game_root.join("Client/Binaries/Win64/Client-Win64-Shipping.exe");
+                let shipping = game_root.join("Client/Binaries/Win64/Client-Win64-Shipping.exe");
                 if shipping.exists() {
                     info!(
                         "WutheringWaves 启动可执行已切换为主程序: {}",

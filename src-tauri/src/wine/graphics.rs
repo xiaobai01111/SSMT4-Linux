@@ -1239,12 +1239,8 @@ pub async fn fetch_vkd3d_releases(
         };
 
         let name = asset.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        let version = parse_vkd3d_version_from_name(name).unwrap_or_else(|| {
-            tag_name
-                .trim_start_matches('v')
-                .trim()
-                .to_string()
-        });
+        let version = parse_vkd3d_version_from_name(name)
+            .unwrap_or_else(|| tag_name.trim_start_matches('v').trim().to_string());
         let download_url = asset
             .get("browser_download_url")
             .and_then(|v| v.as_str())
@@ -1762,7 +1758,9 @@ fn emit_component_download_progress(
     downloaded: u64,
     total: u64,
 ) {
-    let Some(app) = app else { return; };
+    let Some(app) = app else {
+        return;
+    };
     let component_id = component_id
         .filter(|value| !value.trim().is_empty())
         .map(|value| value.to_string());
@@ -1796,13 +1794,11 @@ pub fn delete_local_dxvk_version(dxvk_version: &str, variant: &str) -> Result<St
 
     let mut removed = 0usize;
     if archive_path.exists() {
-        std::fs::remove_file(&archive_path)
-            .map_err(|e| format!("删除 DXVK 压缩包失败: {}", e))?;
+        std::fs::remove_file(&archive_path).map_err(|e| format!("删除 DXVK 压缩包失败: {}", e))?;
         removed += 1;
     }
     if extract_dir.exists() {
-        std::fs::remove_dir_all(&extract_dir)
-            .map_err(|e| format!("删除 DXVK 目录失败: {}", e))?;
+        std::fs::remove_dir_all(&extract_dir).map_err(|e| format!("删除 DXVK 目录失败: {}", e))?;
         removed += 1;
     }
 
@@ -1829,13 +1825,11 @@ pub fn delete_local_vkd3d_version(vkd3d_version: &str) -> Result<String, String>
 
     let mut removed = 0usize;
     if archive_path.exists() {
-        std::fs::remove_file(&archive_path)
-            .map_err(|e| format!("删除 VKD3D 压缩包失败: {}", e))?;
+        std::fs::remove_file(&archive_path).map_err(|e| format!("删除 VKD3D 压缩包失败: {}", e))?;
         removed += 1;
     }
     if extract_dir.exists() {
-        std::fs::remove_dir_all(&extract_dir)
-            .map_err(|e| format!("删除 VKD3D 目录失败: {}", e))?;
+        std::fs::remove_dir_all(&extract_dir).map_err(|e| format!("删除 VKD3D 目录失败: {}", e))?;
         removed += 1;
     }
 
@@ -1912,7 +1906,14 @@ async fn download_tool(
             .await
             .map_err(|e| format!("Failed to flush file: {}", e))?;
     }
-    emit_component_download_progress(app, component_id, component, "downloading", downloaded, total);
+    emit_component_download_progress(
+        app,
+        component_id,
+        component,
+        "downloading",
+        downloaded,
+        total,
+    );
 
     // 完整性校验：最小大小（防止空文件/截断/HTML 错误页面）
     const MIN_TOOL_SIZE: u64 = 10_000; // 10KB
@@ -1937,7 +1938,14 @@ async fn download_tool(
         ));
     }
 
-    emit_component_download_progress(app, component_id, component, "extracting", downloaded, total);
+    emit_component_download_progress(
+        app,
+        component_id,
+        component,
+        "extracting",
+        downloaded,
+        total,
+    );
 
     Ok(())
 }

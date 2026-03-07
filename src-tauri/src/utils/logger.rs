@@ -7,13 +7,12 @@ use tracing_subscriber::{
         self,
         format::{FmtSpan, Writer},
         writer::MakeWriter,
-        FormatEvent, FormatFields, FmtContext,
+        FmtContext, FormatEvent, FormatFields,
     },
     layer::SubscriberExt,
     registry::LookupSpan,
     util::SubscriberInitExt,
-    EnvFilter,
-    Layer,
+    EnvFilter, Layer,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -173,8 +172,16 @@ fn build_env_filter(var_name: &str, default_directive: &str) -> (EnvFilter, Stri
     let value = std::env::var(var_name)
         .ok()
         .filter(|v| !v.trim().is_empty())
-        .or_else(|| std::env::var("SSMT4_LOG_LEVEL").ok().filter(|v| !v.trim().is_empty()))
-        .or_else(|| std::env::var("RUST_LOG").ok().filter(|v| !v.trim().is_empty()));
+        .or_else(|| {
+            std::env::var("SSMT4_LOG_LEVEL")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+        })
+        .or_else(|| {
+            std::env::var("RUST_LOG")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+        });
 
     match value {
         Some(raw) => match EnvFilter::try_new(raw.trim()) {

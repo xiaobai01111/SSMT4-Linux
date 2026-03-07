@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -18,6 +18,15 @@ static DB: once_cell::sync::Lazy<Mutex<Connection>> = once_cell::sync::Lazy::new
 
 fn get_db_path() -> PathBuf {
     super::app_config::get_app_config_dir().join("ssmt4.db")
+}
+
+fn open_read_only_connection() -> Option<Connection> {
+    let db_path = get_db_path();
+    if !db_path.exists() {
+        return None;
+    }
+
+    Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY).ok()
 }
 
 fn init_tables(conn: &Connection) {
@@ -802,6 +811,18 @@ pub fn get_setting(key: &str) -> Option<String> {
         |row| row.get(0),
     )
     .ok()
+}
+
+pub fn peek_setting(key: &str) -> Option<String> {
+    let conn = open_read_only_connection()?;
+    conn.query_row(
+        "SELECT value FROM settings WHERE key = ?1",
+        params![key],
+        |row| row.get(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
 }
 
 pub fn set_setting(key: &str, value: &str) {

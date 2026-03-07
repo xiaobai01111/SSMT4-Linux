@@ -18,15 +18,9 @@ fn normalize_asset_name_tokens(name: &str) -> String {
 
 fn is_supported_x86_64_proton_asset(name: &str) -> bool {
     let normalized = normalize_asset_name_tokens(name);
-    if [
-        " x86 64 ",
-        " amd64 ",
-        " x64 ",
-        " win64 ",
-        " 64 bit ",
-    ]
-    .iter()
-    .any(|token| normalized.contains(token))
+    if [" x86 64 ", " amd64 ", " x64 ", " win64 ", " 64 bit "]
+        .iter()
+        .any(|token| normalized.contains(token))
     {
         return true;
     }
@@ -774,11 +768,9 @@ pub fn delete_local_proton(path: &str) -> Result<String, String> {
         .unwrap_or_else(|| canonical.display().to_string());
 
     if canonical.is_dir() {
-        std::fs::remove_dir_all(&canonical)
-            .map_err(|e| format!("删除目录失败: {}", e))?;
+        std::fs::remove_dir_all(&canonical).map_err(|e| format!("删除目录失败: {}", e))?;
     } else {
-        std::fs::remove_file(&canonical)
-            .map_err(|e| format!("删除文件失败: {}", e))?;
+        std::fs::remove_file(&canonical).map_err(|e| format!("删除文件失败: {}", e))?;
     }
 
     Ok(format!("{} 已删除", display_name))
@@ -854,11 +846,7 @@ pub async fn download_and_install_proton(
     let mut downloaded: u64 = 0;
     let mut stream = resp.bytes_stream();
     use futures_util::StreamExt;
-    let component_id = format!(
-        "proton:{}:{}",
-        if is_wine { "wine" } else { "proton" },
-        tag
-    );
+    let component_id = format!("proton:{}:{}", if is_wine { "wine" } else { "proton" }, tag);
     let component_name = format!("{} {}", kind, tag);
 
     let emit_progress = |phase: &str, current: u64, total: u64| {

@@ -12,10 +12,10 @@ export default defineConfig(({ command }) => ({
   plugins: [
     vue(),
     AutoImport({
-      resolvers: [ElementPlusResolver()],
+      resolvers: [ElementPlusResolver({ importStyle: 'css' })],
     }),
     Components({
-      resolvers: [ElementPlusResolver()],
+      resolvers: [ElementPlusResolver({ importStyle: 'css' })],
     }),
   ],
   esbuild:
@@ -23,6 +23,43 @@ export default defineConfig(({ command }) => ({
       ? {
           drop: ["debugger"],
           pure: ["console.log", "console.debug", "console.info"],
+        }
+      : undefined,
+  build:
+    command === "build"
+      ? {
+          cssCodeSplit: true,
+          rollupOptions: {
+            output: {
+              manualChunks(id) {
+                if (!id.includes('node_modules')) return undefined
+
+                if (
+                  id.includes('element-plus') ||
+                  id.includes('@element-plus') ||
+                  id.includes('async-validator') ||
+                  id.includes('@ctrl/tinycolor')
+                ) {
+                  return 'vendor-element-plus'
+                }
+
+                if (
+                  id.includes('/vue/') ||
+                  id.includes('@vue') ||
+                  id.includes('vue-router') ||
+                  id.includes('vue-i18n')
+                ) {
+                  return 'vendor-vue'
+                }
+
+                if (id.includes('@tauri-apps')) {
+                  return 'vendor-tauri'
+                }
+
+                return 'vendor-misc'
+              },
+            },
+          },
         }
       : undefined,
 

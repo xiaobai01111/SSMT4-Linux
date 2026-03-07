@@ -5,6 +5,8 @@ import { appSettings, BGType } from "./store";
 import TitleBar from "./components/TitleBar.vue";
 import FeatureOnboarding from "./components/FeatureOnboarding.vue";
 import { ElMessage, ElNotification } from "element-plus";
+import "element-plus/es/components/message/style/css";
+import "element-plus/es/components/notification/style/css";
 import { dismissTask, taskNotifications } from "./taskNotifications";
 
 

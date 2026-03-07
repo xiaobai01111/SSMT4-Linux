@@ -188,10 +188,7 @@ pub fn build_bridge_config(
         .unwrap_or_else(|| json!({}));
 
     let mut game_specific_map: HashMap<String, Value> = HashMap::new();
-    game_specific_map.insert(
-        importer_name.to_ascii_lowercase(),
-        game_specific_section,
-    );
+    game_specific_map.insert(importer_name.to_ascii_lowercase(), game_specific_section);
 
     // Mod 文件夹 & ShaderFixes 文件夹：优先用户自定义
     let mod_folder_linux = gs
@@ -217,8 +214,11 @@ pub fn build_bridge_config(
 
     info!(
         "bridge paths: migoto_data={}, importer={}, mods={}, shaders={}, d3dx_ini={}",
-        migoto_data_linux, importer_folder_linux, mod_folder_linux,
-        shader_fixes_folder_linux, d3dx_ini_linux
+        migoto_data_linux,
+        importer_folder_linux,
+        mod_folder_linux,
+        shader_fixes_folder_linux,
+        d3dx_ini_linux
     );
 
     BridgeConfig {
@@ -425,10 +425,7 @@ pub fn build_bridge_config(
 }
 
 /// Write the bridge config to a temp file and return the Linux path.
-pub fn write_bridge_config(
-    config: &BridgeConfig,
-    app_root: &Path,
-) -> Result<PathBuf, String> {
+pub fn write_bridge_config(config: &BridgeConfig, app_root: &Path) -> Result<PathBuf, String> {
     let config_dir = app_root.join("Cache").join("bridge");
     std::fs::create_dir_all(&config_dir)
         .map_err(|e| format!("Failed to create bridge config dir: {}", e))?;
@@ -534,7 +531,10 @@ pub async fn run_bridge(
             while let Ok(Some(line)) = lines.next_line().await {
                 debug!("[bridge stderr] {}", line);
                 crate::commands::game_log::append_game_log_line(
-                    &gn, "DEBUG", "bridge-stderr", &line,
+                    &gn,
+                    "DEBUG",
+                    "bridge-stderr",
+                    &line,
                 );
             }
         });
@@ -552,9 +552,7 @@ pub async fn run_bridge(
         }
 
         debug!("[bridge] {}", line);
-        crate::commands::game_log::append_game_log_line(
-            game_name, "DEBUG", "bridge", &line,
-        );
+        crate::commands::game_log::append_game_log_line(game_name, "DEBUG", "bridge", &line);
 
         match serde_json::from_str::<BridgeMessage>(&line) {
             Ok(msg) => {
@@ -585,7 +583,10 @@ pub async fn run_bridge(
                     "warning" => {
                         warn!("[bridge] {}", msg.message);
                         crate::commands::game_log::append_game_log_line(
-                            game_name, "WARN", "bridge", &msg.message,
+                            game_name,
+                            "WARN",
+                            "bridge",
+                            &msg.message,
                         );
                     }
                     "error" => {
@@ -620,7 +621,10 @@ pub async fn run_bridge(
                             _ => "DEBUG",
                         };
                         crate::commands::game_log::append_game_log_line(
-                            game_name, level, "bridge", &msg.message,
+                            game_name,
+                            level,
+                            "bridge",
+                            &msg.message,
                         );
                     }
                     "done" => {

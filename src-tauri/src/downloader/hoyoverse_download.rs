@@ -229,7 +229,11 @@ pub async fn verify_game(
         let cancel_token = cancel_token.clone();
         async move {
             if *cancel_token.lock().await {
-                return (entry.display_name, entry.expected_size, VerifyTaskState::Cancelled);
+                return (
+                    entry.display_name,
+                    entry.expected_size,
+                    VerifyTaskState::Cancelled,
+                );
             }
 
             match hash_verify::verify_file_integrity(

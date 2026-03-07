@@ -72,6 +72,8 @@ const defaultSettings: AppSettings = {
 
 export const appSettings = reactive<AppSettings>({ ...defaultSettings })
 export const gamesList = reactive<GameInfo[]>([])
+export const gamesLoading = ref(false)
+export const settingsReady = ref(false)
 export const FEATURE_ONBOARDING_VERSION = 1
 export const onboardingVisible = ref(false)
 export const onboardingStepIndex = ref(0)
@@ -135,6 +137,7 @@ async function loadSettings() {
     console.error('Failed to load settings:', e)
     await showMessage(`加载设置失败: ${e}`, { title: '错误', kind: 'error' });
   } finally {
+    settingsReady.value = true;
     _settingsLoadedResolve();
   }
 }
@@ -159,28 +162,38 @@ async function initDefaultBackground() {
     }
 }
 
-export async function loadGames() {
+let suspendAutoSaveDepth = 0;
+let gamesRefreshPromise: Promise<void> | null = null;
+let queuedGamesRefresh = false;
+
+const withAutoSaveSuspended = <T>(fn: () => T): T => {
+  suspendAutoSaveDepth += 1;
   try {
-    // scanGames 和 initDefaultBackground 并行执行（均有缓存）
-    const [games] = await Promise.all([
-      apiScanGames(),
-      initDefaultBackground(),
-    ]);
+    return fn();
+  } finally {
+    suspendAutoSaveDepth -= 1;
+  }
+};
 
-    const timestamp = Date.now();
-    const processed = games.map((g: any) => ({
-      name: g.name,
-      displayName: g.displayName || g.name,
-      iconPath: g.iconPath ? convertFileSrc(g.iconPath) + `?t=${timestamp}` : '',
-      bgPath: g.bgPath ? convertFileSrc(g.bgPath) + `?t=${timestamp}` : '',
-      bgVideoPath: undefined,
-      bgVideoRawPath: g.bgVideoPath || undefined,
-      bgType: g.bgType || BGType.Image,
-      showSidebar: g.showSidebar,
-    } as GameInfo));
+const mapScannedGames = (games: any[]): GameInfo[] => {
+  const timestamp = Date.now();
+  return games.map((g: any) => ({
+    name: g.name,
+    displayName: g.displayName || g.name,
+    iconPath: g.iconPath ? convertFileSrc(g.iconPath) + `?t=${timestamp}` : '',
+    bgPath: g.bgPath ? convertFileSrc(g.bgPath) + `?t=${timestamp}` : '',
+    bgVideoPath: undefined,
+    bgVideoRawPath: g.bgVideoPath || undefined,
+    bgType: g.bgType || BGType.Image,
+    showSidebar: g.showSidebar,
+  } as GameInfo));
+};
 
-    gamesList.splice(0, gamesList.length, ...processed);
+const applyScannedGames = (games: any[]) => {
+  const processed = mapScannedGames(games);
+  gamesList.splice(0, gamesList.length, ...processed);
 
+  withAutoSaveSuspended(() => {
     if (appSettings.currentConfigName) {
       const current = gamesList.find(g => g.name === appSettings.currentConfigName);
       if (current) {
@@ -189,9 +202,51 @@ export async function loadGames() {
     } else if (!appSettings.bgImage && appSettings.bgType === BGType.Image) {
       appSettings.bgImage = defaultBgPath;
     }
-  } catch (e) {
-    console.error('Failed to scan games:', e);
+  });
+
+  const baseline = lastSavedSettingsSnapshot
+    ? { ...lastSavedSettingsSnapshot }
+    : { ...appSettings };
+  baseline.currentConfigName = appSettings.currentConfigName;
+  baseline.bgImage = appSettings.bgImage;
+  baseline.bgType = appSettings.bgType;
+  lastSavedSettingsSnapshot = baseline;
+  lastSavedSettingsJson = JSON.stringify(baseline);
+};
+
+const runQueuedGamesRefresh = async () => {
+  if (gamesRefreshPromise) {
+    return gamesRefreshPromise;
   }
+
+  gamesRefreshPromise = (async () => {
+    gamesLoading.value = true;
+    try {
+      while (queuedGamesRefresh) {
+        queuedGamesRefresh = false;
+        try {
+          const games = await apiScanGames();
+          applyScannedGames(games);
+        } catch (e) {
+          console.error('Failed to scan games:', e);
+        }
+      }
+    } finally {
+      gamesLoading.value = false;
+      gamesRefreshPromise = null;
+    }
+  })();
+
+  return gamesRefreshPromise;
+};
+
+const queueGamesRefresh = async () => {
+  queuedGamesRefresh = true;
+  await runQueuedGamesRefresh();
+};
+
+export async function loadGames() {
+  await queueGamesRefresh();
 }
 
 export function switchToGame(game: GameInfo) {
@@ -202,41 +257,25 @@ export function switchToGame(game: GameInfo) {
 
 // Initial load
 async function initStore() {
-  // 并行启动：settings 加载 + games 扫描 + 默认背景，互不依赖
-  const [, games] = await Promise.all([
+  // 启动阶段只等待 settings 和默认背景；游戏扫描放到后台，避免首屏卡在 scan_games。
+  await Promise.all([
     loadSettings(),
-    apiScanGames().catch(e => { console.error('Failed to scan games:', e); return [] as any[]; }),
     initDefaultBackground(),
   ]);
-  // settings 已加载完毕，用扫描结果填充 gamesList
-  if (games && games.length > 0) {
-    const timestamp = Date.now();
-    const processed = games.map((g: any) => ({
-      name: g.name,
-      displayName: g.displayName || g.name,
-      iconPath: g.iconPath ? convertFileSrc(g.iconPath) + `?t=${timestamp}` : '',
-      bgPath: g.bgPath ? convertFileSrc(g.bgPath) + `?t=${timestamp}` : '',
-      bgVideoPath: undefined,
-      bgVideoRawPath: g.bgVideoPath || undefined,
-      bgType: g.bgType || BGType.Image,
-      showSidebar: g.showSidebar,
-    } as GameInfo));
-    gamesList.splice(0, gamesList.length, ...processed);
 
-    if (appSettings.currentConfigName) {
-      const current = gamesList.find(g => g.name === appSettings.currentConfigName);
-      if (current) {
-        switchToGame(current);
-      }
-    } else if (!appSettings.bgImage && appSettings.bgType === BGType.Image) {
-      appSettings.bgImage = defaultBgPath;
-    }
+  if (!appSettings.bgImage && appSettings.bgType === BGType.Image) {
+    appSettings.bgImage = defaultBgPath;
   }
-  // 初始化完成后更新快照，避免 switchToGame 的属性变更被视为用户修改
+
   lastSavedSettingsJson = JSON.stringify({ ...appSettings });
   lastSavedSettingsSnapshot = { ...appSettings };
   isInitialized = true;
   tryAutoStartFeatureOnboarding();
+
+  gamesLoading.value = true;
+  setTimeout(() => {
+    void loadGames();
+  }, 0);
 }
 initStore();
 
@@ -308,6 +347,7 @@ watch(
   appSettings,
   () => {
     if (!isInitialized) return;
+    if (suspendAutoSaveDepth > 0) return;
     void scheduleSettingsSave();
   },
   { deep: true },
