@@ -809,12 +809,29 @@ async fn start_game_internal(
         .and_then(|c| c.pointer("/other/migoto/enabled"))
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let migoto_importer = game_config_data
+    let configured_migoto_importer = game_config_data
         .as_ref()
         .and_then(|c| c.pointer("/other/migoto/importer"))
         .and_then(|v| v.as_str())
-        .unwrap_or("WWMI")
-        .to_string();
+        .unwrap_or("");
+    let migoto_importer = resolve_preferred_migoto_importer(&game_preset, configured_migoto_importer);
+    if migoto_enabled && !configured_migoto_importer.eq_ignore_ascii_case(&migoto_importer) {
+        warn!(
+            "3DMigoto importer 已按游戏预设校正: preset={}, configured={}, effective={}",
+            game_preset,
+            configured_migoto_importer,
+            migoto_importer
+        );
+        append_game_log(
+            &game_name,
+            "WARN",
+            "launcher",
+            format!(
+                "migoto importer overridden by preset: preset={}, configured={}, effective={}",
+                game_preset, configured_migoto_importer, migoto_importer
+            ),
+        );
+    }
 
     // 实际要运行的可执行文件
     // 优先级：3DMigoto bridge > jadeite > 游戏 exe
@@ -859,6 +876,55 @@ async fn start_game_internal(
             &game_exe_name,
             game_config_data.as_ref(),
         );
+
+        if game_preset == "ArknightsEndfield" {
+            if let Some(chain) = find_endfield_launcher_chain(&launch_exe) {
+                let launcher_root = chain.launcher_exe.parent().ok_or_else(|| {
+                    format!(
+                        "无法推断终末地启动器目录: {}",
+                        chain.launcher_exe.display()
+                    )
+                })?;
+                let target_exe_name = chain
+                    .endfield_exe
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("Endfield.exe")
+                    .to_string();
+                let start_exe_name = chain
+                    .launcher_exe
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("Launcher.exe")
+                    .to_string();
+
+                bridge_config.paths.game_folder =
+                    super::bridge::linux_to_wine_path(&launcher_root.to_string_lossy());
+                bridge_config.paths.game_exe = target_exe_name.clone();
+                bridge_config.game.start_exe = start_exe_name;
+                bridge_config.game.work_dir =
+                    super::bridge::linux_to_wine_path(&launcher_root.to_string_lossy());
+                bridge_config.game.process_name = target_exe_name.clone();
+                normalize_endfield_launcher_start_args(&mut bridge_config.game.start_args);
+
+                info!(
+                    "ArknightsEndfield 官方启动链: launcher={}, inject_target={}",
+                    chain.launcher_exe.display(),
+                    chain.endfield_exe.display()
+                );
+                append_game_log(
+                    &game_name,
+                    "INFO",
+                    "bridge",
+                    format!(
+                        "Endfield official launcher flow: start_exe={}, process_name={}, start_args={:?}",
+                        chain.launcher_exe.display(),
+                        target_exe_name,
+                        bridge_config.game.start_args
+                    ),
+                );
+            }
+        }
 
         // 自动注入 Jadeite：如果是 HoYoverse 游戏且检测到已安装的 jadeite.exe，
         // 将路径传入 bridge config，让 bridge 通过 jadeite.exe 启动游戏以绕过反作弊。
@@ -2261,6 +2327,36 @@ fn infer_game_root_from_exe(game_exe: &Path) -> Option<PathBuf> {
     game_exe.parent().map(|p| p.to_path_buf())
 }
 
+#[derive(Debug, Clone)]
+struct EndfieldLaunchChain {
+    launcher_exe: PathBuf,
+    endfield_exe: PathBuf,
+}
+
+fn find_endfield_launcher_chain(game_exe: &Path) -> Option<EndfieldLaunchChain> {
+    let mut search_roots = Vec::new();
+    if let Some(parent) = game_exe.parent() {
+        search_roots.push(parent.to_path_buf());
+    } else {
+        search_roots.push(game_exe.to_path_buf());
+    }
+
+    for root in search_roots {
+        for ancestor in root.ancestors() {
+            let launcher_exe = ancestor.join("Launcher.exe");
+            let endfield_exe = ancestor.join("games/EndField Game/Endfield.exe");
+            if launcher_exe.exists() && endfield_exe.exists() {
+                return Some(EndfieldLaunchChain {
+                    launcher_exe,
+                    endfield_exe,
+                });
+            }
+        }
+    }
+
+    None
+}
+
 fn resolve_preferred_launch_exe(game_preset: &str, game_exe: &Path) -> PathBuf {
     if game_preset == "WutheringWaves" {
         let file_name = game_exe
@@ -2282,7 +2378,65 @@ fn resolve_preferred_launch_exe(game_preset: &str, game_exe: &Path) -> PathBuf {
             }
         }
     }
+
+    if game_preset == "ArknightsEndfield" {
+        if let Some(chain) = find_endfield_launcher_chain(game_exe) {
+            if chain.launcher_exe != game_exe {
+                info!(
+                    "ArknightsEndfield 启动已切换为官方启动器: {} (目标进程: {})",
+                    chain.launcher_exe.display(),
+                    chain.endfield_exe.display()
+                );
+            }
+            return chain.launcher_exe;
+        }
+    }
+
     game_exe.to_path_buf()
+}
+
+fn normalize_endfield_launcher_start_args(start_args: &mut Vec<String>) {
+    let mut normalized = Vec::with_capacity(start_args.len() + 1);
+    let mut saw_dx11 = false;
+
+    for arg in start_args.iter() {
+        if arg.eq_ignore_ascii_case("-force-d3d11") {
+            continue;
+        }
+        if arg.eq_ignore_ascii_case("-dx11") {
+            if !saw_dx11 {
+                normalized.push("-dx11".to_string());
+                saw_dx11 = true;
+            }
+            continue;
+        }
+        normalized.push(arg.clone());
+    }
+
+    if !saw_dx11 {
+        normalized.push("-dx11".to_string());
+    }
+
+    *start_args = normalized;
+}
+
+fn resolve_preferred_migoto_importer(game_preset: &str, configured_importer: &str) -> String {
+    match game_preset {
+        "WutheringWaves" => "WWMI".to_string(),
+        "ZenlessZoneZero" => "ZZMI".to_string(),
+        "HonkaiStarRail" => "SRMI".to_string(),
+        "GenshinImpact" | "Genshin" => "GIMI".to_string(),
+        "HonkaiImpact3rd" | "Honkai3rd" => "HIMI".to_string(),
+        "ArknightsEndfield" => "EFMI".to_string(),
+        _ => {
+            let normalized = configured_importer.trim();
+            if normalized.is_empty() {
+                "WWMI".to_string()
+            } else {
+                normalized.to_ascii_uppercase()
+            }
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -2293,4 +2447,70 @@ fn exit_status_signal(status: &std::process::ExitStatus) -> Option<i32> {
 #[cfg(not(unix))]
 fn exit_status_signal(_status: &std::process::ExitStatus) -> Option<i32> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_preferred_migoto_importer_respects_locked_game_mapping() {
+        assert_eq!(
+            resolve_preferred_migoto_importer("ArknightsEndfield", "WWMI"),
+            "EFMI"
+        );
+        assert_eq!(
+            resolve_preferred_migoto_importer("WutheringWaves", "EFMI"),
+            "WWMI"
+        );
+        assert_eq!(
+            resolve_preferred_migoto_importer("UnknownGame", "  efmi "),
+            "EFMI"
+        );
+    }
+
+    #[test]
+    fn resolve_preferred_launch_exe_prefers_endfield_launcher_chain() {
+        let unique = format!(
+            "ssmt4-endfield-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(unique);
+        let launcher_root = root.join("Program Files/Hypergryph Launcher");
+        let launcher_exe = launcher_root.join("Launcher.exe");
+        let endfield_exe = launcher_root.join("games/EndField Game/Endfield.exe");
+
+        std::fs::create_dir_all(endfield_exe.parent().unwrap()).unwrap();
+        std::fs::write(&launcher_exe, []).unwrap();
+        std::fs::write(&endfield_exe, []).unwrap();
+
+        let resolved = resolve_preferred_launch_exe("ArknightsEndfield", &launcher_exe);
+        assert_eq!(resolved, launcher_exe);
+
+        let resolved_from_game = resolve_preferred_launch_exe("ArknightsEndfield", &endfield_exe);
+        assert_eq!(resolved_from_game, launcher_exe);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn normalize_endfield_launcher_start_args_prefers_launcher_dx11_flag() {
+        let mut start_args = vec![
+            "-windowed".to_string(),
+            "-force-d3d11".to_string(),
+            "-dx11".to_string(),
+        ];
+
+        normalize_endfield_launcher_start_args(&mut start_args);
+
+        assert_eq!(
+            start_args,
+            vec!["-windowed".to_string(), "-dx11".to_string()]
+        );
+    }
+
 }

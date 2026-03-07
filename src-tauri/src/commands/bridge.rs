@@ -177,6 +177,87 @@ fn resolve_migoto_importer_folder(
     migoto_data_path.to_path_buf()
 }
 
+fn normalize_importer_name(importer_name: &str) -> String {
+    importer_name.trim().to_ascii_uppercase()
+}
+
+fn importer_default_start_args(importer_name: &str) -> &'static [&'static str] {
+    match normalize_importer_name(importer_name).as_str() {
+        "WWMI" => &["-dx11"],
+        "EFMI" => &["-force-d3d11"],
+        _ => &[],
+    }
+}
+
+fn ensure_required_start_args(start_args: &mut Vec<String>, importer_name: &str) {
+    for required_arg in importer_default_start_args(importer_name) {
+        if start_args
+            .iter()
+            .any(|arg| arg.eq_ignore_ascii_case(required_arg))
+        {
+            continue;
+        }
+        start_args.push((*required_arg).to_string());
+    }
+}
+
+fn importer_default_process_timeout(importer_name: &str) -> u32 {
+    match normalize_importer_name(importer_name).as_str() {
+        "EFMI" => 60,
+        _ => 30,
+    }
+}
+
+fn importer_default_use_hook(importer_name: &str) -> bool {
+    !matches!(normalize_importer_name(importer_name).as_str(), "EFMI")
+}
+
+fn importer_default_enforce_rendering(importer_name: &str) -> bool {
+    matches!(normalize_importer_name(importer_name).as_str(), "WWMI")
+}
+
+fn importer_default_xxmi_dll_init_delay(importer_name: &str) -> u32 {
+    match normalize_importer_name(importer_name).as_str() {
+        "WWMI" => 500,
+        _ => 0,
+    }
+}
+
+fn importer_default_d3dx_ini(importer_name: &str) -> Value {
+    let (texture_hash, track_texture_updates) =
+        match normalize_importer_name(importer_name).as_str() {
+            "WWMI" => (1, 1),
+            _ => (0, 0),
+        };
+
+    json!({
+        "core": {
+            "Loader": { "loader": "XXMI Launcher.exe" }
+        },
+        "enforce_rendering": {
+            "Rendering": {
+                "texture_hash": texture_hash,
+                "track_texture_updates": track_texture_updates
+            }
+        },
+        "calls_logging": {
+            "Logging": { "calls": { "on": 1, "off": 0 } }
+        },
+        "debug_logging": {
+            "Logging": { "debug": { "on": 1, "off": 0 } }
+        },
+        "mute_warnings": {
+            "Logging": { "show_warnings": { "on": 0, "off": 1 } }
+        },
+        "enable_hunting": {
+            "Hunting": { "hunting": { "on": 2, "off": 0 } }
+        },
+        "dump_shaders": {
+            "Hunting": { "marking_actions": { "on": "clipboard hlsl asm regex", "off": "clipboard" } }
+        }
+    })
+}
+
 /// Generate the bridge-config.json file content from game configuration.
 ///
 /// All paths are converted to Windows format (Z:\...) because the bridge
@@ -193,6 +274,7 @@ pub fn build_bridge_config(
     game_config_json: Option<&Value>,
 ) -> BridgeConfig {
     let app_root_str = app_root.to_string_lossy();
+    let importer_name = normalize_importer_name(importer_name);
 
     // Extract game-specific settings from the config JSON, or use defaults
     // Settings are stored at config.other.migoto by the frontend
@@ -212,14 +294,37 @@ pub fn build_bridge_config(
 
     let importer_folder_linux = resolve_migoto_importer_folder(
         Path::new(&migoto_data_linux),
-        importer_name,
+        &importer_name,
         gs.get("importer_folder").and_then(|v| v.as_str()),
     )
     .to_string_lossy()
     .into_owned();
 
-    let packages_folder_linux = format!("{}/Packages/XXMI", migoto_data_linux);
+    let packages_folder_linux = app_root
+        .join("3Dmigoto-data")
+        .join("Packages")
+        .join("XXMI")
+        .to_string_lossy()
+        .into_owned();
     let cache_folder_linux = format!("{}/Cache", app_root_str);
+
+    let mut start_args = gs
+        .get("start_args")
+        .and_then(|v| {
+            // 支持字符串（空格分隔）和 JSON 数组两种格式
+            if let Some(s) = v.as_str() {
+                Some(
+                    s.split_whitespace()
+                        .filter(|a| !a.is_empty())
+                        .map(|a| a.to_string())
+                        .collect::<Vec<String>>(),
+                )
+            } else {
+                serde_json::from_value(v.clone()).ok()
+            }
+        })
+        .unwrap_or_default();
+    ensure_required_start_args(&mut start_args, &importer_name);
 
     let game_specific_section = game_config_json
         .and_then(|c| c.get(importer_name.to_ascii_lowercase().as_str()))
@@ -275,22 +380,7 @@ pub fn build_bridge_config(
         },
         game: BridgeGameConfig {
             start_exe: game_exe_name.to_string(),
-            start_args: gs
-                .get("start_args")
-                .and_then(|v| {
-                    // 支持字符串（空格分隔）和 JSON 数组两种格式
-                    if let Some(s) = v.as_str() {
-                        Some(
-                            s.split_whitespace()
-                                .filter(|a| !a.is_empty())
-                                .map(|a| a.to_string())
-                                .collect::<Vec<String>>(),
-                        )
-                    } else {
-                        serde_json::from_value(v.clone()).ok()
-                    }
-                })
-                .unwrap_or_default(),
+            start_args,
             work_dir: linux_to_wine_path(game_folder_linux),
             process_name: game_exe_name.to_string(),
             process_start_method: gs
@@ -306,15 +396,22 @@ pub fn build_bridge_config(
             process_timeout: gs
                 .get("process_timeout")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(30) as u32,
+                .unwrap_or(importer_default_process_timeout(&importer_name) as u64)
+                as u32,
         },
         migoto: BridgeMigotoConfig {
-            use_hook: gs.get("use_hook").and_then(|v| v.as_bool()).unwrap_or(true),
+            use_hook: if importer_name.eq_ignore_ascii_case("EFMI") {
+                false
+            } else {
+                gs.get("use_hook")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(importer_default_use_hook(&importer_name))
+            },
             use_dll_drop: gs.get("use_dll_drop").and_then(|v| v.as_bool()).unwrap_or(false),
             enforce_rendering: gs
                 .get("enforce_rendering")
                 .and_then(|v| v.as_bool())
-                .unwrap_or(true),
+                .unwrap_or(importer_default_enforce_rendering(&importer_name)),
             enable_hunting: gs
                 .get("enable_hunting")
                 .and_then(|v| v.as_bool())
@@ -342,34 +439,14 @@ pub fn build_bridge_config(
             xxmi_dll_init_delay: gs
                 .get("xxmi_dll_init_delay")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(500) as u32,
+                .unwrap_or(importer_default_xxmi_dll_init_delay(&importer_name) as u64)
+                as u32,
         },
         game_specific: game_specific_map,
-        d3dx_ini: gs.get("d3dx_ini").cloned().unwrap_or_else(|| {
-            json!({
-                "core": {
-                    "Loader": { "loader": "XXMI Launcher.exe" }
-                },
-                "enforce_rendering": {
-                    "Rendering": { "texture_hash": 1, "track_texture_updates": 1 }
-                },
-                "calls_logging": {
-                    "Logging": { "calls": { "on": 1, "off": 0 } }
-                },
-                "debug_logging": {
-                    "Logging": { "debug": { "on": 1, "off": 0 } }
-                },
-                "mute_warnings": {
-                    "Logging": { "show_warnings": { "on": 0, "off": 1 } }
-                },
-                "enable_hunting": {
-                    "Hunting": { "hunting": { "on": 2, "off": 0 } }
-                },
-                "dump_shaders": {
-                    "Hunting": { "marking_actions": { "on": "clipboard hlsl asm regex", "off": "clipboard" } }
-                }
-            })
-        }),
+        d3dx_ini: gs
+            .get("d3dx_ini")
+            .cloned()
+            .unwrap_or_else(|| importer_default_d3dx_ini(&importer_name)),
         signatures: BridgeSignatures {
             xxmi_public_key: gs
                 .get("xxmi_public_key")
@@ -699,5 +776,94 @@ pub async fn run_bridge(
             }
         }
         Err(e) => Err(format!("Failed to wait for bridge process: {}", e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn build_test_bridge_config(importer_name: &str, migoto: Option<Value>) -> BridgeConfig {
+        let game_config_json = migoto.map(|migoto| {
+            json!({
+                "other": {
+                    "migoto": migoto
+                }
+            })
+        });
+
+        build_bridge_config(
+            importer_name,
+            Path::new("/tmp/ssmt4-test"),
+            "/games/test",
+            "game.exe",
+            game_config_json.as_ref(),
+        )
+    }
+
+    #[test]
+    fn efmi_defaults_match_upstream() {
+        let config = build_test_bridge_config("EFMI", None);
+
+        assert_eq!(config.game.start_args, vec!["-force-d3d11"]);
+        assert_eq!(config.game.process_timeout, 60);
+        assert!(!config.migoto.use_hook);
+        assert_eq!(config.migoto.xxmi_dll_init_delay, 0);
+        assert_eq!(config.migoto.enforce_rendering, false);
+        assert_eq!(
+            config
+                .d3dx_ini
+                .pointer("/enforce_rendering/Rendering/texture_hash")
+                .and_then(|value| value.as_i64()),
+            Some(0)
+        );
+        assert_eq!(
+            config
+                .d3dx_ini
+                .pointer("/enforce_rendering/Rendering/track_texture_updates")
+                .and_then(|value| value.as_i64()),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn wwmi_defaults_match_upstream() {
+        let config = build_test_bridge_config("WWMI", None);
+
+        assert_eq!(config.game.start_args, vec!["-dx11"]);
+        assert_eq!(config.game.process_timeout, 30);
+        assert!(config.migoto.use_hook);
+        assert_eq!(config.migoto.xxmi_dll_init_delay, 500);
+        assert_eq!(config.migoto.enforce_rendering, true);
+        assert_eq!(
+            config
+                .d3dx_ini
+                .pointer("/enforce_rendering/Rendering/texture_hash")
+                .and_then(|value| value.as_i64()),
+            Some(1)
+        );
+        assert_eq!(
+            config
+                .d3dx_ini
+                .pointer("/enforce_rendering/Rendering/track_texture_updates")
+                .and_then(|value| value.as_i64()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn required_start_args_are_appended_without_duplicates() {
+        let config = build_test_bridge_config(
+            "EFMI",
+            Some(json!({
+                "start_args": "-windowed -force-d3d11"
+            })),
+        );
+
+        assert_eq!(
+            config.game.start_args,
+            vec!["-windowed".to_string(), "-force-d3d11".to_string()]
+        );
     }
 }

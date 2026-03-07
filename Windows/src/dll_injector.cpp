@@ -223,19 +223,6 @@ void DllInjector::open_process(const std::vector<std::wstring>* inject_dll_paths
 
     auto start_args = config_.game.start_args;
 
-    // Force DX11: 3DMigoto is a D3D11-only proxy. UE4 games need -dx11 to avoid
-    // D3D12 (which crashes with VKD3D-Proton). Unity games already default to
-    // D3D11 and silently ignore unrecognized args, so adding -dx11 is harmless.
-    {
-        bool has_dx11 = false;
-        for (auto& arg : start_args) {
-            if (arg == L"-dx11") { has_dx11 = true; break; }
-        }
-        if (!has_dx11) {
-            start_args.push_back(L"-dx11");
-        }
-    }
-
     // Use custom launch command if enabled
     if (config_.custom_launch.enabled && !config_.custom_launch.cmd.empty()) {
 #ifdef _WIN32

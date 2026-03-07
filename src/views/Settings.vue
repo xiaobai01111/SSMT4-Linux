@@ -1024,6 +1024,14 @@ interface MigotoGameConfig {
   wwmi_disable_wounded_fx: boolean;
 }
 
+interface MigotoImporterBehavior {
+  defaultUseHook: boolean;
+  defaultProcessTimeout: number;
+  defaultXxmiDllInitDelay: number;
+  requiredStartArgs: string[];
+  injectionLocked?: boolean;
+}
+
 const defaultMigotoConfig: MigotoGameConfig = {
   enabled: false,
   importer: 'WWMI',
@@ -1071,6 +1079,53 @@ type MigotoPathOverrideField =
   | 'shader_fixes_folder'
   | 'd3dx_ini_path'
 
+const MIGOTO_IMPORTER_BEHAVIORS: Record<string, MigotoImporterBehavior> = {
+  WWMI: {
+    defaultUseHook: true,
+    defaultProcessTimeout: 30,
+    defaultXxmiDllInitDelay: 500,
+    requiredStartArgs: ['-dx11'],
+  },
+  ZZMI: {
+    defaultUseHook: true,
+    defaultProcessTimeout: 30,
+    defaultXxmiDllInitDelay: 0,
+    requiredStartArgs: [],
+  },
+  SRMI: {
+    defaultUseHook: true,
+    defaultProcessTimeout: 30,
+    defaultXxmiDllInitDelay: 0,
+    requiredStartArgs: [],
+  },
+  GIMI: {
+    defaultUseHook: true,
+    defaultProcessTimeout: 30,
+    defaultXxmiDllInitDelay: 0,
+    requiredStartArgs: [],
+  },
+  HIMI: {
+    defaultUseHook: true,
+    defaultProcessTimeout: 30,
+    defaultXxmiDllInitDelay: 0,
+    requiredStartArgs: [],
+  },
+  EFMI: {
+    defaultUseHook: false,
+    defaultProcessTimeout: 60,
+    defaultXxmiDllInitDelay: 0,
+    requiredStartArgs: ['-force-d3d11'],
+    injectionLocked: true,
+  },
+};
+
+const DEFAULT_MIGOTO_IMPORTER_BEHAVIOR: MigotoImporterBehavior = {
+  defaultUseHook: true,
+  defaultProcessTimeout: 30,
+  defaultXxmiDllInitDelay: 0,
+  requiredStartArgs: [],
+};
+
 const migotoConfig = reactive<MigotoGameConfig>({ ...defaultMigotoConfig });
 
 const migotoImporterOptions = computed(() => [
@@ -1100,6 +1155,38 @@ const trimMigotoPathValue = (value: string | null | undefined) => String(value ?
 
 const getRequiredMigotoImporter = (gameName = migotoSelectedGame.value) => {
   return trimMigotoPathValue(gameToImporterMap[gameName] || '');
+};
+
+const hasOwnMigotoConfigKey = <K extends keyof MigotoGameConfig>(
+  config: Partial<MigotoGameConfig>,
+  key: K,
+) => Object.prototype.hasOwnProperty.call(config, key);
+
+const normalizeMigotoImporterValue = (value: string | null | undefined) => {
+  return trimMigotoPathValue(value).toUpperCase();
+};
+
+const splitMigotoStartArgs = (value: string | null | undefined) => {
+  return trimMigotoPathValue(value).split(/\s+/).filter(Boolean);
+};
+
+const getMigotoImporterBehavior = (
+  gameName = migotoSelectedGame.value,
+  importerValue = migotoConfig.importer,
+): MigotoImporterBehavior => {
+  const importer = normalizeMigotoImporterValue(resolveMigotoImporter(gameName, importerValue));
+  return MIGOTO_IMPORTER_BEHAVIORS[importer] || DEFAULT_MIGOTO_IMPORTER_BEHAVIOR;
+};
+
+const normalizeMigotoStartArgs = (value: string | null | undefined, requiredArgs: string[]) => {
+  const normalizedArgs = splitMigotoStartArgs(value);
+  for (const requiredArg of requiredArgs) {
+    if (normalizedArgs.some(arg => arg.toLowerCase() === requiredArg.toLowerCase())) {
+      continue;
+    }
+    normalizedArgs.push(requiredArg);
+  }
+  return normalizedArgs.join(' ');
 };
 
 const joinMigotoPath = (base: string, child: string) => {
@@ -1135,6 +1222,8 @@ const migotoAvailableImporterOptions = computed(() => {
 });
 
 const isMigotoImporterLocked = computed(() => Boolean(getRequiredMigotoImporter()));
+const migotoImporterBehavior = computed(() => getMigotoImporterBehavior());
+const isMigotoInjectionLocked = computed(() => Boolean(migotoImporterBehavior.value.injectionLocked));
 
 const migotoImporterHint = computed(() => {
   const requiredImporter = getRequiredMigotoImporter();
@@ -1142,6 +1231,29 @@ const migotoImporterHint = computed(() => {
     return t('settings.migoto.importerLockedHint', { importer: requiredImporter });
   }
   return t('settings.migoto.importerSelectHint');
+});
+
+const migotoInjectionHint = computed(() => {
+  if (!isMigotoInjectionLocked.value) {
+    return t('settings.migoto.injectionHint');
+  }
+
+  const modeKey = migotoImporterBehavior.value.defaultUseHook
+    ? 'settings.migoto.injectionHook'
+    : 'settings.migoto.injectionDirect';
+  return t('settings.migoto.injectionLockedHint', {
+    importer: resolveMigotoImporter(),
+    mode: t(modeKey),
+  });
+});
+
+const migotoStartArgsHint = computed(() => {
+  const requiredArgs = migotoImporterBehavior.value.requiredStartArgs.join(' ');
+  if (!requiredArgs) {
+    return t('settings.migoto.startArgsHint');
+  }
+
+  return t('settings.migoto.startArgsRequiredHint', { args: requiredArgs });
 });
 
 const resolveMigotoImporter = (
@@ -1164,12 +1276,26 @@ const normalizeMigotoConfig = (
   const requiredImporter = getRequiredMigotoImporter(gameName);
 
   normalized.importer = resolveMigotoImporter(gameName, normalized.importer);
+  const importerBehavior = getMigotoImporterBehavior(gameName, normalized.importer);
   normalized.migoto_path = trimMigotoPathValue(normalized.migoto_path);
   normalized.importer_folder = trimMigotoPathValue(normalized.importer_folder);
   normalized.mod_folder = trimMigotoPathValue(normalized.mod_folder);
   normalized.shader_fixes_folder = trimMigotoPathValue(normalized.shader_fixes_folder);
   normalized.d3dx_ini_path = trimMigotoPathValue(normalized.d3dx_ini_path);
   normalized.bridge_exe_path = trimMigotoPathValue(normalized.bridge_exe_path);
+  normalized.start_args = normalizeMigotoStartArgs(normalized.start_args, importerBehavior.requiredStartArgs);
+
+  if (importerBehavior.injectionLocked || !hasOwnMigotoConfigKey(config, 'use_hook')) {
+    normalized.use_hook = importerBehavior.defaultUseHook;
+  }
+
+  if (!hasOwnMigotoConfigKey(config, 'process_timeout')) {
+    normalized.process_timeout = importerBehavior.defaultProcessTimeout;
+  }
+
+  if (!hasOwnMigotoConfigKey(config, 'xxmi_dll_init_delay')) {
+    normalized.xxmi_dll_init_delay = importerBehavior.defaultXxmiDllInitDelay;
+  }
 
   // Heal legacy auto-derived paths that were saved under a mismatched importer.
   if (
@@ -1398,14 +1524,14 @@ const loadMigotoGameConfig = async (): Promise<boolean> => {
       Object.assign(migotoConfig, collapseMigotoAutoOverrides(normalized, autoImporterFolder));
       return true;
     } else {
-      const normalized = normalizeMigotoConfig(defaultMigotoConfig, gameName);
+      const normalized = normalizeMigotoConfig({}, gameName);
       Object.assign(migotoConfig, normalized);
       await refreshMigotoAutoPathDetection(normalized);
       return false;
     }
   } catch (e) {
     console.warn('[migoto] 加载游戏配置失败:', e);
-    const normalized = normalizeMigotoConfig(defaultMigotoConfig, gameName);
+    const normalized = normalizeMigotoConfig({}, gameName);
     Object.assign(migotoConfig, normalized);
     await refreshMigotoAutoPathDetection(normalized);
     return false;
@@ -2465,11 +2591,11 @@ watch(
                 </el-form-item>
 
                 <el-form-item :label="$t('settings.migoto.injectionLabel')">
-                  <el-radio-group v-model="migotoConfig.use_hook">
+                  <el-radio-group v-model="migotoConfig.use_hook" :disabled="isMigotoInjectionLocked">
                     <el-radio :value="true">{{ $t('settings.migoto.injectionHook') }}</el-radio>
                     <el-radio :value="false">{{ $t('settings.migoto.injectionDirect') }}</el-radio>
                   </el-radio-group>
-                  <div class="form-item-hint">{{ $t('settings.migoto.injectionHint') }}</div>
+                  <div class="form-item-hint">{{ migotoInjectionHint }}</div>
                 </el-form-item>
 
               </el-form>
@@ -2572,7 +2698,7 @@ watch(
 
                 <el-form-item :label="$t('settings.migoto.startArgs')">
                   <el-input v-model="migotoConfig.start_args" :placeholder="$t('settings.migoto.startArgsPlaceholder')" />
-                  <div class="form-item-hint">{{ $t('settings.migoto.startArgsHint') }}</div>
+                  <div class="form-item-hint">{{ migotoStartArgsHint }}</div>
                 </el-form-item>
 
                 <el-form-item :label="$t('settings.migoto.processStartMethod')">
