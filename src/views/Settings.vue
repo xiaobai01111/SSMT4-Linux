@@ -27,6 +27,8 @@ import {
   loadGameConfig,
   saveGameConfig,
   showMessage,
+  pathExists,
+  joinPath,
   type DxvkLocalVersion,
   type DxvkRemoteVersion,
   type Vkd3dLocalVersion,
@@ -45,8 +47,6 @@ import {
   downloadXxmiPackage,
   deployXxmiPackage,
   deleteLocalXxmiPackage,
-  pathExists,
-  joinPath,
   type XxmiPackageSource,
   type XxmiRemoteVersion,
   type XxmiLocalPackage,
@@ -976,6 +976,12 @@ const migotoSelectedGame = ref('');
 const migotoLoaded = ref(false);
 const isMigotoSaving = ref(false);
 
+const getLocalizedGameName = (game: Pick<GameInfo, 'name'> | string) => {
+  const gameName = typeof game === 'string' ? game : game.name;
+  const fallback = gameName;
+  return te(`games.${gameName}`) ? t(`games.${gameName}`) : fallback;
+};
+
 interface MigotoGameConfig {
   enabled: boolean;
   importer: string;
@@ -1059,6 +1065,12 @@ const defaultMigotoConfig: MigotoGameConfig = {
   wwmi_disable_wounded_fx: false,
 };
 
+type MigotoPathOverrideField =
+  | 'importer_folder'
+  | 'mod_folder'
+  | 'shader_fixes_folder'
+  | 'd3dx_ini_path'
+
 const migotoConfig = reactive<MigotoGameConfig>({ ...defaultMigotoConfig });
 
 const migotoImporterOptions = computed(() => [
@@ -1067,6 +1079,7 @@ const migotoImporterOptions = computed(() => [
   { value: 'SRMI', label: t('settings.migoto.importerSRMI') },
   { value: 'GIMI', label: t('settings.migoto.importerGIMI') },
   { value: 'HIMI', label: t('settings.migoto.importerHIMI') },
+  { value: 'EFMI', label: t('settings.migoto.importerEFMI') },
 ]);
 
 const isMigotoWwmi = computed(() => migotoConfig.importer === 'WWMI');
@@ -1080,7 +1093,284 @@ const gameToImporterMap: Record<string, string> = {
   Genshin: 'GIMI',
   HonkaiImpact3rd: 'HIMI',
   Honkai3rd: 'HIMI',
+  ArknightsEndfield: 'EFMI',
 };
+
+const trimMigotoPathValue = (value: string | null | undefined) => String(value ?? '').trim();
+
+const getRequiredMigotoImporter = (gameName = migotoSelectedGame.value) => {
+  return trimMigotoPathValue(gameToImporterMap[gameName] || '');
+};
+
+const joinMigotoPath = (base: string, child: string) => {
+  const normalizedBase = trimMigotoPathValue(base).replace(/[\\/]+$/g, '');
+  const normalizedChild = trimMigotoPathValue(child).replace(/^[/\\]+/g, '');
+  if (!normalizedBase) return normalizedChild;
+  if (!normalizedChild) return normalizedBase;
+  return `${normalizedBase}/${normalizedChild}`;
+};
+
+const MIGOTO_IMPORTER_MARKERS = [
+  'Core',
+  'Mods',
+  'ShaderFixes',
+  'd3dx.ini',
+  'd3dx_user.ini',
+  '3dmloader.dll',
+  'd3d11.dll',
+  'd3dcompiler_47.dll',
+] as const;
+
+const detectedMigotoImporterFolder = ref({
+  basePath: '',
+  importer: '',
+  folder: '',
+});
+let migotoPathDetectSeq = 0;
+
+const migotoAvailableImporterOptions = computed(() => {
+  const requiredImporter = getRequiredMigotoImporter();
+  if (!requiredImporter) return migotoImporterOptions.value;
+  return migotoImporterOptions.value.filter(option => option.value === requiredImporter);
+});
+
+const isMigotoImporterLocked = computed(() => Boolean(getRequiredMigotoImporter()));
+
+const migotoImporterHint = computed(() => {
+  const requiredImporter = getRequiredMigotoImporter();
+  if (requiredImporter) {
+    return t('settings.migoto.importerLockedHint', { importer: requiredImporter });
+  }
+  return t('settings.migoto.importerSelectHint');
+});
+
+const resolveMigotoImporter = (
+  gameName = migotoSelectedGame.value,
+  importerValue = migotoConfig.importer,
+) => {
+  const requiredImporter = getRequiredMigotoImporter(gameName);
+  if (requiredImporter) return requiredImporter;
+  const explicit = trimMigotoPathValue(importerValue);
+  if (explicit) return explicit;
+  return defaultMigotoConfig.importer;
+};
+
+const normalizeMigotoConfig = (
+  config: Partial<MigotoGameConfig>,
+  gameName = migotoSelectedGame.value,
+): MigotoGameConfig => {
+  const normalized: MigotoGameConfig = { ...defaultMigotoConfig, ...config };
+  const requestedImporter = trimMigotoPathValue(config.importer);
+  const requiredImporter = getRequiredMigotoImporter(gameName);
+
+  normalized.importer = resolveMigotoImporter(gameName, normalized.importer);
+  normalized.migoto_path = trimMigotoPathValue(normalized.migoto_path);
+  normalized.importer_folder = trimMigotoPathValue(normalized.importer_folder);
+  normalized.mod_folder = trimMigotoPathValue(normalized.mod_folder);
+  normalized.shader_fixes_folder = trimMigotoPathValue(normalized.shader_fixes_folder);
+  normalized.d3dx_ini_path = trimMigotoPathValue(normalized.d3dx_ini_path);
+  normalized.bridge_exe_path = trimMigotoPathValue(normalized.bridge_exe_path);
+
+  // Heal legacy auto-derived paths that were saved under a mismatched importer.
+  if (
+    requiredImporter
+    && requestedImporter
+    && requestedImporter !== requiredImporter
+    && normalized.migoto_path
+  ) {
+    const legacyImporterFolder = joinMigotoPath(normalized.migoto_path, requestedImporter);
+    if (normalized.importer_folder === legacyImporterFolder) {
+      normalized.importer_folder = '';
+    }
+
+    const legacyModFolder = joinMigotoPath(legacyImporterFolder, 'Mods');
+    if (normalized.mod_folder === legacyModFolder) {
+      normalized.mod_folder = '';
+    }
+
+    const legacyShaderFixesFolder = joinMigotoPath(legacyImporterFolder, 'ShaderFixes');
+    if (normalized.shader_fixes_folder === legacyShaderFixesFolder) {
+      normalized.shader_fixes_folder = '';
+    }
+
+    const legacyD3dxIniPath = joinMigotoPath(legacyImporterFolder, 'd3dx.ini');
+    if (normalized.d3dx_ini_path === legacyD3dxIniPath) {
+      normalized.d3dx_ini_path = '';
+    }
+  }
+
+  return normalized;
+};
+
+const pathLooksLikeMigotoImporterFolder = async (basePath: string) => {
+  const normalizedBase = trimMigotoPathValue(basePath);
+  if (!normalizedBase) return false;
+
+  for (const marker of MIGOTO_IMPORTER_MARKERS) {
+    try {
+      const candidate = await joinPath(normalizedBase, marker);
+      if (await pathExists(candidate)) {
+        return true;
+      }
+    } catch {
+      // ignore invalid candidate and continue probing
+    }
+  }
+
+  return false;
+};
+
+const resolveAutoMigotoImporterFolder = async (basePath: string, importer: string) => {
+  const normalizedBase = trimMigotoPathValue(basePath);
+  const normalizedImporter = trimMigotoPathValue(importer);
+  if (!normalizedBase) return '';
+
+  if (await pathLooksLikeMigotoImporterFolder(normalizedBase)) {
+    return normalizedBase;
+  }
+
+  if (normalizedImporter) {
+    try {
+      const nestedImporterFolder = await joinPath(normalizedBase, normalizedImporter);
+      if (await pathExists(nestedImporterFolder)) {
+        return nestedImporterFolder;
+      }
+    } catch {
+      // ignore invalid candidate and fall back to the configured data path
+    }
+  }
+
+  // Fresh deploys are written directly into the configured data path.
+  return normalizedBase;
+};
+
+const getDetectedMigotoImporterFolder = (config: Partial<MigotoGameConfig>) => {
+  const normalized = normalizeMigotoConfig(config);
+  const detected = detectedMigotoImporterFolder.value;
+  if (detected.basePath === normalized.migoto_path && detected.importer === normalized.importer) {
+    return trimMigotoPathValue(detected.folder);
+  }
+  return '';
+};
+
+const buildEffectiveMigotoPaths = (
+  config: Partial<MigotoGameConfig>,
+  autoImporterFolder = getDetectedMigotoImporterFolder(config),
+) => {
+  const normalized = normalizeMigotoConfig(config);
+  const importer_folder = normalized.importer_folder
+    || trimMigotoPathValue(autoImporterFolder)
+    || normalized.migoto_path;
+  const mod_folder = normalized.mod_folder || (importer_folder ? joinMigotoPath(importer_folder, 'Mods') : '');
+  const shader_fixes_folder = normalized.shader_fixes_folder
+    || (importer_folder ? joinMigotoPath(importer_folder, 'ShaderFixes') : '');
+  const d3dx_ini_path = normalized.d3dx_ini_path
+    || (importer_folder ? joinMigotoPath(importer_folder, 'd3dx.ini') : '');
+
+  return {
+    importer_folder,
+    mod_folder,
+    shader_fixes_folder,
+    d3dx_ini_path,
+  };
+};
+
+const collapseMigotoAutoOverrides = (
+  config: Partial<MigotoGameConfig>,
+  autoImporterFolder = getDetectedMigotoImporterFolder(config),
+) => {
+  const normalized = normalizeMigotoConfig(config);
+  const resolvedAutoImporterFolder = trimMigotoPathValue(autoImporterFolder) || normalized.migoto_path;
+
+  if (
+    normalized.importer_folder
+    && resolvedAutoImporterFolder
+    && normalized.importer_folder === resolvedAutoImporterFolder
+  ) {
+    normalized.importer_folder = '';
+  }
+
+  const effectiveImporterFolder = normalized.importer_folder || resolvedAutoImporterFolder;
+  const autoModFolder = effectiveImporterFolder ? joinMigotoPath(effectiveImporterFolder, 'Mods') : '';
+  if (normalized.mod_folder && autoModFolder && normalized.mod_folder === autoModFolder) {
+    normalized.mod_folder = '';
+  }
+
+  const autoShaderFixesFolder = effectiveImporterFolder ? joinMigotoPath(effectiveImporterFolder, 'ShaderFixes') : '';
+  if (
+    normalized.shader_fixes_folder
+    && autoShaderFixesFolder
+    && normalized.shader_fixes_folder === autoShaderFixesFolder
+  ) {
+    normalized.shader_fixes_folder = '';
+  }
+
+  const autoD3dxIniPath = effectiveImporterFolder ? joinMigotoPath(effectiveImporterFolder, 'd3dx.ini') : '';
+  if (normalized.d3dx_ini_path && autoD3dxIniPath && normalized.d3dx_ini_path === autoD3dxIniPath) {
+    normalized.d3dx_ini_path = '';
+  }
+
+  return normalized;
+};
+
+const refreshMigotoAutoPathDetection = async (config: Partial<MigotoGameConfig> = migotoConfig) => {
+  const normalized = normalizeMigotoConfig(config);
+  const seq = ++migotoPathDetectSeq;
+
+  if (!normalized.migoto_path) {
+    if (seq === migotoPathDetectSeq) {
+      detectedMigotoImporterFolder.value = {
+        basePath: '',
+        importer: normalized.importer,
+        folder: '',
+      };
+    }
+    return '';
+  }
+
+  const folder = await resolveAutoMigotoImporterFolder(normalized.migoto_path, normalized.importer);
+  if (seq === migotoPathDetectSeq) {
+    detectedMigotoImporterFolder.value = {
+      basePath: normalized.migoto_path,
+      importer: normalized.importer,
+      folder,
+    };
+  }
+  return folder;
+};
+
+const effectiveMigotoPaths = computed(() => {
+  return buildEffectiveMigotoPaths(migotoConfig);
+});
+
+const isMigotoPathOverridden = (field: MigotoPathOverrideField) => {
+  return trimMigotoPathValue(migotoConfig[field]).length > 0;
+};
+
+const getMigotoPathDisplayValue = (field: MigotoPathOverrideField) => {
+  return isMigotoPathOverridden(field)
+    ? trimMigotoPathValue(migotoConfig[field])
+    : effectiveMigotoPaths.value[field];
+};
+
+const restoreMigotoPathAuto = (field: MigotoPathOverrideField) => {
+  migotoConfig[field] = '';
+};
+
+const getMigotoAutoPathDescription = (field: MigotoPathOverrideField) => {
+  const path = effectiveMigotoPaths.value[field];
+  return path
+    ? t('settings.migoto.autoDerivedHint', { path })
+    : t('settings.migoto.autoDerivedPending');
+};
+
+watch(
+  [() => migotoConfig.migoto_path, () => migotoConfig.importer],
+  () => {
+    void refreshMigotoAutoPathDetection();
+  },
+  { immediate: true },
+);
 
 const refreshMigotoGamesList = async () => {
   try {
@@ -1102,15 +1392,22 @@ const loadMigotoGameConfig = async (): Promise<boolean> => {
     const data = await loadGameConfig(gameName);
     const saved = data?.other?.migoto;
     if (saved && typeof saved === 'object') {
-      Object.assign(migotoConfig, { ...defaultMigotoConfig, ...saved });
+      const normalized = normalizeMigotoConfig(saved, gameName);
+      Object.assign(migotoConfig, normalized);
+      const autoImporterFolder = await refreshMigotoAutoPathDetection(normalized);
+      Object.assign(migotoConfig, collapseMigotoAutoOverrides(normalized, autoImporterFolder));
       return true;
     } else {
-      Object.assign(migotoConfig, { ...defaultMigotoConfig });
+      const normalized = normalizeMigotoConfig(defaultMigotoConfig, gameName);
+      Object.assign(migotoConfig, normalized);
+      await refreshMigotoAutoPathDetection(normalized);
       return false;
     }
   } catch (e) {
     console.warn('[migoto] 加载游戏配置失败:', e);
-    Object.assign(migotoConfig, { ...defaultMigotoConfig });
+    const normalized = normalizeMigotoConfig(defaultMigotoConfig, gameName);
+    Object.assign(migotoConfig, normalized);
+    await refreshMigotoAutoPathDetection(normalized);
     return false;
   }
 };
@@ -1122,7 +1419,11 @@ const saveMigotoGameConfig = async () => {
     isMigotoSaving.value = true;
     const data = await loadGameConfig(gameName);
     data.other = data.other || {};
-    data.other.migoto = { ...migotoConfig };
+    const normalized = normalizeMigotoConfig({ ...migotoConfig }, gameName);
+    const autoImporterFolder = await refreshMigotoAutoPathDetection(normalized);
+    const collapsed = collapseMigotoAutoOverrides(normalized, autoImporterFolder);
+    Object.assign(migotoConfig, collapsed);
+    data.other.migoto = { ...collapsed };
     await saveGameConfig(gameName, data);
     await toast('success', t('gamesettingsmodal.message.success.title'), t('settings.migoto.saveSuccess'));
   } catch (e) {
@@ -1147,51 +1448,11 @@ const selectMigotoPath = async (field: keyof MigotoGameConfig) => {
   });
   if (selected && typeof selected === 'string') {
     (migotoConfig as any)[field] = selected;
-
-    // Feature #2: 选择数据路径后自动识别子目录
-    if (field === 'migoto_path') {
-      autoDetectMigotoPaths(selected);
-    }
   }
 };
 
-// Feature #2: 自动识别 3DMigoto 子路径
-const autoDetectMigotoPaths = async (basePath: string) => {
-  try {
-    const candidates = [
-      { field: 'mod_folder', subPaths: ['Mods'] },
-      { field: 'shader_fixes_folder', subPaths: ['ShaderFixes'] },
-      { field: 'd3dx_ini_path', subPaths: ['d3dx.ini'] },
-      { field: 'importer_folder', subPaths: ['WWMI', 'ZZMI', 'SRMI', 'GIMI', 'HIMI'] },
-    ];
-    for (const { field, subPaths } of candidates) {
-      // 只自动填充空字段
-      if ((migotoConfig as any)[field]) continue;
-      for (const sub of subPaths) {
-        const candidate = await joinPath(basePath, sub);
-        try {
-          const exists = await pathExists(candidate);
-          if (exists) {
-            (migotoConfig as any)[field] = candidate;
-            console.log(`[migoto] 自动识别 ${field}: ${candidate}`);
-            break;
-          }
-        } catch { /* ignore */ }
-      }
-    }
-  } catch (e) {
-    console.warn('[migoto] 路径自动识别失败:', e);
-  }
-};
-
-watch(() => migotoSelectedGame.value, async (newGame) => {
-  const hasSavedConfig = await loadMigotoGameConfig();
-
-  // Feature #3: 切换游戏时自动匹配导入器（仅当该游戏无已保存配置时）
-  if (!hasSavedConfig && newGame && gameToImporterMap[newGame]) {
-    migotoConfig.importer = gameToImporterMap[newGame];
-    console.log(`[migoto] 自动匹配导入器: ${newGame} → ${gameToImporterMap[newGame]}`);
-  }
+watch(() => migotoSelectedGame.value, async () => {
+  await loadMigotoGameConfig();
 });
 
 // ============================================================
@@ -1260,7 +1521,7 @@ const doDownloadXxmi = async (ver: XxmiRemoteVersion) => {
 };
 
 const doDeployXxmi = async (pkg: XxmiLocalPackage) => {
-  const targetDir = migotoConfig.importer_folder || migotoConfig.migoto_path;
+  const targetDir = effectiveMigotoPaths.value.importer_folder;
   if (!targetDir) {
     xxmiMessage.value = t('settings.migoto.xxmiDeployNoTarget');
     xxmiMessageType.value = 'error';
@@ -1307,6 +1568,7 @@ const gameToXxmiSourceMap: Record<string, string> = {
   Genshin: 'gimi',
   HonkaiImpact3rd: 'himi',
   Honkai3rd: 'himi',
+  ArknightsEndfield: 'efmi',
 };
 
 // Feature #4: 仅显示核心库 + 当前游戏对应的包源
@@ -2074,7 +2336,7 @@ watch(
               <el-option
                 v-for="g in migotoGamesList"
                 :key="g.name"
-                :label="g.name"
+                :label="getLocalizedGameName(g)"
                 :value="g.name"
               />
             </el-select>
@@ -2100,34 +2362,86 @@ watch(
 
                 <el-form-item :label="$t('settings.migoto.importerFolder')">
                   <div style="display: flex; gap: 8px; width: 100%;">
-                    <el-input v-model="migotoConfig.importer_folder" :placeholder="$t('settings.migoto.importerFolderPlaceholder')" />
+                    <el-input
+                      :model-value="getMigotoPathDisplayValue('importer_folder')"
+                      :readonly="!isMigotoPathOverridden('importer_folder')"
+                      :placeholder="$t('settings.migoto.importerFolderPlaceholder')"
+                    />
                     <el-button size="small" @click="selectMigotoPath('importer_folder')">{{ $t('settings.migoto.browse') }}</el-button>
+                    <el-button
+                      v-if="isMigotoPathOverridden('importer_folder')"
+                      size="small"
+                      text
+                      @click="restoreMigotoPathAuto('importer_folder')"
+                    >
+                      {{ $t('settings.migoto.restoreAuto') }}
+                    </el-button>
                   </div>
                   <div class="form-item-hint">{{ $t('settings.migoto.importerFolderHint') }}</div>
+                  <div v-if="!isMigotoPathOverridden('importer_folder')" class="form-item-hint">{{ getMigotoAutoPathDescription('importer_folder') }}</div>
                 </el-form-item>
 
                 <el-form-item :label="$t('settings.migoto.modFolder')">
                   <div style="display: flex; gap: 8px; width: 100%;">
-                    <el-input v-model="migotoConfig.mod_folder" :placeholder="$t('settings.migoto.modFolderPlaceholder')" />
+                    <el-input
+                      :model-value="getMigotoPathDisplayValue('mod_folder')"
+                      :readonly="!isMigotoPathOverridden('mod_folder')"
+                      :placeholder="$t('settings.migoto.modFolderPlaceholder')"
+                    />
                     <el-button size="small" @click="selectMigotoPath('mod_folder')">{{ $t('settings.migoto.browse') }}</el-button>
+                    <el-button
+                      v-if="isMigotoPathOverridden('mod_folder')"
+                      size="small"
+                      text
+                      @click="restoreMigotoPathAuto('mod_folder')"
+                    >
+                      {{ $t('settings.migoto.restoreAuto') }}
+                    </el-button>
                   </div>
                   <div class="form-item-hint">{{ $t('settings.migoto.modFolderHint') }}</div>
+                  <div v-if="!isMigotoPathOverridden('mod_folder')" class="form-item-hint">{{ getMigotoAutoPathDescription('mod_folder') }}</div>
                 </el-form-item>
 
                 <el-form-item :label="$t('settings.migoto.shaderFixesFolder')">
                   <div style="display: flex; gap: 8px; width: 100%;">
-                    <el-input v-model="migotoConfig.shader_fixes_folder" :placeholder="$t('settings.migoto.shaderFixesFolderPlaceholder')" />
+                    <el-input
+                      :model-value="getMigotoPathDisplayValue('shader_fixes_folder')"
+                      :readonly="!isMigotoPathOverridden('shader_fixes_folder')"
+                      :placeholder="$t('settings.migoto.shaderFixesFolderPlaceholder')"
+                    />
                     <el-button size="small" @click="selectMigotoPath('shader_fixes_folder')">{{ $t('settings.migoto.browse') }}</el-button>
+                    <el-button
+                      v-if="isMigotoPathOverridden('shader_fixes_folder')"
+                      size="small"
+                      text
+                      @click="restoreMigotoPathAuto('shader_fixes_folder')"
+                    >
+                      {{ $t('settings.migoto.restoreAuto') }}
+                    </el-button>
                   </div>
                   <div class="form-item-hint">{{ $t('settings.migoto.shaderFixesFolderHint') }}</div>
+                  <div v-if="!isMigotoPathOverridden('shader_fixes_folder')" class="form-item-hint">{{ getMigotoAutoPathDescription('shader_fixes_folder') }}</div>
                 </el-form-item>
 
                 <el-form-item :label="$t('settings.migoto.d3dxIniPath')">
                   <div style="display: flex; gap: 8px; width: 100%;">
-                    <el-input v-model="migotoConfig.d3dx_ini_path" :placeholder="$t('settings.migoto.d3dxIniPathPlaceholder')" />
+                    <el-input
+                      :model-value="getMigotoPathDisplayValue('d3dx_ini_path')"
+                      :readonly="!isMigotoPathOverridden('d3dx_ini_path')"
+                      :placeholder="$t('settings.migoto.d3dxIniPathPlaceholder')"
+                    />
                     <el-button size="small" @click="selectMigotoPath('d3dx_ini_path')">{{ $t('settings.migoto.browse') }}</el-button>
+                    <el-button
+                      v-if="isMigotoPathOverridden('d3dx_ini_path')"
+                      size="small"
+                      text
+                      @click="restoreMigotoPathAuto('d3dx_ini_path')"
+                    >
+                      {{ $t('settings.migoto.restoreAuto') }}
+                    </el-button>
                   </div>
                   <div class="form-item-hint">{{ $t('settings.migoto.d3dxIniPathHint') }}</div>
+                  <div v-if="!isMigotoPathOverridden('d3dx_ini_path')" class="form-item-hint">{{ getMigotoAutoPathDescription('d3dx_ini_path') }}</div>
                 </el-form-item>
 
               </el-form>
@@ -2139,15 +2453,15 @@ watch(
               <el-form label-width="160px" class="migoto-form">
 
                 <el-form-item :label="$t('settings.migoto.importerLabel')">
-                  <el-select v-model="migotoConfig.importer" style="width: 280px;">
+                  <el-select v-model="migotoConfig.importer" :disabled="isMigotoImporterLocked" style="width: 280px;">
                     <el-option
-                      v-for="opt in migotoImporterOptions"
+                      v-for="opt in migotoAvailableImporterOptions"
                       :key="opt.value"
                       :label="opt.label"
                       :value="opt.value"
                     />
                   </el-select>
-                  <div class="form-item-hint">{{ $t('settings.migoto.importerSelectHint') }}</div>
+                  <div class="form-item-hint">{{ migotoImporterHint }}</div>
                 </el-form-item>
 
                 <el-form-item :label="$t('settings.migoto.injectionLabel')">

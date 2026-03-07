@@ -138,6 +138,45 @@ pub fn get_bridge_exe_path(app_root: &Path) -> PathBuf {
     app_root.join("Windows").join("ssmt4-bridge.exe")
 }
 
+const MIGOTO_IMPORTER_MARKERS: &[&str] = &[
+    "Core",
+    "Mods",
+    "ShaderFixes",
+    "d3dx.ini",
+    "d3dx_user.ini",
+    "3dmloader.dll",
+    "d3d11.dll",
+    "d3dcompiler_47.dll",
+];
+
+fn looks_like_migoto_importer_folder(path: &Path) -> bool {
+    MIGOTO_IMPORTER_MARKERS
+        .iter()
+        .any(|marker| path.join(marker).exists())
+}
+
+fn resolve_migoto_importer_folder(
+    migoto_data_path: &Path,
+    importer_name: &str,
+    explicit_importer_folder: Option<&str>,
+) -> PathBuf {
+    if let Some(explicit) = explicit_importer_folder.filter(|value| !value.trim().is_empty()) {
+        return PathBuf::from(explicit);
+    }
+
+    if looks_like_migoto_importer_folder(migoto_data_path) {
+        return migoto_data_path.to_path_buf();
+    }
+
+    let nested_importer_folder = migoto_data_path.join(importer_name);
+    if nested_importer_folder.exists() {
+        return nested_importer_folder;
+    }
+
+    // Fresh deploys are written directly into the configured data path.
+    migoto_data_path.to_path_buf()
+}
+
 /// Generate the bridge-config.json file content from game configuration.
 ///
 /// All paths are converted to Windows format (Z:\...) because the bridge
@@ -171,13 +210,13 @@ pub fn build_bridge_config(
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("{}/3Dmigoto-data", app_root_str));
 
-    // Per-game isolation: each importer has its own folder
-    let importer_folder_linux = gs
-        .get("importer_folder")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| format!("{}/{}", migoto_data_linux, importer_name));
+    let importer_folder_linux = resolve_migoto_importer_folder(
+        Path::new(&migoto_data_linux),
+        importer_name,
+        gs.get("importer_folder").and_then(|v| v.as_str()),
+    )
+    .to_string_lossy()
+    .into_owned();
 
     let packages_folder_linux = format!("{}/Packages/XXMI", migoto_data_linux);
     let cache_folder_linux = format!("{}/Cache", app_root_str);
