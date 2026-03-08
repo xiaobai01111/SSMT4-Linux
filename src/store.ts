@@ -30,6 +30,7 @@ export interface AppSettings {
   githubToken: string;
   showWebsites: boolean;
   showDocuments: boolean;
+  migotoEnabled: boolean;
   locale: Locale;  // 我新增
   dataDir: string;
   initialized: boolean;
@@ -61,6 +62,7 @@ const defaultSettings: AppSettings = {
   githubToken: '',
   showWebsites: false,
   showDocuments: false,
+  migotoEnabled: false,
   locale: 'zhs', // 新增
   dataDir: '',
   initialized: false,

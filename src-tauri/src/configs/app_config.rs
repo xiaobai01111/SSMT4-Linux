@@ -128,6 +128,8 @@ pub struct AppConfig {
     pub show_websites: bool,
     #[serde(alias = "show_documents")]
     pub show_documents: bool,
+    #[serde(alias = "migoto_enabled")]
+    pub migoto_enabled: bool,
     #[serde(alias = "language")]
     pub locale: String,
     #[serde(alias = "data_dir")]
@@ -171,6 +173,7 @@ impl Default for AppConfig {
             github_token: String::new(),
             show_websites: false,
             show_documents: false,
+            migoto_enabled: false,
             locale: "zhs".to_string(),
             data_dir: String::new(),
             initialized: false,

@@ -5,6 +5,7 @@ type PreloadableRouteName =
   | 'Home'
   | 'Setup'
   | 'GameLibrary'
+  | 'Mods'
   | 'Websites'
   | 'Settings'
   | 'Documents'
@@ -15,6 +16,7 @@ type PreloadableRouteName =
 const lazyHome = () => import('../views/Home.vue')
 const lazySetup = () => import('../views/Setup.vue')
 const lazyGameLibrary = () => import('../views/GameLibrary.vue')
+const lazyMods = () => import('../views/Mods.vue')
 const lazyWebsites = () => import('../views/Websites.vue')
 const lazySettings = () => import('../views/Settings.vue')
 const lazyDocuments = () => import('../views/Documents.vue')
@@ -25,6 +27,7 @@ const routeComponentLoaders: Record<PreloadableRouteName, () => Promise<unknown>
   Home: lazyHome,
   Setup: lazySetup,
   GameLibrary: lazyGameLibrary,
+  Mods: lazyMods,
   Websites: lazyWebsites,
   Settings: lazySettings,
   Documents: lazyDocuments,
@@ -47,6 +50,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/', name: 'Home', component: lazyHome },
   { path: '/setup', name: 'Setup', component: lazySetup },
   { path: '/games', name: 'GameLibrary', component: lazyGameLibrary },
+  { path: '/mods', name: 'Mods', component: lazyMods },
   { path: '/websites', name: 'Websites', component: lazyWebsites },
   { path: '/settings', name: 'Settings', component: lazySettings },
   { path: '/documents', name: 'Documents', component: lazyDocuments },
@@ -61,6 +65,10 @@ const router = createRouter({
 
 const isSetupExemptRoute = (name: RouteRecordName | null | undefined) => {
   return name === 'LogViewer' || name === 'GameLogViewer'
+}
+
+const isMigotoRestrictedRoute = (name: RouteRecordName | null | undefined) => {
+  return name === 'Mods'
 }
 
 const needsSetup = () => {
@@ -78,9 +86,13 @@ const registerDeferredSetupCheck = () => {
 
     const currentRouteName = router.currentRoute.value.name
     if (isSetupExemptRoute(currentRouteName) || currentRouteName === 'Setup') return
-    if (!needsSetup()) return
-
-    void router.replace({ name: 'Setup' })
+    if (needsSetup()) {
+      void router.replace({ name: 'Setup' })
+      return
+    }
+    if (isMigotoRestrictedRoute(currentRouteName) && !appSettings.migotoEnabled) {
+      void router.replace({ name: 'Home' })
+    }
   })
 }
 
@@ -95,6 +107,10 @@ router.beforeEach((to) => {
 
   if (needsSetup() && to.name !== 'Setup') {
     return { name: 'Setup' }
+  }
+
+  if (isMigotoRestrictedRoute(to.name) && !appSettings.migotoEnabled) {
+    return { name: 'Home' }
   }
 
   return true

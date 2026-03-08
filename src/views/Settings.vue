@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { appSettings, startFeatureOnboarding } from '../store'
 import {
   deleteLocalDxvk,
@@ -26,6 +26,7 @@ import {
   scanGames,
   loadGameConfig,
   saveGameConfig,
+  askConfirm,
   showMessage,
   pathExists,
   joinPath,
@@ -61,6 +62,7 @@ import {
 
 const { t, te } = useI18n()
 const route = useRoute();
+const router = useRouter();
 const notify = inject<any>('notify', null);
 
 const activeMenu = ref('basic')
@@ -975,6 +977,71 @@ const migotoGamesList = ref<GameInfo[]>([]);
 const migotoSelectedGame = ref('');
 const migotoLoaded = ref(false);
 const isMigotoSaving = ref(false);
+const globalMigotoEnabled = computed(() => !!appSettings.migotoEnabled);
+const isMigotoTogglePending = ref(false);
+const migotoRiskStatement = tr(
+  'settings.migoto.riskDescription',
+  '3DMigoto 目前属于实验性功能。启用后可能导致注入失败、画面异常、游戏崩溃、性能问题、兼容性故障，且不排除带来账号、数据或系统层面的风险。继续使用即表示你已知悉相关风险并自行承担全部后果，开发者不对由此造成的任何损失负责。',
+);
+
+const openDocumentsDoc = async (docId: string) => {
+  if (!appSettings.showDocuments) {
+    appSettings.showDocuments = true;
+  }
+  await router.push({
+    name: 'Documents',
+    query: {
+      doc: docId,
+    },
+  });
+};
+
+const showMigotoRiskRestatement = async () => {
+  await showMessage(
+    [
+      tr('settings.migoto.riskDialogLead', '请在启用或继续使用前再次确认以下事项：'),
+      '',
+      migotoRiskStatement,
+      '',
+      tr('settings.migoto.riskDialogTermsHint', '建议先阅读文档中心中的《服务条款》与风险声明。'),
+    ].join('\n'),
+    {
+      title: tr('settings.migoto.riskDialogTitle', '《服务条款》与风险声明'),
+      kind: 'warning',
+    },
+  );
+};
+
+const handleMigotoGlobalToggle = async (nextValue: string | number | boolean) => {
+  const enabled = Boolean(nextValue);
+  if (isMigotoTogglePending.value || enabled === appSettings.migotoEnabled) {
+    return;
+  }
+
+  if (!enabled) {
+    appSettings.migotoEnabled = false;
+    return;
+  }
+
+  try {
+    isMigotoTogglePending.value = true;
+    const confirmed = await askConfirm(
+      tr(
+        'settings.migoto.enableRiskConfirm',
+        '严重警告：3DMigoto 属于实验性功能，可能导致注入失败、画面异常、闪退、卡顿、配置损坏，甚至带来账号或环境风险。继续启用即表示你已理解并愿意自行承担全部后果，开发者不承担任何责任。是否继续启用？',
+      ),
+      {
+        title: tr('settings.migoto.enableRiskTitle', '3DMigoto 风险确认'),
+        kind: 'warning',
+        okLabel: tr('settings.migoto.enableRiskAccept', '我已理解并承担风险'),
+        cancelLabel: tr('settings.migoto.enableRiskCancel', '取消启用'),
+      },
+    );
+    appSettings.migotoEnabled = confirmed;
+  } finally {
+    isMigotoTogglePending.value = false;
+  }
+};
 
 const getLocalizedGameName = (game: Pick<GameInfo, 'name'> | string) => {
   const gameName = typeof game === 'string' ? game : game.name;
@@ -1026,6 +1093,7 @@ interface MigotoGameConfig {
 
 interface MigotoImporterBehavior {
   defaultUseHook: boolean;
+  defaultEnforceRendering: boolean;
   defaultProcessTimeout: number;
   defaultXxmiDllInitDelay: number;
   requiredStartArgs: string[];
@@ -1082,36 +1150,42 @@ type MigotoPathOverrideField =
 const MIGOTO_IMPORTER_BEHAVIORS: Record<string, MigotoImporterBehavior> = {
   WWMI: {
     defaultUseHook: true,
+    defaultEnforceRendering: true,
     defaultProcessTimeout: 30,
     defaultXxmiDllInitDelay: 500,
     requiredStartArgs: ['-dx11'],
   },
   ZZMI: {
     defaultUseHook: true,
+    defaultEnforceRendering: false,
     defaultProcessTimeout: 30,
     defaultXxmiDllInitDelay: 0,
     requiredStartArgs: [],
   },
   SRMI: {
     defaultUseHook: true,
+    defaultEnforceRendering: false,
     defaultProcessTimeout: 30,
     defaultXxmiDllInitDelay: 0,
     requiredStartArgs: [],
   },
   GIMI: {
     defaultUseHook: true,
+    defaultEnforceRendering: false,
     defaultProcessTimeout: 30,
     defaultXxmiDllInitDelay: 0,
     requiredStartArgs: [],
   },
   HIMI: {
     defaultUseHook: true,
+    defaultEnforceRendering: false,
     defaultProcessTimeout: 30,
     defaultXxmiDllInitDelay: 0,
     requiredStartArgs: [],
   },
   EFMI: {
     defaultUseHook: false,
+    defaultEnforceRendering: false,
     defaultProcessTimeout: 60,
     defaultXxmiDllInitDelay: 0,
     requiredStartArgs: ['-force-d3d11'],
@@ -1121,10 +1195,17 @@ const MIGOTO_IMPORTER_BEHAVIORS: Record<string, MigotoImporterBehavior> = {
 
 const DEFAULT_MIGOTO_IMPORTER_BEHAVIOR: MigotoImporterBehavior = {
   defaultUseHook: true,
+  defaultEnforceRendering: true,
   defaultProcessTimeout: 30,
   defaultXxmiDllInitDelay: 0,
   requiredStartArgs: [],
 };
+
+const LOCKED_IMPORTER_LEGACY_DEFAULTS = {
+  enforce_rendering: true,
+  process_timeout: 30,
+  xxmi_dll_init_delay: 500,
+} as const;
 
 const migotoConfig = reactive<MigotoGameConfig>({ ...defaultMigotoConfig });
 
@@ -1289,11 +1370,41 @@ const normalizeMigotoConfig = (
     normalized.use_hook = importerBehavior.defaultUseHook;
   }
 
-  if (!hasOwnMigotoConfigKey(config, 'process_timeout')) {
+  // Heal legacy global defaults that were copied into locked importers like EFMI.
+  // Without this, stale WWMI-era values can survive forever in saved configs.
+  const shouldHealLockedImporterDefaults = Boolean(
+    requiredImporter
+    && normalized.importer === requiredImporter
+    && importerBehavior.injectionLocked,
+  );
+
+  if (
+    shouldHealLockedImporterDefaults
+    && normalized.enforce_rendering === LOCKED_IMPORTER_LEGACY_DEFAULTS.enforce_rendering
+    && importerBehavior.defaultEnforceRendering !== LOCKED_IMPORTER_LEGACY_DEFAULTS.enforce_rendering
+  ) {
+    normalized.enforce_rendering = importerBehavior.defaultEnforceRendering;
+  } else if (!hasOwnMigotoConfigKey(config, 'enforce_rendering')) {
+    normalized.enforce_rendering = importerBehavior.defaultEnforceRendering;
+  }
+
+  if (
+    shouldHealLockedImporterDefaults
+    && normalized.process_timeout === LOCKED_IMPORTER_LEGACY_DEFAULTS.process_timeout
+    && importerBehavior.defaultProcessTimeout !== LOCKED_IMPORTER_LEGACY_DEFAULTS.process_timeout
+  ) {
+    normalized.process_timeout = importerBehavior.defaultProcessTimeout;
+  } else if (!hasOwnMigotoConfigKey(config, 'process_timeout')) {
     normalized.process_timeout = importerBehavior.defaultProcessTimeout;
   }
 
-  if (!hasOwnMigotoConfigKey(config, 'xxmi_dll_init_delay')) {
+  if (
+    shouldHealLockedImporterDefaults
+    && normalized.xxmi_dll_init_delay === LOCKED_IMPORTER_LEGACY_DEFAULTS.xxmi_dll_init_delay
+    && importerBehavior.defaultXxmiDllInitDelay !== LOCKED_IMPORTER_LEGACY_DEFAULTS.xxmi_dll_init_delay
+  ) {
+    normalized.xxmi_dll_init_delay = importerBehavior.defaultXxmiDllInitDelay;
+  } else if (!hasOwnMigotoConfigKey(config, 'xxmi_dll_init_delay')) {
     normalized.xxmi_dll_init_delay = importerBehavior.defaultXxmiDllInitDelay;
   }
 
@@ -1731,8 +1842,8 @@ const selectDataDir = async () => {
 };
 
 watch(
-  () => activeMenu.value,
-  async (menu) => {
+  () => [activeMenu.value, globalMigotoEnabled.value] as const,
+  async ([menu, migotoEnabled]) => {
     if (menu === 'version' && !versionCheckLoaded.value) {
       await checkVersionInfo();
     }
@@ -1756,7 +1867,7 @@ watch(
       await Promise.all([refreshVkd3dLocal(), refreshVkd3dRemote()]);
       vkd3dLoaded.value = true;
     }
-    if (menu === 'migoto' && !migotoLoaded.value) {
+    if (menu === 'migoto' && migotoEnabled && !migotoLoaded.value) {
       await Promise.all([refreshMigotoGamesList(), loadXxmiSources(), refreshXxmiLocal()]);
       migotoLoaded.value = true;
     }
@@ -2437,9 +2548,63 @@ watch(
 
       <!-- 3DMIGOTO 管理 -->
       <div v-if="activeMenu === 'migoto'" class="settings-panel dxvk-panel" data-onboarding="settings-migoto-panel">
-        <div class="panel-title">{{ $t('settings.migoto.panelTitle') }}</div>
+        <div class="panel-title-row">
+          <div class="panel-title panel-title-inline">{{ $t('settings.migoto.panelTitle') }}</div>
+          <el-tag type="danger" effect="dark" size="small" class="panel-title-badge">
+            {{ tr('settings.migoto.experimentalBadge', '实验性') }}
+          </el-tag>
+        </div>
+
+        <div class="section-block migoto-risk-block">
+          <div class="section-header">
+            <div>
+              <div class="section-title migoto-risk-title">{{ tr('settings.migoto.riskTitle', '严重警告') }}</div>
+              <div class="section-hint migoto-risk-text">
+                {{ migotoRiskStatement }}
+              </div>
+            </div>
+          </div>
+          <div class="migoto-risk-actions">
+            <el-button type="danger" plain @click="openDocumentsDoc('terms')">
+              {{ tr('settings.migoto.viewTerms', '查看《服务条款》') }}
+            </el-button>
+            <el-button plain @click="openDocumentsDoc('risk')">
+              {{ tr('settings.migoto.viewProjectRisk', '查看项目风险与要求') }}
+            </el-button>
+            <el-button type="warning" plain @click="showMigotoRiskRestatement">
+              {{ tr('settings.migoto.restateRisk', '再次查看风险声明') }}
+            </el-button>
+          </div>
+        </div>
 
         <div class="section-block">
+          <div class="section-header">
+            <div>
+              <div class="section-title">{{ tr('settings.migoto.globalToggleTitle', '3DMigoto 全局开关') }}</div>
+              <div class="section-hint">
+                {{ tr('settings.migoto.globalToggleHint', '关闭后将全局禁用 3DMigoto 的相关配置、桥接和注入；游戏设置页也不会显示 3DMigoto 入口。') }}
+              </div>
+            </div>
+          </div>
+          <el-form label-width="160px" class="migoto-form" style="margin-top: 16px;">
+            <el-form-item :label="tr('settings.migoto.globalToggleLabel', '启用 3DMigoto')">
+              <el-switch
+                :model-value="globalMigotoEnabled"
+                :loading="isMigotoTogglePending"
+                :disabled="isMigotoTogglePending"
+                @update:model-value="handleMigotoGlobalToggle"
+              />
+            </el-form-item>
+          </el-form>
+        </div>
+
+        <div v-if="!globalMigotoEnabled" class="section-block">
+          <div class="row-sub">
+            {{ tr('settings.migoto.disabledSummary', '3DMigoto 当前已全局禁用。现有游戏配置会被保留，但启动时不会加载桥接、不会注入，也不会在游戏设置中显示 3DMigoto 管理。') }}
+          </div>
+        </div>
+
+        <div v-else class="section-block">
           <div class="section-header">
             <div>
               <div class="section-title">{{ $t('settings.migoto.gameConfigTitle') }}</div>
@@ -2831,7 +2996,7 @@ watch(
         </div>
 
         <!-- XXMI 资源包下载 -->
-        <div class="section-block" style="margin-top: 28px;">
+        <div v-if="globalMigotoEnabled" class="section-block" style="margin-top: 28px;">
           <div class="section-header">
             <div>
               <div class="section-title">{{ $t('settings.migoto.xxmiTitle') }}</div>
@@ -3033,6 +3198,47 @@ watch(
   border-bottom: 1px solid rgba(0, 240, 255, 0.3);
   letter-spacing: 1px;
   text-transform: uppercase;
+}
+
+.panel-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 32px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(0, 240, 255, 0.3);
+}
+
+.panel-title-inline {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.panel-title-badge {
+  letter-spacing: 0.5px;
+}
+
+.migoto-risk-block {
+  border: 1px solid rgba(255, 99, 71, 0.45);
+  background: linear-gradient(135deg, rgba(120, 12, 12, 0.32), rgba(55, 12, 12, 0.22));
+}
+
+.migoto-risk-title {
+  color: #ff9b8a;
+}
+
+.migoto-risk-text {
+  color: rgba(255, 226, 220, 0.92);
+  line-height: 1.7;
+}
+
+.migoto-risk-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 16px;
 }
 
 .settings-guide-banner {

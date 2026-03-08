@@ -8,7 +8,8 @@ import { useI18n } from 'vue-i18n';
 
 const router = useRouter();
 const route = useRoute();
-const { t } = useI18n();
+const { t, te } = useI18n();
+const tr = (key: string, fallback: string) => (te(key) ? t(key) : fallback);
 const isMaximized = ref(false);
 const appWindow = getCurrentWindow();
 
@@ -28,6 +29,9 @@ const preloadPath = (path: string) => {
             break;
         case '/settings':
             preloadRouteView('Settings');
+            break;
+        case '/mods':
+            preloadRouteView('Mods');
             break;
         case '/websites':
             preloadRouteView('Websites');
@@ -96,6 +100,10 @@ const navTo = (path: string) => {
         <div v-if="appSettings.showDocuments" class="nav-button" :class="{ active: route.path === '/documents' }" @mouseenter="preloadPath('/documents')" @click="navTo('/documents')" :title="t('titlebar.documents')">
             <svg xmlns="http://www.w3.org/2000/svg" width="26" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
             <span class="nav-text">{{ t('titlebar.documents') }}</span>
+        </div>
+        <div v-if="appSettings.migotoEnabled" class="nav-button" :class="{ active: route.path === '/mods' }" @mouseenter="preloadPath('/mods')" @click="navTo('/mods')" :title="tr('titlebar.mods', 'Mod 管理')">
+            <svg xmlns="http://www.w3.org/2000/svg" width="26" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><path d="M3.29 7 12 12l8.71-5"></path><path d="M12 22V12"></path></svg>
+            <span class="nav-text">{{ tr('titlebar.mods', 'Mod 管理') }}</span>
         </div>
     </div>
 

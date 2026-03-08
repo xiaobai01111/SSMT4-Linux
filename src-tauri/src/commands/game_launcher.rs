@@ -104,7 +104,25 @@ fn append_host_env_snapshot(game_name: &str) {
     }
 }
 
+fn is_optional_gstreamer_plugin_warning(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower.contains("gstreamer-warning")
+        && lower.contains("gstreamer-1.0")
+        && (lower.contains("elfclass32")
+            || lower.contains("错误的 elf 类")
+            || lower.contains("cannot open shared object file")
+            || lower.contains("无法打开共享目标文件"))
+}
+
+fn is_non_fatal_input_key_warning(line: &str) -> bool {
+    line.starts_with("Couldn't get key from code:")
+}
+
 fn detect_external_log_level(stream: &str, line: &str) -> &'static str {
+    if is_optional_gstreamer_plugin_warning(line) || is_non_fatal_input_key_warning(line) {
+        return "INFO";
+    }
+
     let normalized = line.to_ascii_lowercase();
     if normalized.contains(" fatal:") || normalized.contains("panic") {
         return "ERROR";
@@ -132,6 +150,12 @@ fn detect_external_log_level(stream: &str, line: &str) -> &'static str {
 }
 
 fn detect_external_log_source(stream: &str, line: &str) -> String {
+    if is_optional_gstreamer_plugin_warning(line) {
+        return "GStreamer".to_string();
+    }
+    if is_non_fatal_input_key_warning(line) {
+        return "input-map".to_string();
+    }
     if let Some(rest) = line.strip_prefix('[') {
         if let Some((source, _)) = rest.split_once(']') {
             return source.trim().to_string();
@@ -187,6 +211,20 @@ fn append_external_runtime_hints(game_name: &str, line: &str) {
             "protonfixes",
             "ProtonFixes 预检查通过（All checks successful）",
         );
+    }
+}
+
+fn parse_bool_setting(value: Option<String>, default: bool) -> bool {
+    match value
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "" => default,
+        "1" | "true" | "yes" | "on" => true,
+        "0" | "false" | "no" | "off" => false,
+        _ => default,
     }
 }
 
@@ -804,17 +842,28 @@ async fn start_game_internal(
     };
 
     // 检查 3DMigoto 是否启用
-    let migoto_enabled = game_config_data
+    let migoto_globally_enabled = parse_bool_setting(db::get_setting("migoto_enabled"), false);
+    let migoto_requested = game_config_data
         .as_ref()
         .and_then(|c| c.pointer("/other/migoto/enabled"))
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let migoto_enabled = migoto_globally_enabled && migoto_requested;
     let configured_migoto_importer = game_config_data
         .as_ref()
         .and_then(|c| c.pointer("/other/migoto/importer"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
     let migoto_importer = resolve_preferred_migoto_importer(&game_preset, configured_migoto_importer);
+    if migoto_requested && !migoto_globally_enabled {
+        warn!("3DMigoto 已被全局禁用，本次启动将跳过相关配置和注入");
+        append_game_log(
+            &game_name,
+            "INFO",
+            "launcher",
+            "3DMigoto is globally disabled; skipping migoto bridge and injection",
+        );
+    }
     if migoto_enabled && !configured_migoto_importer.eq_ignore_ascii_case(&migoto_importer) {
         warn!(
             "3DMigoto importer 已按游戏预设校正: preset={}, configured={}, effective={}",

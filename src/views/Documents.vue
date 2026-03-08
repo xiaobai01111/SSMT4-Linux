@@ -1,20 +1,18 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
+import { builtinDocCatalog, builtinDocs, type BuiltinDocDefinition } from '../documents/builtinDocs';
 
-type DocItem = {
-  id: string;
-  titleKey: string;
-  fallbackTitle: string;
-  file: string;
+type DocItem = BuiltinDocDefinition & {
   content: string;
 };
 
 const { t, te } = useI18n();
+const route = useRoute();
+const router = useRouter();
 const tr = (key: string, fallback: string) => (te(key) ? t(key) : fallback);
 const wikiUrl = 'https://github.com/xiaobai01111/SSMT4-Linux/wiki';
-
-const wikiModules: Record<string, string> = {};
 
 const fallbackDocContent = (title: string, file: string): string => [
   `# ${title}`,
@@ -28,24 +26,28 @@ const fallbackDocContent = (title: string, file: string): string => [
 ].join('\n');
 
 const loadDocContent = (file: string, title: string): string => {
-  const moduleEntry = Object.entries(wikiModules).find(([path]) => path.endsWith(`/${file}?raw`));
-  return moduleEntry?.[1] ?? fallbackDocContent(title, file);
+  const builtin = builtinDocs[file];
+  if (builtin) return builtin;
+  return fallbackDocContent(title, file);
 };
 
-const docs: DocItem[] = [
-  { id: 'home', titleKey: 'documents.items.home', fallbackTitle: 'Home', file: 'Home.md', content: loadDocContent('Home.md', 'Home') },
-  { id: 'risk', titleKey: 'documents.items.risk', fallbackTitle: '项目风险与要求', file: '01-项目风险与要求.md', content: loadDocContent('01-项目风险与要求.md', '项目风险与要求') },
-  { id: 'download', titleKey: 'documents.items.download', fallbackTitle: '游戏下载与主程序配置', file: '02-游戏下载与主程序配置.md', content: loadDocContent('02-游戏下载与主程序配置.md', '游戏下载与主程序配置') },
-  { id: 'proton', titleKey: 'documents.items.proton', fallbackTitle: 'Proton 下载、管理与使用', file: '03-Proton-下载管理与使用.md', content: loadDocContent('03-Proton-下载管理与使用.md', 'Proton 下载、管理与使用') },
-  { id: 'dxvk', titleKey: 'documents.items.dxvk', fallbackTitle: 'DXVK 下载、管理与使用', file: '04-DXVK-下载管理与使用.md', content: loadDocContent('04-DXVK-下载管理与使用.md', 'DXVK 下载、管理与使用') },
-  { id: 'protection', titleKey: 'documents.items.protection', fallbackTitle: '防护与防封禁管理', file: '05-防护与防封禁管理.md', content: loadDocContent('05-防护与防封禁管理.md', '防护与防封禁管理') },
-  { id: 'known', titleKey: 'documents.items.known', fallbackTitle: '已知问题与不足', file: '06-已知问题与不足.md', content: loadDocContent('06-已知问题与不足.md', '已知问题与不足') },
-];
-
-const activeDocId = ref('home');
+const docs: DocItem[] = builtinDocCatalog.map((doc) => ({
+  ...doc,
+  content: loadDocContent(doc.file, doc.fallbackTitle),
+}));
 
 const docById = new Map(docs.map((d) => [d.id, d]));
 const docByFile = new Map(docs.map((d) => [d.file.toLowerCase(), d.id]));
+const defaultDocId = docs[0]?.id ?? 'home';
+
+const resolveDocId = (value: unknown): string => {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (typeof raw !== 'string') return defaultDocId;
+  const normalized = raw.trim();
+  return docById.has(normalized) ? normalized : defaultDocId;
+};
+
+const activeDocId = ref(resolveDocId(route.query.doc));
 
 const activeDoc = computed(() => docById.get(activeDocId.value) ?? docs[0]);
 
@@ -148,12 +150,35 @@ const handleDocClick = (e: MouseEvent) => {
   e.preventDefault();
   activeDocId.value = nextId;
 };
+
+watch(
+  () => route.query.doc,
+  (value) => {
+    const nextId = resolveDocId(value);
+    if (nextId !== activeDocId.value) {
+      activeDocId.value = nextId;
+    }
+  },
+  { immediate: true },
+);
+
+watch(activeDocId, async (value) => {
+  const current = resolveDocId(route.query.doc);
+  if (current === value) return;
+  await router.replace({
+    name: 'Documents',
+    query: {
+      ...route.query,
+      doc: value,
+    },
+  });
+});
 </script>
 
 <template>
   <div class="documents-view">
     <aside class="doc-sidebar">
-      <div class="doc-sidebar-title">Wiki</div>
+      <div class="doc-sidebar-title">{{ t('titlebar.documents') }}</div>
       <button
         v-for="doc in docs"
         :key="doc.id"
@@ -180,6 +205,7 @@ const handleDocClick = (e: MouseEvent) => {
 .documents-view {
   width: 100%;
   height: 100%;
+  min-height: 0;
   display: grid;
   grid-template-columns: 240px 1fr;
   overflow: hidden;
@@ -198,6 +224,7 @@ const handleDocClick = (e: MouseEvent) => {
 }
 
 .doc-sidebar {
+  min-height: 0;
   border-right: 1px solid rgba(0, 240, 255, 0.3); /* Tech Cyan Line */
   background: rgba(0, 5, 10, 0.4);
   padding: 16px;
@@ -269,6 +296,8 @@ const handleDocClick = (e: MouseEvent) => {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .doc-content-header {
@@ -316,6 +345,7 @@ const handleDocClick = (e: MouseEvent) => {
 
 .doc-content {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 24px 32px 40px 32px;
   color: rgba(255, 255, 255, 0.85); /* Slightly darker for contrast */

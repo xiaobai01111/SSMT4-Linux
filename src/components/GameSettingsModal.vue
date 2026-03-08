@@ -42,7 +42,7 @@ import {
   type Vkd3dInstalledStatus,
   type RuntimeEnv,
 } from '../api';
-import { loadGames, gamesList, switchToGame } from '../store';
+import { appSettings, loadGames, gamesList, switchToGame } from '../store';
 import { useI18n } from 'vue-i18n';
 import { inject } from 'vue';
 import { useGameInfoEditor } from '../composables/useGameInfoEditor';
@@ -533,13 +533,21 @@ const doUninstallVkd3d = async () => {
 
 // Tabs（参考 Lutris 风格：5个标签页）
 const activeTab = ref('info');
-const tabs = computed(() => [
-  { id: 'info', label: tr('gamesettingsmodal.tabs.info', '游戏信息') },
-  { id: 'game', label: tr('gamesettingsmodal.tabs.game', '游戏选项') },
-  { id: 'migoto', label: t('gamesettingsmodal.migoto.tabLabel') },
-  { id: 'runtime', label: tr('gamesettingsmodal.tabs.runtime', '运行环境') },
-  { id: 'system', label: tr('gamesettingsmodal.tabs.system', '系统选项') },
-]);
+const globalMigotoEnabled = computed(() => !!appSettings.migotoEnabled);
+const tabs = computed(() => {
+  const baseTabs = [
+    { id: 'info', label: tr('gamesettingsmodal.tabs.info', '游戏信息') },
+    { id: 'game', label: tr('gamesettingsmodal.tabs.game', '游戏选项') },
+    { id: 'runtime', label: tr('gamesettingsmodal.tabs.runtime', '运行环境') },
+    { id: 'system', label: tr('gamesettingsmodal.tabs.system', '系统选项') },
+  ];
+
+  if (globalMigotoEnabled.value) {
+    baseTabs.splice(2, 0, { id: 'migoto', label: t('gamesettingsmodal.migoto.tabLabel') });
+  }
+
+  return baseTabs;
+});
 
 // 3DMigoto 启用状态（详细配置在 Settings > 3DMIGOTO 管理）
 const migotoEnabled = ref(false);
@@ -559,6 +567,17 @@ const saveMigotoEnabled = async () => {
     notify?.error(t('gamesettingsmodal.migoto.saveFailed'), `${e}`);
   }
 };
+
+watch(
+  tabs,
+  (value) => {
+    if (value.some((tab) => tab.id === activeTab.value)) {
+      return;
+    }
+    activeTab.value = 'info';
+  },
+  { immediate: true, deep: true },
+);
 type RuntimeFocusTarget = 'all' | 'wine_version' | 'dxvk' | 'vkd3d';
 const runtimeAttention = ref(false);
 const runtimeAttentionMessage = ref('');

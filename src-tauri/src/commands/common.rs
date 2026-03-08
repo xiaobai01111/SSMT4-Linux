@@ -134,6 +134,13 @@ pub fn path_exists(path: &str) -> bool {
 }
 
 #[tauri::command]
+pub fn get_app_data_dir_path() -> String {
+    crate::configs::app_config::get_app_data_dir()
+        .to_string_lossy()
+        .to_string()
+}
+
+#[tauri::command]
 pub fn open_in_explorer(path: &str) -> Result<(), String> {
     std::process::Command::new("xdg-open")
         .arg(path)

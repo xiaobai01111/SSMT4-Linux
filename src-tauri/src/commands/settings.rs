@@ -298,6 +298,14 @@ fn settings_to_kv(cfg: &AppConfig) -> Result<(), String> {
             "false".to_string()
         },
     ));
+    entries.push((
+        "migoto_enabled".to_string(),
+        if cfg.migoto_enabled {
+            "true".to_string()
+        } else {
+            "false".to_string()
+        },
+    ));
     entries.push(("locale".to_string(), cfg.locale.clone()));
     // 向后兼容旧键名
     entries.push(("language".to_string(), cfg.locale.clone()));
@@ -441,6 +449,10 @@ fn settings_from_kv(pairs: &[(String, String)]) -> AppConfig {
         show_documents: {
             let v = get_any(&["show_documents", "showDocuments"]);
             parse_bool_or_default(&v, defaults.show_documents)
+        },
+        migoto_enabled: {
+            let v = get_any(&["migoto_enabled", "migotoEnabled"]);
+            parse_bool_or_default(&v, defaults.migoto_enabled)
         },
         locale: normalize_locale(if locale_raw.is_empty() {
             &defaults.locale

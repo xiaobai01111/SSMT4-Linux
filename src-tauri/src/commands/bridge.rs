@@ -212,6 +212,10 @@ fn importer_default_use_hook(importer_name: &str) -> bool {
     !matches!(normalize_importer_name(importer_name).as_str(), "EFMI")
 }
 
+fn importer_has_locked_legacy_defaults(importer_name: &str) -> bool {
+    matches!(normalize_importer_name(importer_name).as_str(), "EFMI")
+}
+
 fn importer_default_enforce_rendering(importer_name: &str) -> bool {
     matches!(normalize_importer_name(importer_name).as_str(), "WWMI")
 }
@@ -258,6 +262,44 @@ fn importer_default_d3dx_ini(importer_name: &str) -> Value {
     })
 }
 
+fn heal_locked_importer_legacy_u32(
+    importer_name: &str,
+    raw_value: Option<u64>,
+    importer_default: u32,
+    legacy_default: u32,
+) -> u32 {
+    match raw_value {
+        Some(value)
+            if importer_has_locked_legacy_defaults(importer_name)
+                && value == legacy_default as u64
+                && importer_default != legacy_default =>
+        {
+            importer_default
+        }
+        Some(value) => value as u32,
+        None => importer_default,
+    }
+}
+
+fn heal_locked_importer_legacy_bool(
+    importer_name: &str,
+    raw_value: Option<bool>,
+    importer_default: bool,
+    legacy_default: bool,
+) -> bool {
+    match raw_value {
+        Some(value)
+            if importer_has_locked_legacy_defaults(importer_name)
+                && value == legacy_default
+                && importer_default != legacy_default =>
+        {
+            importer_default
+        }
+        Some(value) => value,
+        None => importer_default,
+    }
+}
+
 /// Generate the bridge-config.json file content from game configuration.
 ///
 /// All paths are converted to Windows format (Z:\...) because the bridge
@@ -275,6 +317,9 @@ pub fn build_bridge_config(
 ) -> BridgeConfig {
     let app_root_str = app_root.to_string_lossy();
     let importer_name = normalize_importer_name(importer_name);
+    let importer_default_process_timeout = importer_default_process_timeout(&importer_name);
+    let importer_default_enforce_rendering = importer_default_enforce_rendering(&importer_name);
+    let importer_default_xxmi_dll_init_delay = importer_default_xxmi_dll_init_delay(&importer_name);
 
     // Extract game-specific settings from the config JSON, or use defaults
     // Settings are stored at config.other.migoto by the frontend
@@ -393,11 +438,12 @@ pub fn build_bridge_config(
                 .and_then(|v| v.as_str())
                 .unwrap_or("Normal")
                 .to_string(),
-            process_timeout: gs
-                .get("process_timeout")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(importer_default_process_timeout(&importer_name) as u64)
-                as u32,
+            process_timeout: heal_locked_importer_legacy_u32(
+                &importer_name,
+                gs.get("process_timeout").and_then(|v| v.as_u64()),
+                importer_default_process_timeout,
+                30,
+            ),
         },
         migoto: BridgeMigotoConfig {
             use_hook: if importer_name.eq_ignore_ascii_case("EFMI") {
@@ -408,10 +454,12 @@ pub fn build_bridge_config(
                     .unwrap_or(importer_default_use_hook(&importer_name))
             },
             use_dll_drop: gs.get("use_dll_drop").and_then(|v| v.as_bool()).unwrap_or(false),
-            enforce_rendering: gs
-                .get("enforce_rendering")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(importer_default_enforce_rendering(&importer_name)),
+            enforce_rendering: heal_locked_importer_legacy_bool(
+                &importer_name,
+                gs.get("enforce_rendering").and_then(|v| v.as_bool()),
+                importer_default_enforce_rendering,
+                true,
+            ),
             enable_hunting: gs
                 .get("enable_hunting")
                 .and_then(|v| v.as_bool())
@@ -436,11 +484,12 @@ pub fn build_bridge_config(
                 .get("unsafe_mode")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false),
-            xxmi_dll_init_delay: gs
-                .get("xxmi_dll_init_delay")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(importer_default_xxmi_dll_init_delay(&importer_name) as u64)
-                as u32,
+            xxmi_dll_init_delay: heal_locked_importer_legacy_u32(
+                &importer_name,
+                gs.get("xxmi_dll_init_delay").and_then(|v| v.as_u64()),
+                importer_default_xxmi_dll_init_delay,
+                500,
+            ),
         },
         game_specific: game_specific_map,
         d3dx_ini: gs
@@ -825,6 +874,38 @@ mod tests {
                 .and_then(|value| value.as_i64()),
             Some(0)
         );
+    }
+
+    #[test]
+    fn efmi_heals_legacy_global_defaults() {
+        let config = build_test_bridge_config(
+            "EFMI",
+            Some(json!({
+                "process_timeout": 30,
+                "enforce_rendering": true,
+                "xxmi_dll_init_delay": 500
+            })),
+        );
+
+        assert_eq!(config.game.process_timeout, 60);
+        assert_eq!(config.migoto.enforce_rendering, false);
+        assert_eq!(config.migoto.xxmi_dll_init_delay, 0);
+    }
+
+    #[test]
+    fn efmi_keeps_explicit_non_legacy_overrides() {
+        let config = build_test_bridge_config(
+            "EFMI",
+            Some(json!({
+                "process_timeout": 75,
+                "enforce_rendering": false,
+                "xxmi_dll_init_delay": 250
+            })),
+        );
+
+        assert_eq!(config.game.process_timeout, 75);
+        assert_eq!(config.migoto.enforce_rendering, false);
+        assert_eq!(config.migoto.xxmi_dll_init_delay, 250);
     }
 
     #[test]

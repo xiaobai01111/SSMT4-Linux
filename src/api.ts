@@ -86,6 +86,7 @@ export interface AppSettings {
   githubToken: string;
   showWebsites: boolean;
   showDocuments: boolean;
+  migotoEnabled: boolean;
   locale: string;
   dataDir: string;
   initialized: boolean;
@@ -110,6 +111,32 @@ export interface GameConfig {
     backgroundType?: 'Image' | 'Video';
   };
   other: any;
+}
+
+export interface ManagedModEntry {
+  relativeName: string;
+  displayName: string;
+  path: string;
+  enabled: boolean;
+  entryType: 'directory' | 'file' | string;
+  sizeBytes: number;
+  modifiedUnix?: number | null;
+}
+
+export interface GameModDirectoryState {
+  gameName: string;
+  importer: string;
+  migotoEnabled: boolean;
+  modFolder: string;
+  modFolderExists: boolean;
+  shaderFixesFolder: string;
+  shaderFixesFolderExists: boolean;
+  entries: ManagedModEntry[];
+}
+
+export interface ModBulkToggleResult {
+  changed: number;
+  skipped: string[];
 }
 
 export type RuntimeEnv = 'wine' | 'steam' | 'linux';
@@ -552,8 +579,38 @@ export async function ensureDirectory(path: string): Promise<void> {
   return invoke('ensure_directory', { path });
 }
 
+export async function getAppDataDirPath(): Promise<string> {
+  return invoke<string>('get_app_data_dir_path');
+}
+
 export async function openInExplorer(path: string): Promise<void> {
   return invoke('open_in_explorer', { path });
+}
+
+export async function scanGameMods(gameName: string): Promise<GameModDirectoryState> {
+  return invoke<GameModDirectoryState>('scan_game_mods', { gameName });
+}
+
+export async function setGameModEntryEnabled(
+  gameName: string,
+  relativeName: string,
+  enabled: boolean,
+): Promise<ManagedModEntry> {
+  return invoke<ManagedModEntry>('set_game_mod_entry_enabled', {
+    gameName,
+    relativeName,
+    enabled,
+  });
+}
+
+export async function setAllGameModEntriesEnabled(
+  gameName: string,
+  enabled: boolean,
+): Promise<ModBulkToggleResult> {
+  return invoke<ModBulkToggleResult>('set_all_game_mod_entries_enabled', {
+    gameName,
+    enabled,
+  });
 }
 
 // ============================================================

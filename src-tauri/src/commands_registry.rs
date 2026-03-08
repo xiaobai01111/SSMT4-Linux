@@ -8,7 +8,12 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         commands::common::get_resource_path,
         commands::common::ensure_directory,
         commands::common::path_exists,
+        commands::common::get_app_data_dir_path,
         commands::common::open_in_explorer,
+        // Mod manager
+        commands::mod_manager::scan_game_mods,
+        commands::mod_manager::set_game_mod_entry_enabled,
+        commands::mod_manager::set_all_game_mod_entries_enabled,
         #[cfg(feature = "devtools")]
         commands::common::toggle_devtools,
         // Settings
