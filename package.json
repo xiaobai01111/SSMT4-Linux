@@ -1,7 +1,7 @@
 {
   "name": "ssmt4-linux",
   "private": true,
-  "version": "0.0.7-beta",
+  "version": "0.0.8-beta",
   "packageManager": "pnpm@10.30.3",
   "type": "module",
   "scripts": {

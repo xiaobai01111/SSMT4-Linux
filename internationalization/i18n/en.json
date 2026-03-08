@@ -963,6 +963,7 @@
       "home": "Home",
       "terms": "Terms and Risk Statement",
       "risk": "Project Risks & Requirements",
+      "environment": "Environment Preparation, Dependencies & Runtime Stack",
       "download": "Game Download & Executable Setup",
       "downloadMechanism": "Download, Verify, Repair & Vendor Differences",
       "prefix": "Prefix & Template Management",

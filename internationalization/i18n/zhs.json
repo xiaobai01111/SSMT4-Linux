@@ -962,6 +962,7 @@
       "home": "Home",
       "terms": "《服务条款》与风险声明",
       "risk": "项目风险与要求",
+      "environment": "环境准备、依赖与底层运行栈",
       "download": "游戏下载与主程序配置",
       "downloadMechanism": "下载、校验、修复机制与厂商差异",
       "prefix": "Prefix 与模板管理",

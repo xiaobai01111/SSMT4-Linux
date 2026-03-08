@@ -43,7 +43,14 @@ run_tauri_bundle_build() {
   mkdir -p "$TAURI_CACHE_HOME"
   local -a tauri_args
   tauri_args=(--bundles "$bundles")
-  XDG_CACHE_HOME="$TAURI_CACHE_HOME" pnpm run tauri build -- "${tauri_args[@]}"
+  # 这里必须按 `pnpm run <script> <args...>` 形式传参。
+  # 若写成 `pnpm run tauri -- build ...`，pnpm 会把 `--` 原样传给脚本，
+  # 实际执行会变成 `bash scripts/tauri.sh -- build ...`，从而让 tauri CLI 报
+  # “unexpected argument 'build' found”。
+  #
+  # scripts/tauri.sh 内部会继续把 CLI 参数与 Cargo 参数分流，因此这里只传给
+  # tauri 子命令参数本身即可。
+  XDG_CACHE_HOME="$TAURI_CACHE_HOME" pnpm run tauri build "${tauri_args[@]}"
 }
 
 resolve_appimagetool_bin() {

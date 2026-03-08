@@ -962,6 +962,7 @@
       "home": "Home",
       "terms": "《服務條款》與風險聲明",
       "risk": "專案風險與要求",
+      "environment": "環境準備、依賴與底層執行堆疊",
       "download": "遊戲下載與主程式配置",
       "downloadMechanism": "下載、校驗、修復機制與廠商差異",
       "prefix": "Prefix 與模板管理",
