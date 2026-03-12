@@ -437,7 +437,7 @@ optdepends=(
   'pciutils: GPU detection (lspci)'
   '7zip: split archive extraction'
   'unzip: Proton archive extraction'
-  'git: Data-parameters repository sync'
+  'git: data-linux repository sync'
   'polkit: privileged telemetry host edits (pkexec)'
   'procps-ng: process monitoring (ps/pgrep)'
   'libayatana-appindicator: tray icon support'

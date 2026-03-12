@@ -30,7 +30,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             .map_err(|e| format!("创建关键目录失败 {}: {}", dir.display(), e))?;
     }
 
-    // 3. Data-parameters 仓库同步改为显式任务（pull_resource_updates），
+    // 3. data-linux（旧名 Data-parameters）仓库同步改为显式任务（pull_resource_updates），
     //    启动阶段不再隐式 clone/pull 外部仓库。
     //
     // 4. 符号链接和 Games 目录不在启动时创建

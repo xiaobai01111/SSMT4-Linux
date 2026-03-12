@@ -121,7 +121,7 @@ VKD3D-Proton 主要负责：
 - `DXVK-Sarek`
 - `DXVK-Sarek-Async`
 
-这些变体来自 `Data-parameters/dxvk/` 目录中的模块化配置，而不是只有官方 DXVK 一个仓库。
+这些变体来自 `data-linux/dxvk/` 目录中的模块化配置；旧版目录名 `Data-parameters` 也会被兼容处理，而不是只有官方 DXVK 一个仓库。
 
 ### 4.2 DXVK 远程列表如何获取
 

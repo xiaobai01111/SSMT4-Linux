@@ -36,6 +36,8 @@ pub const DATA_PARAMETERS_VERSION_MIRRORS: &[(&str, &str)] = &[
         "https://gitee.com/xiaobai01111/data-parameters/raw/main/version",
     ),
 ];
+pub const DATA_REPO_DIR_NAME: &str = "data-linux";
+pub const LEGACY_DATA_REPO_DIR_NAME: &str = "Data-parameters";
 static RESOURCE_DIR: Lazy<RwLock<Option<PathBuf>>> = Lazy::new(|| RwLock::new(None));
 static MANAGED_REPO_SYNC_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
@@ -44,9 +46,17 @@ pub fn set_resource_dir(resource_dir: PathBuf) {
     *RESOURCE_DIR.write().unwrap() = Some(resource_dir);
 }
 
-/// 外部 Data-parameters 仓库在本地的托管目录（随 dataDir 变化）。
+fn managed_repo_dir_with_name(dir_name: &str) -> PathBuf {
+    app_config::get_app_data_dir().join(dir_name)
+}
+
+/// 外部 data-linux 仓库在本地的托管目录（随 dataDir 变化）。
 pub fn managed_repo_dir() -> PathBuf {
-    app_config::get_app_data_dir().join("Data-parameters")
+    managed_repo_dir_with_name(DATA_REPO_DIR_NAME)
+}
+
+fn legacy_managed_repo_dir() -> PathBuf {
+    managed_repo_dir_with_name(LEGACY_DATA_REPO_DIR_NAME)
 }
 
 fn normalize_relative(relative: &str) -> &str {
@@ -58,6 +68,11 @@ fn push_unique_path(list: &mut Vec<PathBuf>, seen: &mut HashSet<String>, path: P
     if seen.insert(key) {
         list.push(path);
     }
+}
+
+fn push_repo_root_variants(list: &mut Vec<PathBuf>, seen: &mut HashSet<String>, base: &Path) {
+    push_unique_path(list, seen, base.join(DATA_REPO_DIR_NAME));
+    push_unique_path(list, seen, base.join(LEGACY_DATA_REPO_DIR_NAME));
 }
 
 fn push_unique_string(list: &mut Vec<String>, seen: &mut HashSet<String>, value: String) {
@@ -134,7 +149,7 @@ fn repo_sync_candidates(repo_dir: Option<&Path>) -> Vec<String> {
 
 fn summarize_sync_errors(action: &str, errors: Vec<String>) -> String {
     format!(
-        "Data-parameters {} 失败，GitHub/Gitee 镜像均不可用: {}",
+        "data-linux {} 失败，GitHub/Gitee 镜像均不可用: {}",
         action,
         errors.join(" | ")
     )
@@ -168,7 +183,7 @@ fn validate_repo_files(repo_dir: &Path) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "Data-parameters 仓库不完整，缺少关键文件: {}",
+            "data-linux 仓库不完整，缺少关键文件: {}",
             missing.join(", ")
         ))
     }
@@ -182,17 +197,61 @@ fn backup_broken_repo(repo_dir: &Path) -> Result<(), String> {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let backup_name = format!("Data-parameters.broken.{}", ts);
+    let repo_name = repo_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(DATA_REPO_DIR_NAME);
+    let backup_name = format!("{}.broken.{}", repo_name, ts);
     let backup_path = repo_dir
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join(backup_name);
-    rename_path(repo_dir, &backup_path, "重命名损坏的 Data-parameters 目录")
+    let action = format!("重命名损坏的 {} 目录", repo_name);
+    rename_path(repo_dir, &backup_path, &action)
 }
 
 fn ready_managed_repo_root() -> Option<PathBuf> {
+    for repo_dir in [managed_repo_dir(), legacy_managed_repo_dir()] {
+        if validate_repo_files(&repo_dir).is_ok() {
+            return Some(repo_dir);
+        }
+    }
+
+    None
+}
+
+fn migrate_legacy_managed_repo_dir() -> Result<(), String> {
     let repo_dir = managed_repo_dir();
-    validate_repo_files(&repo_dir).ok().map(|_| repo_dir)
+    let legacy_dir = legacy_managed_repo_dir();
+
+    if repo_dir.exists() || !legacy_dir.exists() {
+        return Ok(());
+    }
+
+    rename_path(
+        &legacy_dir,
+        &repo_dir,
+        "将旧 Data-parameters 目录迁移到 data-linux",
+    )?;
+
+    let repo_dir_str = repo_dir.to_string_lossy().to_string();
+    let _ = run_git(
+        &[
+            "-C",
+            &repo_dir_str,
+            "remote",
+            "set-url",
+            "origin",
+            DATA_PARAMETERS_GITHUB_REPO_URL,
+        ],
+        "remote set-url",
+    );
+
+    tracing::info!(
+        "已将旧 Data-parameters 目录迁移到 data-linux: {}",
+        repo_dir.display()
+    );
+    Ok(())
 }
 
 fn packaged_data_root_candidates(resource_dir: Option<&Path>) -> Vec<PathBuf> {
@@ -200,12 +259,8 @@ fn packaged_data_root_candidates(resource_dir: Option<&Path>) -> Vec<PathBuf> {
     let mut seen = HashSet::new();
 
     if let Some(resource_dir) = resource_dir {
-        push_unique_path(&mut roots, &mut seen, resource_dir.join("Data-parameters"));
-        push_unique_path(
-            &mut roots,
-            &mut seen,
-            resource_dir.join("resources").join("Data-parameters"),
-        );
+        push_repo_root_variants(&mut roots, &mut seen, resource_dir);
+        push_repo_root_variants(&mut roots, &mut seen, &resource_dir.join("resources"));
     }
 
     roots
@@ -254,20 +309,12 @@ fn debug_data_root_candidates() -> Vec<PathBuf> {
     }
 
     if let Ok(cwd) = std::env::current_dir() {
-        push_unique_path(&mut roots, &mut seen, cwd.join("Data-parameters"));
+        push_repo_root_variants(&mut roots, &mut seen, &cwd);
     }
 
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    push_unique_path(
-        &mut roots,
-        &mut seen,
-        manifest_dir.join("..").join("Data-parameters"),
-    );
-    push_unique_path(
-        &mut roots,
-        &mut seen,
-        manifest_dir.join("..").join("..").join("Data-parameters"),
-    );
+    push_repo_root_variants(&mut roots, &mut seen, &manifest_dir.join(".."));
+    push_repo_root_variants(&mut roots, &mut seen, &manifest_dir.join("..").join(".."));
 
     roots
         .into_iter()
@@ -285,7 +332,7 @@ fn clone_repo(repo_dir: &Path) -> Result<(), String> {
             &format!("clone ({})", url),
         ) {
             Ok(()) => {
-                tracing::info!("Data-parameters clone 成功，来源: {}", url);
+                tracing::info!("data-linux clone 成功，来源: {}", url);
                 return Ok(());
             }
             Err(e) => errors.push(format!("{} => {}", url, e)),
@@ -310,7 +357,7 @@ fn pull_repo(repo_dir: &Path) -> Result<(), String> {
             &format!("pull ({})", url),
         ) {
             Ok(()) => {
-                tracing::info!("Data-parameters pull 成功，来源: {}", url);
+                tracing::info!("data-linux pull 成功，来源: {}", url);
                 return Ok(());
             }
             Err(e) => errors.push(format!("{} => {}", url, e)),
@@ -339,13 +386,13 @@ fn restore_worktree(repo_dir: &Path) -> Result<(), String> {
 fn sync_managed_repo_inner(repo_dir: &Path) -> Result<(), String> {
     let parent = repo_dir
         .parent()
-        .ok_or_else(|| format!("Data-parameters 目录非法: {}", repo_dir.display()))?;
-    ensure_dir(parent).map_err(|e| format!("初始化 Data-parameters 上级目录失败: {}", e))?;
+        .ok_or_else(|| format!("data-linux 目录非法: {}", repo_dir.display()))?;
+    ensure_dir(parent).map_err(|e| format!("初始化 data-linux 上级目录失败: {}", e))?;
 
     let git_dir = repo_dir.join(".git");
     if git_dir.exists() {
         if let Err(e) = pull_repo(repo_dir) {
-            tracing::warn!("Data-parameters pull 失败，尝试修复工作区: {}", e);
+            tracing::warn!("data-linux pull 失败，尝试修复工作区: {}", e);
         }
 
         if validate_repo_files(repo_dir).is_ok() {
@@ -353,13 +400,13 @@ fn sync_managed_repo_inner(repo_dir: &Path) -> Result<(), String> {
         }
 
         if let Err(e) = restore_worktree(repo_dir) {
-            tracing::warn!("修复 Data-parameters 工作区失败: {}", e);
+            tracing::warn!("修复 data-linux 工作区失败: {}", e);
         }
         if validate_repo_files(repo_dir).is_ok() {
             return Ok(());
         }
 
-        tracing::warn!("Data-parameters 仓库仍不完整，准备重新克隆");
+        tracing::warn!("data-linux 仓库仍不完整，准备重新克隆");
         backup_broken_repo(repo_dir)?;
         clone_repo(repo_dir)?;
         return validate_repo_files(repo_dir);
@@ -367,7 +414,7 @@ fn sync_managed_repo_inner(repo_dir: &Path) -> Result<(), String> {
 
     if repo_dir.exists() {
         tracing::warn!(
-            "Data-parameters 路径已存在但不是 git 仓库，尝试重建: {}",
+            "data-linux 路径已存在但不是 git 仓库，尝试重建: {}",
             repo_dir.display()
         );
         backup_broken_repo(repo_dir)?;
@@ -379,16 +426,18 @@ fn sync_managed_repo_inner(repo_dir: &Path) -> Result<(), String> {
     validate_repo_files(repo_dir)
 }
 
-/// 拉取（或首次克隆）Data-parameters 外部仓库。
+/// 拉取（或首次克隆）data-linux 外部仓库。
 ///
 /// 说明：
-/// - 首启/损坏场景会自动自愈（重命名旧目录后重新克隆）。
+/// - 首启会尝试将旧版 Data-parameters 目录迁移到 data-linux。
+/// - 损坏场景会自动自愈（重命名旧目录后重新克隆）。
 /// - 失败时返回错误，由调用方决定是否降级继续运行。
 pub fn sync_managed_repo() -> Result<(), String> {
     let repo_dir = managed_repo_dir();
     let _guard = MANAGED_REPO_SYNC_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    migrate_legacy_managed_repo_dir()?;
     sync_managed_repo_inner(&repo_dir)
 }
 
@@ -445,13 +494,10 @@ pub fn resolve_data_path(relative: &str) -> Option<PathBuf> {
 
 pub fn read_data_json(relative: &str) -> Result<String, String> {
     let path = resolve_data_path(relative).ok_or_else(|| {
-        format!(
-            "未找到 Data-parameters 文件: {}（请检查仓库结构）",
-            relative
-        )
+        format!("未找到 data-linux 文件: {}（请检查仓库结构）", relative)
     })?;
     std::fs::read_to_string(&path)
-        .map_err(|e| format!("读取 Data-parameters 文件失败 {}: {}", path.display(), e))
+        .map_err(|e| format!("读取 data-linux 文件失败 {}: {}", path.display(), e))
 }
 
 pub fn resolve_catalog_path(file_name: &str) -> Option<PathBuf> {
@@ -474,10 +520,7 @@ pub fn resolve_catalog_path(file_name: &str) -> Option<PathBuf> {
 
 pub fn read_catalog_json(file_name: &str) -> Result<String, String> {
     let path = resolve_catalog_path(file_name).ok_or_else(|| {
-        format!(
-            "未找到 catalog 文件: {}（请检查 Data-parameters 仓库是否已拉取）",
-            file_name
-        )
+        format!("未找到 catalog 文件: {}（请检查 data-linux 仓库是否已拉取）", file_name)
     })?;
     std::fs::read_to_string(&path)
         .map_err(|e| format!("读取 catalog 文件失败 {}: {}", path.display(), e))
@@ -494,7 +537,7 @@ pub fn resolve_games_dirs() -> Vec<PathBuf> {
         }
     }
 
-    // 只要 Data-parameters/games 可用，就将其作为唯一权威来源；
+    // 只要 data-linux/games 可用，就将其作为唯一权威来源；
     // 避免旧版内置 resources/Games 混入过期游戏目录（如已下线条目）。
     if !dirs.is_empty() {
         return dirs;
@@ -513,7 +556,10 @@ pub fn resolve_games_dirs() -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_data_parameter_roots, packaged_data_root_candidates};
+    use super::{
+        collect_data_parameter_roots, packaged_data_root_candidates, DATA_REPO_DIR_NAME,
+        LEGACY_DATA_REPO_DIR_NAME,
+    };
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -551,8 +597,10 @@ mod tests {
         assert_eq!(
             candidates,
             vec![
-                resource_dir.join("Data-parameters"),
-                resource_dir.join("resources").join("Data-parameters"),
+                resource_dir.join(DATA_REPO_DIR_NAME),
+                resource_dir.join(LEGACY_DATA_REPO_DIR_NAME),
+                resource_dir.join("resources").join(DATA_REPO_DIR_NAME),
+                resource_dir.join("resources").join(LEGACY_DATA_REPO_DIR_NAME),
             ]
         );
     }

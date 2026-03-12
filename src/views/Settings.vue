@@ -1336,9 +1336,9 @@ watch(
         <div class="section-block">
           <div class="section-header">
             <div>
-              <div class="section-title">{{ tr('settings.resource.sectionTitle', 'Data-parameters 资源版本') }}</div>
+              <div class="section-title">{{ tr('settings.resource.sectionTitle', 'data-linux 资源版本') }}</div>
               <div class="section-hint">
-                {{ tr('settings.resource.sectionHint', '优先从 GitHub 检查 Data-parameters 版本；GitHub 异常时会自动回退到 Gitee 镜像，并可一键拉取更新。') }}
+                {{ tr('settings.resource.sectionHint', '优先从 GitHub 检查 data-linux（旧名 Data-parameters）版本；GitHub 异常时会自动回退到 Gitee 镜像，并可一键拉取更新。') }}
               </div>
             </div>
             <div class="toolbar-actions">

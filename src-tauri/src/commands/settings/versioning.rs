@@ -259,7 +259,7 @@ pub(super) async fn get_resource_version_info() -> Result<VersionCheckInfo, Stri
     if let Some(path) = local_path_note {
         notes.push(format!("本地版本文件: {}", path));
     } else {
-        notes.push("本地版本文件: 未找到 Data-parameters/version".to_string());
+        notes.push("本地版本文件: 未找到 data-linux/version".to_string());
     }
 
     let latest_version = match fetch_remote_data_parameters_version().await {

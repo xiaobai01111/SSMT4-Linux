@@ -166,7 +166,7 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
     }
 
     // 显示“全部支持的游戏”：
-    // - 优先使用资源目录（Data-parameters）作为支持列表
+    // - 优先使用资源目录（data-linux，旧名 Data-parameters）作为支持列表
     // - 当资源目录不可用时，回退到用户目录
     let final_game_ids: HashSet<String> = if !resource_game_ids.is_empty() {
         resource_game_ids.clone()
