@@ -1,0 +1,87 @@
+{
+  "defaultImporter": "WWMI",
+  "importerOrder": ["WWMI", "ZZMI", "SRMI", "GIMI", "HIMI", "EFMI"],
+  "gameImporters": {
+    "WutheringWaves": "WWMI",
+    "ZenlessZoneZero": "ZZMI",
+    "HonkaiStarRail": "SRMI",
+    "GenshinImpact": "GIMI",
+    "Genshin": "GIMI",
+    "HonkaiImpact3rd": "HIMI",
+    "Honkai3rd": "HIMI",
+    "ArknightsEndfield": "EFMI"
+  },
+  "importerMarkers": [
+    "Core",
+    "Mods",
+    "ShaderFixes",
+    "d3dx.ini",
+    "d3dx_user.ini",
+    "3dmloader.dll",
+    "d3d11.dll",
+    "d3dcompiler_47.dll"
+  ],
+  "importerBehaviors": {
+    "WWMI": {
+      "defaultUseHook": true,
+      "defaultEnforceRendering": true,
+      "defaultProcessTimeout": 30,
+      "defaultXxmiDllInitDelay": 500,
+      "requiredStartArgs": ["-dx11"],
+      "injectionLocked": false
+    },
+    "ZZMI": {
+      "defaultUseHook": true,
+      "defaultEnforceRendering": false,
+      "defaultProcessTimeout": 30,
+      "defaultXxmiDllInitDelay": 0,
+      "requiredStartArgs": [],
+      "injectionLocked": false
+    },
+    "SRMI": {
+      "defaultUseHook": true,
+      "defaultEnforceRendering": false,
+      "defaultProcessTimeout": 30,
+      "defaultXxmiDllInitDelay": 0,
+      "requiredStartArgs": [],
+      "injectionLocked": false
+    },
+    "GIMI": {
+      "defaultUseHook": true,
+      "defaultEnforceRendering": false,
+      "defaultProcessTimeout": 30,
+      "defaultXxmiDllInitDelay": 0,
+      "requiredStartArgs": [],
+      "injectionLocked": false
+    },
+    "HIMI": {
+      "defaultUseHook": true,
+      "defaultEnforceRendering": false,
+      "defaultProcessTimeout": 30,
+      "defaultXxmiDllInitDelay": 0,
+      "requiredStartArgs": [],
+      "injectionLocked": false
+    },
+    "EFMI": {
+      "defaultUseHook": false,
+      "defaultEnforceRendering": false,
+      "defaultProcessTimeout": 60,
+      "defaultXxmiDllInitDelay": 0,
+      "requiredStartArgs": ["-force-d3d11"],
+      "injectionLocked": true
+    }
+  },
+  "defaultImporterBehavior": {
+    "defaultUseHook": true,
+    "defaultEnforceRendering": true,
+    "defaultProcessTimeout": 30,
+    "defaultXxmiDllInitDelay": 0,
+    "requiredStartArgs": [],
+    "injectionLocked": false
+  },
+  "lockedImporterLegacyDefaults": {
+    "enforceRendering": true,
+    "processTimeout": 30,
+    "xxmiDllInitDelay": 500
+  }
+}

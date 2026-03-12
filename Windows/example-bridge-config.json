@@ -1,0 +1,115 @@
+{
+  "importer": "WWMI",
+  "paths": {
+    "app_root": "Z:\\home\\user\\data\\SSMT4-Linux",
+    "importer_folder": "Z:\\home\\user\\data\\SSMT4-Linux\\WWMI",
+    "packages_folder": "Z:\\home\\user\\data\\SSMT4-Linux\\Packages\\XXMI",
+    "game_folder": "Z:\\home\\user\\Games\\Wuthering Waves\\Wuthering Waves Game",
+    "game_exe": "Client-Win64-Shipping.exe",
+    "cache_folder": "Z:\\home\\user\\data\\SSMT4-Linux\\Cache",
+    "mod_folder": "Z:\\home\\user\\data\\SSMT4-Linux\\3Dmigoto-data\\WWMI\\Mods",
+    "shader_fixes_folder": "Z:\\home\\user\\data\\SSMT4-Linux\\3Dmigoto-data\\WWMI\\ShaderFixes",
+    "d3dx_ini": "Z:\\home\\user\\data\\SSMT4-Linux\\3Dmigoto-data\\WWMI\\d3dx.ini"
+  },
+  "game": {
+    "start_exe": "Client-Win64-Shipping.exe",
+    "start_args": [],
+    "work_dir": "Z:\\home\\user\\Games\\Wuthering Waves\\Wuthering Waves Game",
+    "process_name": "Client-Win64-Shipping.exe",
+    "process_start_method": "Native",
+    "process_priority": "Normal",
+    "process_timeout": 30
+  },
+  "migoto": {
+    "use_hook": true,
+    "enforce_rendering": true,
+    "enable_hunting": false,
+    "dump_shaders": false,
+    "mute_warnings": true,
+    "calls_logging": false,
+    "debug_logging": false,
+    "unsafe_mode": false,
+    "xxmi_dll_init_delay": 500
+  },
+  "wwmi": {
+    "configure_game": "true",
+    "unlock_fps": "true",
+    "apply_perf_tweaks": "true",
+    "force_max_lod_bias": "false",
+    "disable_wounded_fx": "false",
+    "mesh_lod_distance_offset": "-10",
+    "texture_streaming_boost": "20.0",
+    "texture_streaming_min_boost": "0.0",
+    "texture_streaming_use_all_mips": "true",
+    "texture_streaming_pool_size": "0",
+    "texture_streaming_limit_to_vram": "true",
+    "texture_streaming_fixed_pool_size": "true",
+    "perf_tweaks": {
+      "/Script/Engine.RendererSettings": {
+        "r.DynamicGlobalIlluminationMethod": "0",
+        "r.ReflectionMethod": "0"
+      }
+    }
+  },
+  "d3dx_ini": {
+    "core": {
+      "Loader": {
+        "loader": "XXMI Launcher.exe"
+      }
+    },
+    "enforce_rendering": {
+      "Rendering": {
+        "texture_hash": "1",
+        "track_texture_updates": "1"
+      }
+    },
+    "calls_logging": {
+      "Logging": {
+        "calls": { "on": "1", "off": "0" }
+      }
+    },
+    "debug_logging": {
+      "Logging": {
+        "debug": { "on": "1", "off": "0" }
+      }
+    },
+    "mute_warnings": {
+      "Logging": {
+        "show_warnings": { "on": "0", "off": "1" }
+      }
+    },
+    "enable_hunting": {
+      "Hunting": {
+        "hunting": { "on": "2", "off": "0" }
+      }
+    },
+    "dump_shaders": {
+      "Hunting": {
+        "marking_actions": { "on": "clipboard hlsl asm regex", "off": "clipboard" }
+      }
+    }
+  },
+  "signatures": {
+    "xxmi_public_key": "",
+    "deployed_migoto_signatures": {}
+  },
+  "extra_libraries": {
+    "enabled": false,
+    "paths": []
+  },
+  "custom_launch": {
+    "enabled": false,
+    "cmd": "",
+    "inject_mode": "Hook"
+  },
+  "pre_launch": {
+    "enabled": false,
+    "cmd": "",
+    "wait": true
+  },
+  "post_load": {
+    "enabled": false,
+    "cmd": "",
+    "wait": true
+  }
+}

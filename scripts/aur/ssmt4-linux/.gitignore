@@ -1,0 +1,9 @@
+src/
+pkg/
+ssmt4-linux/
+*.pkg.tar.*
+*.src.tar.*
+*.log
+.BUILDINFO
+.MTREE
+.PKGINFO
