@@ -1,3 +1,38 @@
+2026-03-13 0.0.9
+
+新增与重构
+- 继续深化后端模块拆分，补齐 `telemetry`、`settings`、`game_launcher`、`game_catalog_seed`、`bridge runtime`、`Hoyoverse 下载计划` 等高复杂度热点的职责边界。
+- 新增多组前端与后端单元测试，覆盖启动守卫、下载任务状态、游戏更新检查上下文、运行时事件状态、游戏目录 seed 导入策略、telemetry hosts 管理等关键纯逻辑。
+
+配置、数据库与目录状态
+- 运行时配置读取进一步收敛到 SQLite `AppConfig` 与统一 runtime config service，减少 `bootstrap`、旧设置文件与运行时全局状态并存导致的漂移。
+- `bootstrap` 配置链路继续收口为启动期加载与兼容迁移；前端不再承担“先调用 `load_settings` 才进入正确状态”的隐式职责。
+- `game_catalog_seed` 改为仅在首建或 schema 升级时导入，不再在每次数据库初始化时参与日常补缺，降低 seed catalog、数据库与运行时 preset 的多源耦合。
+- 数据库初始化失败不再被进程永久缓存，临时 I/O、权限或损坏修复后可在同一进程内重试恢复。
+- 设置读写接口按读/写语义进一步拆分，减少命令层对数据库松散 API 的直接依赖。
+
+启动链路、Bridge 与防护
+- `game_launcher` 继续拆分为目标解析、运行时环境、命令构建、启动监控、日志策略等子模块，主入口进一步退化为编排层。
+- 启动前环境日志与命令摘要增加敏感信息脱敏，避免代理、令牌、私有路径和自定义密钥直接写入游戏日志。
+- 进程监控改为基于 `/proc`、根 PID、启动时间、启动路径与子进程树联合判定，降低 `pgrep -f` 模糊匹配带来的误判。
+- `telemetry` / 防护子系统接口层改为强类型 payload，不再大量以 `serde_json::Value` 和手拼 JSON 作为命令返回值。
+- `/etc/hosts` 管理增加可替换访问层，优先直接写入，失败时才回退 `pkexec tee`；同时保留受控 block 级恢复，避免误删用户自定义 hosts 规则。
+- 防护应用链路补齐 staged rollback，避免出现“hosts 已改 / DLL 已删 / 渠道未改完”的半成功状态。
+- Bridge stdout 协议改为更严格的消息解析，字段缺失、未知类型或级别漂移会在解析层直接暴露，不再静默退化成空值事件。
+- Migoto / bridge 稳定字段继续向共享合同和共享默认值靠拢，降低前端、Rust 与 Windows bridge 三端重复维护成本。
+
+下载、资源与更新
+- 鸣潮更新链路优先走增量补丁；补丁不可用或失败时再回退全量比对更新，减少不必要的完整资源下载。
+- GitHub release / XXMI / Migoto 包下载改为复用流式落盘与统一校验逻辑，不再整包读入内存。
+- `Data-parameters` 资源策略收敛为发布态固定加载顺序；外部 Git 同步改为显式任务，不再在启动链路隐式 clone/pull。
+- 游戏更新状态在前端启动与下载完成后会主动刷新，首页与下载页不再依赖重启应用才能看到最新更新状态。
+
+前端页面与类型治理
+- `Home`、`Settings`、`GameDownloadModal`、`GameSettingsModal` 的部分控制流继续下沉到 composable / pure helper，降低页面层“控制器化”程度。
+- `GameSettingsModal` 的加载 session、自动保存、切换游戏回写和 info 未保存确认进一步收敛，减少重复写入和切换时序竞争。
+- 首页启动守卫继续拆为“纯策略计划 + UI 执行器”两层，减少领域规则与弹窗/导航耦合。
+- 清理一批前端 `any`、`EventListener` 强转与模板样式 `as any`，提升 `vue-tsc` 类型覆盖收益并减少展示层噪音代码。
+
 2026-03-08 0.0.8
 
 新增
