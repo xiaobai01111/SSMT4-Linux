@@ -165,14 +165,18 @@ pub(super) fn load_game_config_json(game_name: &str) -> Option<Value> {
 
 pub(super) fn resolve_game_preset_with_data(game_name: &str, data: Option<&Value>) -> String {
     let canonical = crate::configs::game_identity::to_canonical_or_keep(game_name);
-    let candidate = data
-        .and_then(extract_game_preset_from_config)
-        .unwrap_or_else(|| resolve_game_preset(&canonical));
-    if crate::configs::game_presets::get_preset(&candidate).is_some() {
-        candidate
-    } else {
-        canonical
+    if let Some(candidate) = data.and_then(extract_game_preset_from_config) {
+        if candidate.eq_ignore_ascii_case(&canonical) {
+            return candidate;
+        }
+        warn!(
+            "检测到配置中的 gamePreset 与当前游戏不一致，已忽略: game={}, config_preset={}",
+            canonical, candidate
+        );
+        return canonical;
     }
+
+    resolve_game_preset(&canonical)
 }
 
 pub(super) fn resolve_launch_launcher_api(game_config_data: Option<&Value>) -> Option<String> {
@@ -266,9 +270,13 @@ pub(super) fn resolve_game_preset(game_name: &str) -> String {
     };
 
     let candidate = extract_game_preset_from_config(&data).unwrap_or_else(|| game_name.clone());
-    if crate::configs::game_presets::get_preset(&candidate).is_some() {
+    if candidate.eq_ignore_ascii_case(&game_name) {
         candidate
     } else {
+        warn!(
+            "检测到数据库配置中的 gamePreset 与 key 不一致，已回退 canonical key: key={}, config_preset={}",
+            game_name, candidate
+        );
         game_name
     }
 }

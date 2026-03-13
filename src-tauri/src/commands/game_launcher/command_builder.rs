@@ -223,6 +223,7 @@ pub(super) fn resolve_run_target(
         run_exe,
         runner_exe_path,
         extra_args,
+        used_bridge: migoto_enabled,
     })
 }
 
@@ -443,6 +444,7 @@ pub(super) fn prepare_launch_command(
         runner_name,
         command_program_path,
         runner_exe_path: run_target.runner_exe_path.clone(),
+        used_bridge: run_target.used_bridge,
     })
 }
 

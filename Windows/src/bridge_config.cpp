@@ -139,6 +139,21 @@ static std::string contract_path(const char* section, const char* field) {
     return std::string(section) + "." + field;
 }
 
+static const cJSON* resolve_contract_field_item(
+    const cJSON* root,
+    const cJSON* section,
+    const bridge_contract::SectionContract& section_contract,
+    const bridge_contract::FieldContract& field
+) {
+    if (!section_contract.name) {
+        return cJSON_GetObjectItemCaseSensitive(root, field.name);
+    }
+    if (std::strcmp(section_contract.name, field.name) == 0) {
+        return section;
+    }
+    return cJSON_GetObjectItemCaseSensitive(section, field.name);
+}
+
 static void validate_section_contract(
     const cJSON* root,
     const bridge_contract::SectionContract& section_contract
@@ -153,9 +168,7 @@ static void validate_section_contract(
 
     for (std::size_t i = 0; i < section_contract.field_count; ++i) {
         const auto& field = section_contract.fields[i];
-        const cJSON* item = (section_contract.name && std::strcmp(section_contract.name, field.name) != 0)
-            ? cJSON_GetObjectItemCaseSensitive(section, field.name)
-            : section;
+        const cJSON* item = resolve_contract_field_item(root, section, section_contract, field);
         if (!matches_field_kind(item, field.kind)) {
             throw std::runtime_error(
                 "bridge-config.json field has invalid type: " +

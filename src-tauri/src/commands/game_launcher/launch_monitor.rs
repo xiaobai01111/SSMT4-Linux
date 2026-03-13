@@ -12,6 +12,7 @@ pub(super) async fn spawn_monitored_launch(
         runner_name,
         command_program_path,
         runner_exe_path,
+        used_bridge,
     } = prepared;
     let ResolvedLaunchTarget {
         configured_exe_path,
@@ -59,6 +60,7 @@ pub(super) async fn spawn_monitored_launch(
         game_name,
         region: launch_profile.runtime_flags.region.clone(),
         runner_name,
+        used_bridge,
         launched_at: started_launch.launched_at.clone(),
         pid: started_launch.pid,
         root_start_ticks: started_launch.root_start_ticks,
@@ -139,7 +141,21 @@ fn spawn_launch_exit_monitor(
     tokio::spawn(async move {
         let _write_guard = write_guard;
         let observation = wait_for_initial_child_exit(&mut child, &context).await;
-        super::append_bridge_exit_log(&context.game_name, observation.crashed);
+        if context.used_bridge {
+            let appended = super::append_bridge_exit_log(&context.game_name, observation.crashed);
+            if !appended {
+                warn!(
+                    "本次 bridge 启动未生成新的 bridge-output.log: game={}",
+                    context.game_name
+                );
+                super::append_game_log(
+                    &context.game_name,
+                    if observation.crashed { "WARN" } else { "INFO" },
+                    "bridge-log",
+                    "bridge-output.log 未生成或未刷新，本次 bridge 运行没有留下可用的当前日志",
+                );
+            }
+        }
         let monitor_timed_out = wait_for_related_game_process_exit(
             &context.game_name,
             &context.exe_name,

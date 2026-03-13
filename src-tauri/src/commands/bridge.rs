@@ -918,6 +918,24 @@ pub fn write_bridge_config(config: &BridgeConfig, app_root: &Path) -> Result<Pat
     std::fs::create_dir_all(&config_dir)
         .map_err(|e| format!("Failed to create bridge config dir: {}", e))?;
 
+    let bridge_log_path = config_dir.join("bridge-output.log");
+    match std::fs::remove_file(&bridge_log_path) {
+        Ok(_) => {
+            info!(
+                "Removed stale bridge output log before launch: {}",
+                bridge_log_path.display()
+            );
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            warn!(
+                "Failed to remove stale bridge output log {}: {}",
+                bridge_log_path.display(),
+                err
+            );
+        }
+    }
+
     let config_path = config_dir.join("bridge-config.json");
     let json = serde_json::to_string_pretty(config)
         .map_err(|e| format!("Failed to serialize bridge config: {}", e))?;

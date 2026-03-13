@@ -335,22 +335,27 @@ pub(super) fn attach_launch_log_pipes(child: &mut tokio::process::Child, game_na
     }
 }
 
-pub(super) fn append_bridge_exit_log(game_name: &str, crashed: bool) {
+pub(super) fn append_bridge_exit_log(game_name: &str, crashed: bool) -> bool {
     let bridge_log = crate::configs::app_config::get_app_data_dir()
         .join("Cache")
         .join("bridge")
         .join("bridge-output.log");
     if !bridge_log.exists() {
-        return;
+        return false;
     }
 
     if let Ok(content) = std::fs::read_to_string(&bridge_log) {
         let level = if crashed { "WARN" } else { "INFO" };
+        let mut appended = false;
         for line in content.lines().filter(|l| !l.trim().is_empty()) {
             info!("[bridge-log] {}", line);
             append_game_log(game_name, level, "bridge-log", line);
+            appended = true;
         }
+        return appended;
     }
+
+    false
 }
 
 fn spawn_launch_log_pipe<R>(game_name: String, stream: &'static str, pipe: R)

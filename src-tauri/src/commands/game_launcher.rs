@@ -355,6 +355,7 @@ struct ResolvedRunTarget {
     run_exe: PathBuf,
     runner_exe_path: String,
     extra_args: Vec<String>,
+    used_bridge: bool,
 }
 
 #[derive(Debug)]
@@ -364,6 +365,7 @@ struct PreparedLaunchCommand {
     runner_name: String,
     command_program_path: String,
     runner_exe_path: String,
+    used_bridge: bool,
 }
 
 #[derive(Debug)]
@@ -411,6 +413,7 @@ struct LaunchMonitorContext {
     game_name: String,
     region: String,
     runner_name: String,
+    used_bridge: bool,
     launched_at: String,
     pid: u32,
     root_start_ticks: Option<u64>,
@@ -505,7 +508,7 @@ fn attach_launch_log_pipes(child: &mut tokio::process::Child, game_name: &str) {
     log_policy::attach_launch_log_pipes(child, game_name)
 }
 
-fn append_bridge_exit_log(game_name: &str, crashed: bool) {
+fn append_bridge_exit_log(game_name: &str, crashed: bool) -> bool {
     log_policy::append_bridge_exit_log(game_name, crashed)
 }
 
@@ -820,6 +823,34 @@ mod tests {
         assert_eq!(
             resolve_preferred_migoto_importer("UnknownGame", "  efmi "),
             "EFMI"
+        );
+    }
+
+    #[test]
+    fn resolve_game_preset_with_data_ignores_mismatched_known_preset() {
+        let config = json!({
+            "basic": {
+                "gamePreset": "ArknightsEndfield"
+            }
+        });
+
+        assert_eq!(
+            target_resolver::resolve_game_preset_with_data("HonkaiStarRail", Some(&config)),
+            "HonkaiStarRail"
+        );
+    }
+
+    #[test]
+    fn resolve_game_preset_with_data_keeps_matching_preset() {
+        let config = json!({
+            "basic": {
+                "gamePreset": "HonkaiStarRail"
+            }
+        });
+
+        assert_eq!(
+            target_resolver::resolve_game_preset_with_data("HonkaiStarRail", Some(&config)),
+            "HonkaiStarRail"
         );
     }
 
