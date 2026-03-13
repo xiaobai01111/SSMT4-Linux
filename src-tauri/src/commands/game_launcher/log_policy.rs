@@ -365,6 +365,7 @@ where
     tokio::spawn(async move {
         let mut reader = BufReader::new(pipe);
         let mut buf = Vec::with_capacity(4096);
+        let mut suppressed_optional_gstreamer_warning = false;
         loop {
             buf.clear();
             match reader.read_until(b'\n', &mut buf).await {
@@ -377,6 +378,22 @@ where
                         continue;
                     }
                     let line = String::from_utf8_lossy(&buf).to_string();
+                    if is_optional_gstreamer_plugin_warning(&line) {
+                        if !suppressed_optional_gstreamer_warning {
+                            suppressed_optional_gstreamer_warning = true;
+                            append_game_log(
+                                &game_name,
+                                "INFO",
+                                "GStreamer",
+                                "检测到 Proton/Wine 的可选 GStreamer 插件扫描告警，已按非致命噪音折叠显示",
+                            );
+                            info!(
+                                "[{}] [GStreamer] 可选插件扫描告警已折叠，后续同类日志将不再逐条输出",
+                                game_name
+                            );
+                        }
+                        continue;
+                    }
                     let level = detect_external_log_level(stream, &line);
                     let source = detect_external_log_source(stream, &line);
                     append_game_log(&game_name, level, &source, &line);

@@ -26,6 +26,7 @@ pub struct ManagedModEntry {
 pub struct GameModDirectoryState {
     pub game_name: String,
     pub importer: String,
+    pub migoto_supported: bool,
     pub migoto_enabled: bool,
     pub mod_folder: String,
     pub mod_folder_exists: bool,
@@ -143,6 +144,21 @@ fn load_migoto_state(
     game_name: &str,
 ) -> Result<GameModDirectoryState, String> {
     let canonical = canonical_key(game_name);
+    let migoto_supported = crate::configs::game_presets::supports_migoto(&canonical);
+    if !migoto_supported {
+        return Ok(GameModDirectoryState {
+            game_name: canonical,
+            importer: String::new(),
+            migoto_supported: false,
+            migoto_enabled: false,
+            mod_folder: String::new(),
+            mod_folder_exists: false,
+            shader_fixes_folder: String::new(),
+            shader_fixes_folder_exists: false,
+            entries: Vec::new(),
+        });
+    }
+
     let config = game_config::load_game_config(app, &canonical)?;
     let paths = resolve_migoto_path_state_for_game(
         &canonical,
@@ -156,6 +172,7 @@ fn load_migoto_state(
     Ok(GameModDirectoryState {
         game_name: canonical,
         importer: paths.importer,
+        migoto_supported,
         migoto_enabled: paths.migoto_enabled,
         mod_folder: paths.mod_folder.to_string_lossy().to_string(),
         mod_folder_exists,

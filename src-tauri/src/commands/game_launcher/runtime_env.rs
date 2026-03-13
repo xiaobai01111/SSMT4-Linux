@@ -6,7 +6,7 @@ pub(super) fn load_prefix_runtime_context(
 ) -> Result<PrefixRuntimeContext, String> {
     let prefix_dir = prefix::get_prefix_dir(game_name);
     info!("prefix 路径: {}", prefix_dir.display());
-    let prefix_config = match prefix::load_prefix_config(game_name) {
+    let mut prefix_config = match prefix::load_prefix_config(game_name) {
         Ok(cfg) => {
             info!(
                 "已加载 prefix 配置: steam_deck_compat={}, steamos_compat={}, use_umu_run={}, custom_env={:?}, use_pressure_vessel={}",
@@ -33,6 +33,24 @@ pub(super) fn load_prefix_runtime_context(
             cfg
         }
     };
+
+    if should_prefer_umu_runtime_for_launch(
+        game_name,
+        wine_version_id,
+        &prefix_config.proton_settings,
+    ) {
+        prefix_config.proton_settings.use_umu_run = true;
+        info!(
+            "运行时已为 {} 自动启用 umu-run，以对齐 Proton/Lutris 启动链兼容性",
+            game_name
+        );
+        super::append_game_log(
+            game_name,
+            "INFO",
+            "runtime",
+            "runtime override: enabled umu-run for this launch to align with Lutris Proton compatibility",
+        );
+    }
     let pfx_dir = prefix::get_prefix_pfx_dir(game_name);
 
     prefix::ensure_cjk_fonts(game_name);
@@ -177,6 +195,39 @@ pub(super) fn load_prefix_runtime_context(
     })
 }
 
+fn should_prefer_umu_runtime_for_launch(
+    game_name: &str,
+    wine_version_id: &str,
+    settings: &crate::configs::wine_config::ProtonSettings,
+) -> bool {
+    should_prefer_umu_runtime_for_launch_with_availability(
+        game_name,
+        wine_version_id,
+        settings,
+        find_umu_run_binary().is_some(),
+    )
+}
+
+fn should_prefer_umu_runtime_for_launch_with_availability(
+    game_name: &str,
+    wine_version_id: &str,
+    settings: &crate::configs::wine_config::ProtonSettings,
+    umu_available: bool,
+) -> bool {
+    if !game_name.eq_ignore_ascii_case("ArknightsEndfield") {
+        return false;
+    }
+    if settings.use_umu_run {
+        return false;
+    }
+    if !umu_available {
+        return false;
+    }
+
+    let lower = wine_version_id.to_ascii_lowercase();
+    lower.contains("proton")
+}
+
 pub(super) fn build_launch_environment(
     target: &ResolvedLaunchTarget,
     runtime: &PrefixRuntimeContext,
@@ -213,25 +264,8 @@ pub(super) fn build_launch_environment(
         );
     }
 
-    let mut app_id = settings.steam_app_id.trim().to_string();
-    if app_id.is_empty() || app_id == "0" {
-        if let Some(from_preset) = target
-            .preset_meta
-            .and_then(|p| p.umu_game_id.as_deref())
-            .and_then(|id| id.strip_prefix("umu-"))
-            .filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()))
-        {
-            app_id = from_preset.to_string();
-        } else {
-            app_id = "0".to_string();
-        }
-    }
-    env.insert("SteamAppId".to_string(), app_id.clone());
-    env.insert("SteamGameId".to_string(), app_id.clone());
-    if app_id != "0" {
-        env.insert("STEAMAPPID".to_string(), app_id.clone());
-        env.insert("STEAM_COMPAT_APP_ID".to_string(), app_id);
-    }
+    let resolved_steam_app_id = resolve_numeric_steam_app_id(settings, target.preset_meta);
+    apply_steam_app_id_env(&mut env, resolved_steam_app_id.as_deref());
     env.insert(
         "STEAM_PROTON_PATH".to_string(),
         runtime.proton_path.to_string_lossy().to_string(),
@@ -271,6 +305,9 @@ pub(super) fn build_launch_environment(
         info!("注入自定义环境变量: {}={}", key, value);
         env.insert(key.clone(), value.clone());
     }
+
+    let fallback_steam_app_id = resolve_numeric_steam_app_id_from_env(&env);
+    apply_steam_app_id_env(&mut env, fallback_steam_app_id.as_deref());
 
     if env.get("PROTON_NO_ESYNC").is_some_and(|v| v.trim() == "1") {
         warn!("检测到 PROTON_NO_ESYNC=1：该设置可能导致部分游戏稳定性或联网异常，建议关闭后重试");
@@ -341,6 +378,64 @@ pub(super) fn build_launch_environment(
     }
 
     env
+}
+
+fn resolve_numeric_steam_app_id(
+    settings: &crate::configs::wine_config::ProtonSettings,
+    preset: Option<&crate::configs::game_presets::GamePreset>,
+) -> Option<String> {
+    let configured = settings.steam_app_id.trim();
+    if !configured.is_empty() && configured != "0" && configured.chars().all(|c| c.is_ascii_digit())
+    {
+        return Some(configured.to_string());
+    }
+
+    preset
+        .and_then(|p| p.umu_game_id.as_deref())
+        .and_then(|id| id.strip_prefix("umu-"))
+        .filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()))
+        .map(|id| id.to_string())
+}
+
+fn resolve_numeric_steam_app_id_from_env(env: &HashMap<String, String>) -> Option<String> {
+    for key in ["SteamAppId", "SteamGameId", "STEAMAPPID", "STEAM_COMPAT_APP_ID"] {
+        let Some(value) = env.get(key) else {
+            continue;
+        };
+        let trimmed = value.trim();
+        if !trimmed.is_empty() && trimmed != "0" && trimmed.chars().all(|c| c.is_ascii_digit()) {
+            return Some(trimmed.to_string());
+        }
+    }
+    None
+}
+
+fn apply_steam_app_id_env(env: &mut HashMap<String, String>, app_id: Option<&str>) {
+    const STEAM_APP_KEYS: [&str; 4] = [
+        "SteamAppId",
+        "SteamGameId",
+        "STEAMAPPID",
+        "STEAM_COMPAT_APP_ID",
+    ];
+
+    match app_id {
+        Some(id) if !id.trim().is_empty() && id.trim() != "0" => {
+            let normalized = id.trim().to_string();
+            for key in STEAM_APP_KEYS {
+                env.insert(key.to_string(), normalized.clone());
+            }
+        }
+        _ => {
+            for key in STEAM_APP_KEYS {
+                if env
+                    .get(key)
+                    .is_some_and(|value| value.trim().is_empty() || value.trim() == "0")
+                {
+                    env.remove(key);
+                }
+            }
+        }
+    }
 }
 
 fn apply_preset_env_defaults(
@@ -449,4 +544,126 @@ pub(super) fn apply_umu_env_defaults(
         env.get("STEAM_COMPAT_APP_ID").cloned().unwrap_or_default(),
         env.get("UMU_LOG").cloned().unwrap_or_default(),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_settings() -> crate::configs::wine_config::ProtonSettings {
+        crate::configs::wine_config::ProtonSettings::default()
+    }
+
+    fn preset_with_umu_id(
+        umu_game_id: Option<&str>,
+    ) -> crate::configs::game_presets::GamePreset {
+        crate::configs::game_presets::GamePreset {
+            id: "ArknightsEndfield".to_string(),
+            legacy_ids: Vec::new(),
+            display_name_en: "Arknights: Endfield".to_string(),
+            supported: true,
+            migoto_supported: true,
+            require_protection_before_launch: true,
+            default_folder: "ArknightsEndfield".to_string(),
+            launcher_api: None,
+            launcher_download_api: None,
+            download_servers: Vec::new(),
+            download_mode: crate::configs::game_presets::DownloadMode::LauncherInstaller,
+            audio_languages: Vec::new(),
+            telemetry_servers: Vec::new(),
+            telemetry_dlls: Vec::new(),
+            channel_protection: None,
+            env_defaults: HashMap::new(),
+            default_umu_run: false,
+            umu_game_id: umu_game_id.map(|value| value.to_string()),
+            umu_store: None,
+            force_direct_proton: false,
+            force_disable_pressure_vessel: false,
+            enable_network_log_by_default: false,
+        }
+    }
+
+    #[test]
+    fn resolve_numeric_steam_app_id_skips_zero_and_uses_preset_numeric_id() {
+        let settings = default_settings();
+        let preset = preset_with_umu_id(Some("umu-2452330"));
+        assert_eq!(
+            resolve_numeric_steam_app_id(&settings, Some(&preset)),
+            Some("2452330".to_string())
+        );
+    }
+
+    #[test]
+    fn apply_steam_app_id_env_removes_zero_value_placeholders() {
+        let mut env = HashMap::from([
+            ("SteamAppId".to_string(), "0".to_string()),
+            ("SteamGameId".to_string(), "0".to_string()),
+            ("STEAMAPPID".to_string(), "0".to_string()),
+            ("STEAM_COMPAT_APP_ID".to_string(), "0".to_string()),
+        ]);
+
+        apply_steam_app_id_env(&mut env, None);
+
+        assert!(!env.contains_key("SteamAppId"));
+        assert!(!env.contains_key("SteamGameId"));
+        assert!(!env.contains_key("STEAMAPPID"));
+        assert!(!env.contains_key("STEAM_COMPAT_APP_ID"));
+    }
+
+    #[test]
+    fn apply_steam_app_id_env_keeps_consistent_numeric_values() {
+        let mut env = HashMap::new();
+
+        apply_steam_app_id_env(&mut env, Some("2452330"));
+
+        assert_eq!(env.get("SteamAppId").map(String::as_str), Some("2452330"));
+        assert_eq!(env.get("SteamGameId").map(String::as_str), Some("2452330"));
+        assert_eq!(env.get("STEAMAPPID").map(String::as_str), Some("2452330"));
+        assert_eq!(
+            env.get("STEAM_COMPAT_APP_ID").map(String::as_str),
+            Some("2452330")
+        );
+    }
+
+    #[test]
+    fn endfield_prefers_umu_when_proton_build_and_umu_available() {
+        let settings = default_settings();
+        assert!(should_prefer_umu_runtime_for_launch_with_availability(
+            "ArknightsEndfield",
+            "dw_proton-dwproton-10.0-18",
+            &settings,
+            true,
+        ));
+    }
+
+    #[test]
+    fn non_endfield_does_not_force_umu_override() {
+        let settings = default_settings();
+        assert!(!should_prefer_umu_runtime_for_launch_with_availability(
+            "HonkaiStarRail",
+            "dw_proton-dwproton-10.0-18",
+            &settings,
+            true,
+        ));
+    }
+
+    #[test]
+    fn explicit_umu_setting_or_missing_binary_disables_override() {
+        let mut settings = default_settings();
+        settings.use_umu_run = true;
+        assert!(!should_prefer_umu_runtime_for_launch_with_availability(
+            "ArknightsEndfield",
+            "dw_proton-dwproton-10.0-18",
+            &settings,
+            true,
+        ));
+
+        let settings = default_settings();
+        assert!(!should_prefer_umu_runtime_for_launch_with_availability(
+            "ArknightsEndfield",
+            "dw_proton-dwproton-10.0-18",
+            &settings,
+            false,
+        ));
+    }
 }

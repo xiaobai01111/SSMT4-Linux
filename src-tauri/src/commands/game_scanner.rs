@@ -19,6 +19,7 @@ pub struct GameInfo {
     pub bg_video_path: Option<String>,
     pub bg_type: String,
     pub show_sidebar: bool,
+    pub migoto_supported: bool,
 }
 
 fn is_readable_file(path: &Path) -> bool {
@@ -295,6 +296,7 @@ pub fn scan_games(app: tauri::AppHandle) -> Result<Vec<GameInfo>, String> {
             bg_video_path: bg_video_str,
             bg_type,
             show_sidebar: !is_hidden,
+            migoto_supported: crate::configs::game_presets::supports_migoto(&game_id),
         });
     }
 

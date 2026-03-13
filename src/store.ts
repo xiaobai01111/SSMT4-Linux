@@ -191,6 +191,7 @@ const mapScannedGames = (games: GameInfo[]): GameInfo[] => {
     bgVideoRawPath: g.bgVideoPath || undefined,
     bgType: g.bgType || BGType.Image,
     showSidebar: g.showSidebar,
+    migotoSupported: Boolean(g.migotoSupported),
   } as GameInfo));
 };
 

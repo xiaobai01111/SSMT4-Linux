@@ -146,6 +146,26 @@ export function useSettingsMigotoConfig({
     return normalizedArgs.join(' ');
   };
 
+  const stripRequiredMigotoStartArgs = (
+    value: string | null | undefined,
+    requiredArgs: string[],
+  ) => {
+    const normalizedArgs = splitMigotoStartArgs(value);
+    if (!requiredArgs.length) {
+      return normalizedArgs.join(' ');
+    }
+
+    return normalizedArgs
+      .filter(
+        (arg) =>
+          !requiredArgs.some(
+            (requiredArg) =>
+              arg.toLowerCase() === requiredArg.toLowerCase(),
+          ),
+      )
+      .join(' ');
+  };
+
   const normalizeMigotoConfig = (
     config: Partial<MigotoGameConfig>,
     gameName = migotoSelectedGame.value,
@@ -320,6 +340,24 @@ export function useSettingsMigotoConfig({
     return t('settings.migoto.startArgsRequiredHint', { args: requiredArgs });
   });
 
+  const migotoRequiredStartArgs = computed(() =>
+    migotoImporterBehavior.value.requiredStartArgs.join(' '),
+  );
+
+  const migotoEditableStartArgs = computed({
+    get: () =>
+      stripRequiredMigotoStartArgs(
+        migotoConfig.start_args,
+        migotoImporterBehavior.value.requiredStartArgs,
+      ),
+    set: (value: string) => {
+      migotoConfig.start_args = normalizeMigotoStartArgs(
+        value,
+        migotoImporterBehavior.value.requiredStartArgs,
+      );
+    },
+  });
+
   let migotoPathDetectSeq = 0;
 
   const getDetectedMigotoImporterFolder = (
@@ -463,9 +501,10 @@ export function useSettingsMigotoConfig({
 
   const refreshMigotoGamesList = async () => {
     const games = await scanGames();
-    migotoGamesList.value = games;
-    if (!migotoSelectedGame.value && games.length > 0) {
-      migotoSelectedGame.value = games[0].name;
+    const supportedGames = games.filter((game) => game.migotoSupported);
+    migotoGamesList.value = supportedGames;
+    if (!supportedGames.some((game) => game.name === migotoSelectedGame.value)) {
+      migotoSelectedGame.value = supportedGames[0]?.name || '';
     }
   };
 
@@ -658,7 +697,9 @@ export function useSettingsMigotoConfig({
     migotoGamesList,
     migotoImporterHint,
     migotoInjectionHint,
+    migotoEditableStartArgs,
     migotoRiskStatement,
+    migotoRequiredStartArgs,
     migotoSelectedGame,
     migotoStartArgsHint,
     restoreMigotoPathAuto,

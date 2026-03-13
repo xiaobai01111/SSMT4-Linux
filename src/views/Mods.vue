@@ -28,6 +28,7 @@ type ModGameSummary = {
   fallbackDisplayName: string;
   searchNames: string[];
   iconPath: string;
+  migotoSupported: boolean;
   importer: string;
   migotoEnabled: boolean;
   modFolder: string;
@@ -178,6 +179,24 @@ const buildSummaryFolders = async (gameName: string, config: GameConfig) => {
 };
 
 const buildSummary = async (game: (typeof gamesList)[number]): Promise<ModGameSummary> => {
+  if (!game.migotoSupported) {
+    return {
+      name: game.name,
+      displayName: '',
+      fallbackDisplayName: trimValue(game.displayName) || game.name,
+      searchNames: [],
+      iconPath: game.iconPath || '',
+      migotoSupported: false,
+      importer: '',
+      migotoEnabled: false,
+      modFolder: '',
+      shaderFixesFolder: '',
+      modFolderExists: false,
+      shaderFixesFolderExists: false,
+      loadError: '',
+    };
+  }
+
   try {
     const config = await loadGameConfig(game.name);
     const folders = await buildSummaryFolders(game.name, config);
@@ -192,6 +211,7 @@ const buildSummary = async (game: (typeof gamesList)[number]): Promise<ModGameSu
       fallbackDisplayName: trimValue(game.displayName) || game.name,
       searchNames: [],
       iconPath: game.iconPath || '',
+      migotoSupported: true,
       importer: folders.importer,
       migotoEnabled: folders.migotoEnabled,
       modFolder: folders.modFolder,
@@ -207,6 +227,7 @@ const buildSummary = async (game: (typeof gamesList)[number]): Promise<ModGameSu
       fallbackDisplayName: trimValue(game.displayName) || game.name,
       searchNames: [],
       iconPath: game.iconPath || '',
+      migotoSupported: game.migotoSupported,
       importer: resolveMigotoImporter(game.name, ''),
       migotoEnabled: false,
       modFolder: '',
@@ -267,8 +288,9 @@ const selectedDisabledModCount = computed(() => {
 const syncSummaryFromState = (state: GameModDirectoryState) => {
   const summary = gameSummaries.value.find((entry) => entry.name === state.gameName);
   if (!summary) return;
+  summary.migotoSupported = state.migotoSupported;
   summary.importer = state.importer;
-  summary.migotoEnabled = state.migotoEnabled;
+  summary.migotoEnabled = state.migotoSupported && state.migotoEnabled;
   summary.modFolder = state.modFolder;
   summary.modFolderExists = state.modFolderExists;
   summary.shaderFixesFolder = state.shaderFixesFolder;
@@ -366,6 +388,17 @@ const openSelectedShaderFixesFolder = async () => {
 const toggleGameMigoto = async (nextValue: string | number | boolean) => {
   const summary = selectedGameSummary.value;
   if (!summary || isSavingGameToggle.value) return;
+  if (!summary.migotoSupported) {
+    await toast(
+      'warning',
+      tr('mods.infoTitle', '提示'),
+      tr(
+        'mods.unsupportedGame',
+        '当前游戏暂不支持 3DMigoto / Mod 管理，因此无法开启。',
+      ),
+    );
+    return;
+  }
 
   const enabled = Boolean(nextValue);
   if (enabled === summary.migotoEnabled) return;
@@ -555,11 +588,16 @@ onMounted(() => {
             <el-switch
               :model-value="selectedGameSummary.migotoEnabled"
               :loading="isSavingGameToggle"
-              :disabled="isSavingGameToggle"
+              :disabled="isSavingGameToggle || !selectedGameSummary.migotoSupported"
               @update:model-value="toggleGameMigoto"
             />
           </div>
-          <el-tag type="info">{{ selectedGameSummary.importer }}</el-tag>
+          <el-tag v-if="selectedGameSummary.migotoSupported" type="info">
+            {{ selectedGameSummary.importer }}
+          </el-tag>
+          <el-tag v-else type="warning">
+            {{ tr('mods.unsupportedStatus', '暂不支持') }}
+          </el-tag>
         </template>
       </div>
 
@@ -584,6 +622,10 @@ onMounted(() => {
           {{ tr('mods.loadError', '读取配置失败') }}: {{ selectedGameSummary.loadError }}
         </div>
 
+        <div v-if="!selectedGameSummary.migotoSupported" class="card-error">
+          {{ tr('mods.unsupportedGame', '当前游戏暂不支持 3DMigoto / Mod 管理，因此无法开启。') }}
+        </div>
+
         <div class="path-grid">
           <div class="path-block">
             <div class="path-label">{{ tr('mods.modFolder', 'Mod 目录') }}</div>
@@ -602,12 +644,12 @@ onMounted(() => {
         </div>
 
         <div class="selected-actions">
-          <el-button type="primary" @click="openSelectedModsFolder">{{ tr('mods.openMods', '打开 Mod 目录') }}</el-button>
-          <el-button @click="openSelectedShaderFixesFolder">{{ tr('mods.openShaderFixes', '打开 ShaderFixes') }}</el-button>
-          <el-button type="success" plain :disabled="isBulkOperating || !selectedState?.entries?.length" @click="toggleAllMods(true)">
+          <el-button type="primary" :disabled="!selectedGameSummary.migotoSupported" @click="openSelectedModsFolder">{{ tr('mods.openMods', '打开 Mod 目录') }}</el-button>
+          <el-button :disabled="!selectedGameSummary.migotoSupported" @click="openSelectedShaderFixesFolder">{{ tr('mods.openShaderFixes', '打开 ShaderFixes') }}</el-button>
+          <el-button type="success" plain :disabled="isBulkOperating || !selectedGameSummary.migotoSupported || !selectedState?.entries?.length" @click="toggleAllMods(true)">
             {{ tr('mods.enableAll', '全部启用') }}
           </el-button>
-          <el-button type="warning" plain :disabled="isBulkOperating || !selectedState?.entries?.length" @click="toggleAllMods(false)">
+          <el-button type="warning" plain :disabled="isBulkOperating || !selectedGameSummary.migotoSupported || !selectedState?.entries?.length" @click="toggleAllMods(false)">
             {{ tr('mods.disableAll', '全部禁用') }}
           </el-button>
         </div>
@@ -638,6 +680,13 @@ onMounted(() => {
 
       <div v-else-if="!selectedState && !isLoadingSelectedMods" class="empty-state">
         {{ tr('mods.noSelectedState', '当前无法读取所选游戏的 Mod 状态。') }}
+      </div>
+
+      <div
+        v-else-if="selectedGameSummary && !selectedGameSummary.migotoSupported"
+        class="empty-state"
+      >
+        {{ tr('mods.unsupportedNoMods', '当前游戏暂不支持 3DMigoto / Mod 管理。') }}
       </div>
 
       <div

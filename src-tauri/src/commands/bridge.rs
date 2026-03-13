@@ -1018,6 +1018,7 @@ mod tests {
 
         assert_eq!(config.game.process_timeout, 60);
         assert_eq!(config.migoto.enforce_rendering, false);
+        assert!(!config.migoto.use_hook);
         assert_eq!(config.migoto.xxmi_dll_init_delay, 0);
     }
 

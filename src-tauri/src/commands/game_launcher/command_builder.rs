@@ -1,5 +1,109 @@
 use super::*;
 use std::collections::HashSet;
+use std::fs;
+use std::path::Path;
+
+fn migoto_section<'a>(config: Option<&'a Value>) -> Option<&'a Value> {
+    config
+        .and_then(|value| value.pointer("/other/migoto"))
+        .or_else(|| config.and_then(|value| value.get("migoto")))
+}
+
+fn migoto_bool_flag(migoto: Option<&Value>, key: &str) -> bool {
+    migoto
+        .and_then(|value| value.get(key))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+}
+
+fn migoto_string_flag(migoto: Option<&Value>, key: &str) -> Option<String> {
+    migoto
+        .and_then(|value| value.get(key))
+        .and_then(|value| value.as_str())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn has_active_migoto_entries(dir: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return false;
+    };
+
+    entries.flatten().any(|entry| {
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy();
+        !name.is_empty() && !name.starts_with('.') && !name.ends_with(".disabled")
+    })
+}
+
+fn should_run_migoto_bridge(
+    game_preset: &str,
+    game_config_data: Option<&Value>,
+    app_data_dir: &Path,
+) -> bool {
+    let migoto = migoto_section(game_config_data);
+    let path_state = crate::utils::migoto_layout::resolve_migoto_path_state_for_game(
+        game_preset,
+        game_config_data.unwrap_or(&Value::Null),
+        app_data_dir.join("3Dmigoto-data"),
+    );
+
+    let has_mod_entries = has_active_migoto_entries(&path_state.mod_folder);
+    let has_shader_fixes = has_active_migoto_entries(&path_state.shader_fixes_folder);
+    let has_debug_features = [
+        "enable_hunting",
+        "dump_shaders",
+        "calls_logging",
+        "debug_logging",
+    ]
+    .iter()
+    .any(|key| migoto_bool_flag(migoto, key));
+    let has_extra_libraries = migoto_bool_flag(migoto, "extra_libraries_enabled")
+        && migoto_string_flag(migoto, "extra_libraries_paths").is_some();
+    let has_custom_launch = migoto_bool_flag(migoto, "custom_launch_enabled")
+        && migoto_string_flag(migoto, "custom_launch_cmd").is_some();
+
+    has_mod_entries
+        || has_shader_fixes
+        || has_debug_features
+        || has_extra_libraries
+        || has_custom_launch
+}
+
+fn should_force_umu_runner_with_availability(
+    game_preset: &str,
+    proton_path: &Path,
+    current_runner: LaunchRunner,
+    force_direct_proton: bool,
+    umu_available: bool,
+) -> bool {
+    if force_direct_proton || !umu_available || current_runner == LaunchRunner::Wine {
+        return false;
+    }
+    if !game_preset.eq_ignore_ascii_case("ArknightsEndfield") {
+        return false;
+    }
+
+    proton_path
+        .to_string_lossy()
+        .to_ascii_lowercase()
+        .contains("proton")
+}
+
+fn should_force_umu_runner(
+    game_preset: &str,
+    proton_path: &Path,
+    current_runner: LaunchRunner,
+    force_direct_proton: bool,
+) -> bool {
+    should_force_umu_runner_with_availability(
+        game_preset,
+        proton_path,
+        current_runner,
+        force_direct_proton,
+        super::runtime_env::find_umu_run_binary().is_some(),
+    )
+}
 
 pub(super) fn resolve_run_target(
     game_name: &str,
@@ -21,13 +125,18 @@ pub(super) fn resolve_run_target(
     };
 
     let migoto_globally_enabled = runtime_config.migoto_enabled;
+    let migoto_supported =
+        crate::configs::game_presets::supports_migoto(&target.game_preset);
     let migoto_requested = target
         .game_config_data
         .as_ref()
         .and_then(|c| c.pointer("/other/migoto/enabled"))
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let migoto_enabled = migoto_globally_enabled && migoto_requested;
+    let app_data_dir = crate::configs::app_config::get_app_data_dir();
+    let migoto_enabled = migoto_globally_enabled && migoto_supported && migoto_requested;
+    let migoto_runtime_required = migoto_enabled
+        && should_run_migoto_bridge(&target.game_preset, target.game_config_data.as_ref(), &app_data_dir);
     let configured_migoto_importer = target
         .game_config_data
         .as_ref()
@@ -46,6 +155,36 @@ pub(super) fn resolve_run_target(
             "3DMigoto is globally disabled; skipping migoto bridge and injection",
         );
     }
+    if migoto_requested && !migoto_supported {
+        warn!(
+            "当前游戏暂不支持 3DMigoto / Mod 注入链，已忽略该配置: preset={}",
+            target.game_preset
+        );
+        super::append_game_log(
+            game_name,
+            "WARN",
+            "launcher",
+            format!(
+                "3DMigoto is not supported for preset {}; skipping migoto bridge and injection",
+                target.game_preset
+            ),
+        );
+    }
+    if migoto_enabled && !migoto_runtime_required {
+        info!(
+            "3DMigoto 已启用，但未检测到有效 Mods/ShaderFixes 或高级调试功能，跳过 bridge 注入链: preset={}",
+            target.game_preset
+        );
+        super::append_game_log(
+            game_name,
+            "INFO",
+            "bridge",
+            format!(
+                "3DMigoto enabled for preset {}, but no active Mods/ShaderFixes or advanced bridge features were detected; skipping bridge injection",
+                target.game_preset
+            ),
+        );
+    }
     if migoto_enabled && !configured_migoto_importer.eq_ignore_ascii_case(&migoto_importer) {
         warn!(
             "3DMigoto importer 已按游戏预设校正: preset={}, configured={}, effective={}",
@@ -62,8 +201,7 @@ pub(super) fn resolve_run_target(
         );
     }
 
-    let (run_exe, extra_args) = if migoto_enabled {
-        let app_data_dir = crate::configs::app_config::get_app_data_dir();
+    let (run_exe, extra_args) = if migoto_runtime_required {
         let bridge_exe = target
             .game_config_data
             .as_ref()
@@ -97,8 +235,8 @@ pub(super) fn resolve_run_target(
 
         if target.game_preset == "ArknightsEndfield" {
             if let Some(chain) = super::find_endfield_launcher_chain(&target.launch_exe) {
-                let launcher_root = chain.launcher_exe.parent().ok_or_else(|| {
-                    format!("无法推断终末地启动器目录: {}", chain.launcher_exe.display())
+                let game_root = chain.endfield_exe.parent().ok_or_else(|| {
+                    format!("无法推断终末地主程序目录: {}", chain.endfield_exe.display())
                 })?;
                 let target_exe_name = chain
                     .endfield_exe
@@ -106,36 +244,31 @@ pub(super) fn resolve_run_target(
                     .and_then(|name| name.to_str())
                     .unwrap_or("Endfield.exe")
                     .to_string();
-                let start_exe_name = chain
-                    .launcher_exe
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("Launcher.exe")
-                    .to_string();
 
                 bridge_config.paths.game_folder =
-                    super::super::bridge::linux_to_wine_path(&launcher_root.to_string_lossy());
+                    super::super::bridge::linux_to_wine_path(&game_root.to_string_lossy());
                 bridge_config.paths.game_exe = target_exe_name.clone();
-                bridge_config.game.start_exe = start_exe_name;
+                bridge_config.game.start_exe = target_exe_name.clone();
                 bridge_config.game.work_dir =
-                    super::super::bridge::linux_to_wine_path(&launcher_root.to_string_lossy());
+                    super::super::bridge::linux_to_wine_path(&game_root.to_string_lossy());
                 bridge_config.game.process_name = target_exe_name.clone();
-                super::normalize_endfield_launcher_start_args(&mut bridge_config.game.start_args);
 
                 info!(
-                    "ArknightsEndfield 官方启动链: launcher={}, inject_target={}",
-                    chain.launcher_exe.display(),
+                    "ArknightsEndfield EFMI 对齐原版 XXMI: start_exe={}, launcher={}",
                     chain.endfield_exe.display()
+                    ,
+                    chain.launcher_exe.display()
                 );
                 super::append_game_log(
                     game_name,
                     "INFO",
                     "bridge",
                     format!(
-                        "Endfield official launcher flow: start_exe={}, process_name={}, start_args={:?}",
-                        chain.launcher_exe.display(),
+                        "Endfield EFMI aligned to original XXMI flow: start_exe={}, process_name={}, start_args={:?}, launcher={}",
+                        chain.endfield_exe.display(),
                         target_exe_name,
-                        bridge_config.game.start_args
+                        bridge_config.game.start_args,
+                        chain.launcher_exe.display()
                     ),
                 );
             }
@@ -223,7 +356,7 @@ pub(super) fn resolve_run_target(
         run_exe,
         runner_exe_path,
         extra_args,
-        used_bridge: migoto_enabled,
+        used_bridge: migoto_runtime_required,
     })
 }
 
@@ -287,6 +420,30 @@ pub(super) fn prepare_launch_command(
         target.game_config_data.as_ref(),
         &target.launch_region,
     )?;
+
+    let effective_proton_path = normalize_non_empty(&launch_profile.proton_path)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| runtime.proton_path.clone());
+    if should_force_umu_runner(
+        &target.game_preset,
+        &effective_proton_path,
+        launch_profile.runner.clone(),
+        launch_profile.runtime_flags.force_direct_proton,
+    ) {
+        if launch_profile.runner != LaunchRunner::UmuRun {
+            info!(
+                "ArknightsEndfield 运行时覆盖: 强制使用 umu-run 以对齐 Lutris Proton 启动链"
+            );
+            super::append_game_log(
+                game_name,
+                "INFO",
+                "runtime",
+                "runtime override: forcing umu-run for ArknightsEndfield to align with Lutris Proton launch path",
+            );
+        }
+        launch_profile.runner = LaunchRunner::UmuRun;
+        launch_profile.runtime_flags.use_pressure_vessel = false;
+    }
 
     if target
         .preset_meta
@@ -672,6 +829,7 @@ fn resolve_launch_command(
                     LaunchRunner::Proton
                 };
                 let cmd = build_proton_base_command(
+                    game_preset,
                     launch_profile.runtime_flags.use_pressure_vessel,
                     &proton_path,
                     run_exe,
@@ -691,12 +849,18 @@ fn resolve_launch_command(
                 warn!("未找到 Steam Linux Runtime，pressure-vessel runner 回退到直连 Proton");
                 runner = LaunchRunner::Proton;
                 launch_profile.runtime_flags.use_pressure_vessel = false;
-                build_direct_proton_command_spec_with_args(&proton_path, run_exe, &merged_args)
+                build_direct_proton_command_spec_with_args(
+                    game_preset,
+                    &proton_path,
+                    run_exe,
+                    &merged_args,
+                )
             }
         }
         LaunchRunner::Wine => resolve_wine_command(&proton_path, run_exe, &merged_args)?,
         LaunchRunner::Proton => {
             let cmd = build_proton_base_command(
+                game_preset,
                 launch_profile.runtime_flags.use_pressure_vessel,
                 &proton_path,
                 run_exe,
@@ -776,6 +940,34 @@ fn build_pressure_vessel_command(
     Some((entry_point, args))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProtonLaunchVerb {
+    Run,
+    WaitForExitAndRun,
+}
+
+impl ProtonLaunchVerb {
+    fn as_proton_arg(self) -> &'static str {
+        match self {
+            Self::Run => "run",
+            Self::WaitForExitAndRun => "waitforexitandrun",
+        }
+    }
+}
+
+fn resolve_direct_proton_launch_verb(game_preset: &str, run_exe: &Path) -> ProtonLaunchVerb {
+    if game_preset == "ArknightsEndfield"
+        && run_exe
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("Launcher.exe"))
+    {
+        return ProtonLaunchVerb::Run;
+    }
+
+    ProtonLaunchVerb::WaitForExitAndRun
+}
+
 pub(super) fn normalize_non_empty(input: &str) -> Option<String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -786,6 +978,7 @@ pub(super) fn normalize_non_empty(input: &str) -> Option<String> {
 }
 
 fn build_proton_base_command(
+    game_preset: &str,
     use_pressure_vessel: bool,
     proton_path: &Path,
     run_exe: &Path,
@@ -814,26 +1007,125 @@ fn build_proton_base_command(
         warn!("SteamLinuxRuntime not found, falling back to direct proton launch");
     }
 
-    build_direct_proton_command_spec_with_args(proton_path, run_exe, extra_args)
+    build_direct_proton_command_spec_with_args(game_preset, proton_path, run_exe, extra_args)
 }
 
 fn build_direct_proton_command_spec_with_args(
+    game_preset: &str,
     proton_path: &Path,
     run_exe: &Path,
     extra_args: &[String],
 ) -> (PathBuf, Vec<String>) {
+    let verb = resolve_direct_proton_launch_verb(game_preset, run_exe);
     debug!(
-        "Launching with direct proton: {} waitforexitandrun {} {:?}",
+        "Launching with direct proton: {} {} {} {:?}",
         proton_path.display(),
+        verb.as_proton_arg(),
         run_exe.display(),
         extra_args
     );
     let mut args = vec![
-        "waitforexitandrun".to_string(),
+        verb.as_proton_arg().to_string(),
         run_exe.to_string_lossy().to_string(),
     ];
     args.extend_from_slice(extra_args);
     (proton_path.to_path_buf(), args)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::bridge::{
+        BridgeMigotoConfig,
+    };
+
+    #[test]
+    fn endfield_launcher_uses_run_verb_for_direct_proton() {
+        let verb = resolve_direct_proton_launch_verb(
+            "ArknightsEndfield",
+            Path::new("/tmp/Hypergryph Launcher/Launcher.exe"),
+        );
+        assert_eq!(verb, ProtonLaunchVerb::Run);
+
+        let (_program, args) = build_direct_proton_command_spec_with_args(
+            "ArknightsEndfield",
+            Path::new("/tmp/proton"),
+            Path::new("/tmp/Hypergryph Launcher/Launcher.exe"),
+            &[],
+        );
+        assert_eq!(args.first().map(String::as_str), Some("run"));
+    }
+
+    #[test]
+    fn regular_games_keep_waitforexitandrun_verb() {
+        let verb = resolve_direct_proton_launch_verb(
+            "HonkaiStarRail",
+            Path::new("/tmp/HonkaiStarRail/StarRail.exe"),
+        );
+        assert_eq!(verb, ProtonLaunchVerb::WaitForExitAndRun);
+    }
+
+    #[test]
+    fn endfield_keeps_original_efmi_direct_injection_defaults() {
+        let mut migoto = BridgeMigotoConfig {
+            use_hook: false,
+            use_dll_drop: false,
+            enforce_rendering: false,
+            enable_hunting: false,
+            dump_shaders: false,
+            mute_warnings: true,
+            calls_logging: false,
+            debug_logging: false,
+            unsafe_mode: false,
+            xxmi_dll_init_delay: 0,
+        };
+
+        assert!(!migoto.use_hook);
+        assert_eq!(migoto.xxmi_dll_init_delay, 0);
+    }
+
+    #[test]
+    fn endfield_prefers_umu_runner_when_proton_and_available() {
+        assert!(should_force_umu_runner_with_availability(
+            "ArknightsEndfield",
+            Path::new("/tmp/dwproton-10.0-18/proton"),
+            LaunchRunner::Proton,
+            false,
+            true,
+        ));
+        assert!(should_force_umu_runner_with_availability(
+            "ArknightsEndfield",
+            Path::new("/tmp/dwproton-10.0-18/proton"),
+            LaunchRunner::UmuRun,
+            false,
+            true,
+        ));
+    }
+
+    #[test]
+    fn endfield_does_not_force_umu_when_unavailable_or_not_proton() {
+        assert!(!should_force_umu_runner_with_availability(
+            "ArknightsEndfield",
+            Path::new("/tmp/dwproton-10.0-18/proton"),
+            LaunchRunner::Proton,
+            false,
+            false,
+        ));
+        assert!(!should_force_umu_runner_with_availability(
+            "ArknightsEndfield",
+            Path::new("/tmp/wine/bin/wine"),
+            LaunchRunner::Proton,
+            false,
+            true,
+        ));
+        assert!(!should_force_umu_runner_with_availability(
+            "ArknightsEndfield",
+            Path::new("/tmp/dwproton-10.0-18/proton"),
+            LaunchRunner::Wine,
+            false,
+            true,
+        ));
+    }
 }
 
 pub(super) fn build_launch_process_command(

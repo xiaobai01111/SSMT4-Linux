@@ -601,6 +601,7 @@ mod tests {
             legacy_ids: Vec::new(),
             display_name_en: "Sample Game".to_string(),
             supported: true,
+            migoto_supported: true,
             require_protection_before_launch: true,
             default_folder: "SampleGame".to_string(),
             launcher_api: None,

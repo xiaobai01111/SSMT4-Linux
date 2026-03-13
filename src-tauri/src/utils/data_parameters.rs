@@ -486,6 +486,60 @@ fn resolve_from_roots(roots: &[PathBuf], relative: &str) -> Option<PathBuf> {
         .find(|path| path.exists())
 }
 
+fn catalog_candidate_paths(file_name: &str) -> Vec<PathBuf> {
+    let name = file_name.trim();
+    if name.is_empty() {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    let mut seen = HashSet::new();
+
+    let data_roots = data_parameter_roots();
+    let catalog_rel = format!("catalogs/{}", name);
+    for root in data_roots {
+        let path = root.join(&catalog_rel);
+        if path.exists() {
+            push_unique_path(&mut candidates, &mut seen, path);
+        }
+    }
+
+    let legacy_roots = legacy_resource_roots();
+    let legacy_rel = format!("bootstrap/{}", name);
+    for root in legacy_roots {
+        let path = root.join(&legacy_rel);
+        if path.exists() {
+            push_unique_path(&mut candidates, &mut seen, path);
+        }
+    }
+
+    candidates
+}
+
+fn catalog_schema_version(path: &Path) -> u64 {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+        .and_then(|value| value.get("schemaVersion").and_then(serde_json::Value::as_u64))
+        .unwrap_or(0)
+}
+
+fn resolve_seed_catalog_path(candidates: &[PathBuf]) -> Option<PathBuf> {
+    let mut best: Option<(PathBuf, u64)> = None;
+
+    for candidate in candidates {
+        let schema_version = catalog_schema_version(candidate);
+        match &best {
+            Some((_, best_version)) if *best_version >= schema_version => {}
+            _ => {
+                best = Some((candidate.clone(), schema_version));
+            }
+        }
+    }
+
+    best.map(|(path, _)| path)
+}
+
 pub fn resolve_data_path(relative: &str) -> Option<PathBuf> {
     resolve_from_roots(&data_parameter_roots(), relative)
 }
@@ -498,21 +552,11 @@ pub fn read_data_json(relative: &str) -> Result<String, String> {
 }
 
 pub fn resolve_catalog_path(file_name: &str) -> Option<PathBuf> {
-    let name = file_name.trim();
-    if name.is_empty() {
-        return None;
+    let candidates = catalog_candidate_paths(file_name);
+    if file_name.trim().ends_with(".seed.json") {
+        return resolve_seed_catalog_path(&candidates);
     }
-
-    let data_roots = data_parameter_roots();
-    let catalog_rel = format!("catalogs/{}", name);
-    if let Some(path) = resolve_from_roots(&data_roots, &catalog_rel) {
-        return Some(path);
-    }
-
-    // 兼容旧内置路径：resources/bootstrap/*.seed.json
-    let legacy_roots = legacy_resource_roots();
-    let legacy_rel = format!("bootstrap/{}", name);
-    resolve_from_roots(&legacy_roots, &legacy_rel)
+    candidates.into_iter().next()
 }
 
 pub fn read_catalog_json(file_name: &str) -> Result<String, String> {
@@ -557,10 +601,21 @@ pub fn resolve_games_dirs() -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_data_parameter_roots, packaged_data_root_candidates, DATA_REPO_DIR_NAME,
-        LEGACY_DATA_REPO_DIR_NAME,
+        collect_data_parameter_roots, packaged_data_root_candidates, resolve_seed_catalog_path,
+        DATA_REPO_DIR_NAME, LEGACY_DATA_REPO_DIR_NAME,
     };
     use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_test_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("ssmt4-{name}-{unique}"));
+        std::fs::create_dir_all(&path).expect("create temp test dir");
+        path
+    }
 
     #[test]
     fn collect_data_parameter_roots_prefers_managed_then_packaged_then_debug() {
@@ -605,5 +660,41 @@ mod tests {
                     .join(LEGACY_DATA_REPO_DIR_NAME),
             ]
         );
+    }
+
+    #[test]
+    fn resolve_seed_catalog_path_prefers_higher_schema_version() {
+        let temp_dir = temp_test_dir("seed-schema");
+        let managed = temp_dir.join("managed").join("catalogs");
+        let packaged = temp_dir.join("packaged").join("catalogs");
+        std::fs::create_dir_all(&managed).expect("create managed catalogs");
+        std::fs::create_dir_all(&packaged).expect("create packaged catalogs");
+
+        let managed_path = managed.join("game_catalog.seed.json");
+        let packaged_path = packaged.join("game_catalog.seed.json");
+        std::fs::write(&managed_path, r#"{"schemaVersion":1}"#).expect("write managed seed");
+        std::fs::write(&packaged_path, r#"{"schemaVersion":2}"#).expect("write packaged seed");
+
+        let resolved = resolve_seed_catalog_path(&[managed_path.clone(), packaged_path.clone()]);
+
+        assert_eq!(resolved, Some(packaged_path));
+    }
+
+    #[test]
+    fn resolve_seed_catalog_path_keeps_first_when_schema_same() {
+        let temp_dir = temp_test_dir("seed-order");
+        let first_dir = temp_dir.join("first").join("catalogs");
+        let second_dir = temp_dir.join("second").join("catalogs");
+        std::fs::create_dir_all(&first_dir).expect("create first catalogs");
+        std::fs::create_dir_all(&second_dir).expect("create second catalogs");
+
+        let first_path = first_dir.join("game_catalog.seed.json");
+        let second_path = second_dir.join("game_catalog.seed.json");
+        std::fs::write(&first_path, r#"{"schemaVersion":2}"#).expect("write first seed");
+        std::fs::write(&second_path, r#"{"schemaVersion":2}"#).expect("write second seed");
+
+        let resolved = resolve_seed_catalog_path(&[first_path.clone(), second_path]);
+
+        assert_eq!(resolved, Some(first_path));
     }
 }

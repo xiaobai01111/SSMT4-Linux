@@ -31,6 +31,7 @@ export interface GameInfo {
   bgVideoRawPath?: string;
   bgType: BackgroundType;
   showSidebar: boolean;
+  migotoSupported: boolean;
 }
 
 export interface GameConfigOther {

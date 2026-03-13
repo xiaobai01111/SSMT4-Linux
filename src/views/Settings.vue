@@ -801,9 +801,11 @@ const {
   loadMigotoGameConfig,
   migotoAvailableImporterOptions,
   migotoConfig,
+  migotoEditableStartArgs,
   migotoGamesList,
   migotoImporterHint,
   migotoInjectionHint,
+  migotoRequiredStartArgs,
   migotoRiskStatement,
   migotoSelectedGame,
   migotoStartArgsHint,
@@ -1801,6 +1803,9 @@ const selectDataDir = async () => {
                 :value="g.name"
               />
             </el-select>
+            <div class="section-hint" style="margin-top: 8px;">
+              {{ tr('settings.migoto.supportedGamesOnlyHint', '这里只显示当前支持 3DMigoto 的游戏。') }}
+            </div>
           </div>
 
           <template v-if="migotoSelectedGame">
@@ -2032,7 +2037,10 @@ const selectDataDir = async () => {
                 </el-form-item>
 
                 <el-form-item :label="$t('settings.migoto.startArgs')">
-                  <el-input v-model="migotoConfig.start_args" :placeholder="$t('settings.migoto.startArgsPlaceholder')" />
+                  <el-input v-model="migotoEditableStartArgs" :placeholder="$t('settings.migoto.startArgsPlaceholder')" />
+                  <div v-if="migotoRequiredStartArgs" class="form-item-hint">
+                    {{ $t('settings.migoto.startArgsRequiredValue', { args: migotoRequiredStartArgs }) }}
+                  </div>
                   <div class="form-item-hint">{{ migotoStartArgsHint }}</div>
                 </el-form-item>
 

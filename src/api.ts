@@ -127,6 +127,7 @@ export interface ManagedModEntry {
 export interface GameModDirectoryState {
   gameName: string;
   importer: string;
+  migotoSupported: boolean;
   migotoEnabled: boolean;
   modFolder: string;
   modFolderExists: boolean;

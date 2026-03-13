@@ -73,8 +73,7 @@ pub(super) fn enforce_launch_protection(
         &target.game_preset,
         Some(&target.game_root_str),
     )?;
-    let mut protection_required =
-        protection_status.enforce_at_launch || protection_status.supported;
+    let mut protection_required = launch_protection_required(protection_status.enforce_at_launch);
     let mut protection_enabled = protection_status.enabled;
 
     if !protection_required && target.game_preset != game_name {
@@ -82,7 +81,7 @@ pub(super) fn enforce_launch_protection(
             game_name,
             Some(&target.game_root_str),
         )?;
-        let fallback_required = fallback_status.enforce_at_launch || fallback_status.supported;
+        let fallback_required = launch_protection_required(fallback_status.enforce_at_launch);
         if fallback_required {
             info!(
                 "防护判定已从 preset={} 回退到 game_name={}",
@@ -111,6 +110,16 @@ pub(super) fn enforce_launch_protection(
     );
 
     if !protection_required {
+        if let Some(optional_warning) = optional_protection_warning(
+            protection_status.supported,
+            protection_status.enforce_at_launch,
+            protection_status.enabled,
+            &protection_status.missing,
+        ) {
+            warn!("{}", optional_warning);
+            super::append_game_log(game_name, "WARN", "session", optional_warning);
+        }
+
         let blocked_domains = protection_status.telemetry.blocked.clone();
         if !blocked_domains.is_empty() {
             warn!(
@@ -145,6 +154,31 @@ pub(super) fn enforce_launch_protection(
     }
 
     Ok(())
+}
+
+fn launch_protection_required(enforce_at_launch: bool) -> bool {
+    enforce_at_launch
+}
+
+fn optional_protection_warning(
+    supported: bool,
+    enforce_at_launch: bool,
+    enabled: bool,
+    missing: &[String],
+) -> Option<String> {
+    if !supported || enforce_at_launch || enabled {
+        return None;
+    }
+
+    let detail = missing.join("；");
+    if detail.is_empty() {
+        Some("检测到当前游戏支持可选防护，但尚未完全启用。本次不会阻止启动。".to_string())
+    } else {
+        Some(format!(
+            "检测到当前游戏支持可选防护，但尚未完全启用。本次不会阻止启动。详情：{}",
+            detail
+        ))
+    }
 }
 
 pub(super) fn read_non_empty_string(v: Option<&Value>) -> Option<String> {
@@ -406,5 +440,32 @@ pub(super) fn resolve_preferred_migoto_importer(
                 normalized.to_ascii_uppercase()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn warn_only_protection_does_not_block_launch() {
+        let missing = vec!["未找到渠道配置文件".to_string()];
+
+        assert!(!launch_protection_required(false));
+        assert_eq!(
+            optional_protection_warning(true, false, false, &missing),
+            Some(
+                "检测到当前游戏支持可选防护，但尚未完全启用。本次不会阻止启动。详情：未找到渠道配置文件"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn enforced_protection_still_blocks_launch() {
+        let missing = vec!["未找到渠道配置文件".to_string()];
+
+        assert!(launch_protection_required(true));
+        assert_eq!(optional_protection_warning(true, true, false, &missing), None);
     }
 }

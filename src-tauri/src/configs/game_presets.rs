@@ -90,6 +90,9 @@ pub struct GamePreset {
     /// 是否支持下载/管理
     #[serde(default = "default_true")]
     pub supported: bool,
+    /// 是否支持 3DMigoto / Mod 注入链
+    #[serde(default = "default_true")]
+    pub migoto_supported: bool,
     /// 启动前是否强制要求“防护已启用”
     #[serde(default = "default_true")]
     pub require_protection_before_launch: bool,
@@ -174,6 +177,12 @@ pub fn get_preset(id: &str) -> Option<&'static GamePreset> {
 /// 获取全部预设（只读引用）
 pub fn all_presets() -> &'static HashMap<String, GamePreset> {
     &PRESETS
+}
+
+pub fn supports_migoto(id: &str) -> bool {
+    get_preset(id)
+        .map(|preset| preset.migoto_supported)
+        .unwrap_or(false)
 }
 
 fn normalize_preset(mut preset: GamePreset) -> GamePreset {

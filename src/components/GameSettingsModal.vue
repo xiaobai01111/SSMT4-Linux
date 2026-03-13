@@ -545,6 +545,12 @@ const doUninstallVkd3d = async () => {
 // Tabs（参考 Lutris 风格：5个标签页）
 const activeTab = ref('info');
 const globalMigotoEnabled = computed(() => !!appSettings.migotoEnabled);
+const currentGameMigotoSupported = computed(() => {
+  const gameName =
+    normalizeGameName(props.gameName) || normalizeGameName(config.basic.gamePreset);
+  if (!gameName) return false;
+  return gamesList.find((game) => game.name === gameName)?.migotoSupported ?? false;
+});
 const tabs = computed(() => {
   const baseTabs = [
     { id: 'info', label: tr('gamesettingsmodal.tabs.info', '游戏信息') },
@@ -564,12 +570,24 @@ const tabs = computed(() => {
 const migotoEnabled = ref(false);
 
 const loadMigotoConfig = () => {
-  migotoEnabled.value = !!config.other?.migoto?.enabled;
+  migotoEnabled.value = currentGameMigotoSupported.value && !!config.other?.migoto?.enabled;
 };
 
 const saveMigotoEnabled = async () => {
   if (!config.other) config.other = {};
   if (!config.other.migoto) config.other.migoto = {};
+  if (!currentGameMigotoSupported.value) {
+    config.other.migoto.enabled = false;
+    migotoEnabled.value = false;
+    notify?.warning(
+      tr('gamesettingsmodal.migoto.unsupportedTitle', '当前游戏暂不支持'),
+      tr(
+        'gamesettingsmodal.migoto.unsupportedHint',
+        '当前游戏暂不支持 3DMigoto / Mod 加载，因此无法开启。',
+      ),
+    );
+    return;
+  }
   config.other.migoto.enabled = migotoEnabled.value;
   try {
     await persistLegacyConfig();
@@ -578,6 +596,13 @@ const saveMigotoEnabled = async () => {
     notify?.error(t('gamesettingsmodal.migoto.saveFailed'), `${e}`);
   }
 };
+
+watch(
+  currentGameMigotoSupported,
+  () => {
+    loadMigotoConfig();
+  },
+);
 
 watch(
   tabs,
@@ -1299,19 +1324,36 @@ defineExpose({
               <div class="setting-group">
                 <div class="setting-checkbox-row">
                   <label class="checkbox-label" style="font-size: 15px; font-weight: 600;">
-                    <input type="checkbox" v-model="migotoEnabled" />
+                    <input
+                      type="checkbox"
+                      v-model="migotoEnabled"
+                      :disabled="!currentGameMigotoSupported"
+                    />
                     {{ t('gamesettingsmodal.migoto.enabled') }}
                   </label>
                 </div>
                 <div class="info-sub" style="margin-top:6px;">
-                  {{ migotoEnabled ? t('gamesettingsmodal.migoto.enabledHint') : t('gamesettingsmodal.migoto.disabledHint') }}
+                  {{
+                    currentGameMigotoSupported
+                      ? (migotoEnabled
+                        ? t('gamesettingsmodal.migoto.enabledHint')
+                        : t('gamesettingsmodal.migoto.disabledHint'))
+                      : tr(
+                        'gamesettingsmodal.migoto.unsupportedHint',
+                        '当前游戏暂不支持 3DMigoto / Mod 加载，因此无法开启。',
+                      )
+                  }}
                 </div>
               </div>
 
               <!-- 保存 + 引导到 Settings -->
               <div class="setting-group" style="margin-top: 16px;">
                 <div class="button-row">
-                  <button class="action-btn highlight" @click="saveMigotoEnabled">
+                  <button
+                    class="action-btn highlight"
+                    @click="saveMigotoEnabled"
+                    :disabled="!currentGameMigotoSupported"
+                  >
                     {{ t('gamesettingsmodal.migoto.save') }}
                   </button>
                 </div>
