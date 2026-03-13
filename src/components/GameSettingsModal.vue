@@ -46,6 +46,9 @@ import { appSettings, loadGames, gamesList, switchToGame } from '../store';
 import { useI18n } from 'vue-i18n';
 import { inject } from 'vue';
 import { useGameInfoEditor } from '../composables/useGameInfoEditor';
+import { useGameSettingsLifecycle } from '../composables/useGameSettingsLifecycle';
+import { useGameSettingsManagedSections } from '../composables/useGameSettingsManagedSections';
+import { useGameSettingsPersistence } from '../composables/useGameSettingsPersistence';
 import type { GameSettingsOpenRequest, GameSettingsTab, RuntimeFocusTarget } from '../types/gameSettings';
 import type { GameConfig } from '../types/ipc';
 import { NOTIFY_KEY } from '../types/notify';
@@ -92,9 +95,6 @@ const {
   setRuntimeEnv: setInfoRuntimeEnv,
   markDirty: markInfoDirty,
 } = gameInfoEditor;
-
-const isLoading = ref(false);
-const hasLoadedConfig = ref(false);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -182,6 +182,38 @@ const createDefaultGameConfig = (gameName: string): GameConfig => ({
   other: {},
 });
 
+const normalizeGameName = (value: string | null | undefined): string =>
+  String(value || '').trim();
+
+const isEditableGameName = (value: string | null | undefined): boolean => {
+  const gameName = normalizeGameName(value);
+  return !!gameName && gameName !== 'Default';
+};
+
+const {
+  isLoading,
+  hasLoadedConfig,
+  activeLoadSession,
+  startLoadSession,
+  isActiveLoadSession,
+  loadManagedSectionGroups,
+  saveManagedSections,
+} = useGameSettingsManagedSections({
+  normalizeGameName,
+  isEditableGameName,
+  isModalOpen: () => props.modelValue,
+});
+
+const { handleGameNameChange, requestClose } = useGameSettingsLifecycle({
+  askConfirm,
+  tr,
+});
+
+const syncSystemOptionsIntoConfig = () => {
+  config.other.gpuIndex = selectedGpuIndex.value;
+  config.other.gameLang = gameLang.value;
+};
+
 // Wine/Proton State
 const wineVersions = ref<WineVersion[]>([]);
 const selectedWineVersionId = ref('');
@@ -212,9 +244,8 @@ const newEnvValue = ref('');
 const selectedGpuIndex = ref(-1); // -1 = 自动
 const gameLang = ref(''); // '' = 跟随系统
 
-const loadWineState = async () => {
-  const gameName = String(props.gameName || '').trim();
-  if (!gameName || gameName === 'Default') {
+const loadWineState = async (gameName: string, sessionId: number) => {
+  if (!isEditableGameName(gameName)) {
     wineVersions.value = [];
     selectedWineVersionId.value = '';
     return;
@@ -226,6 +257,7 @@ const loadWineState = async () => {
       checkVulkan(),
       getDisplayInfo(),
     ]);
+    if (!isActiveLoadSession(sessionId)) return;
     wineVersions.value = wines;
     if (wineConfig.wine_version_id) {
       selectedWineVersionId.value = wineConfig.wine_version_id;
@@ -234,34 +266,8 @@ const loadWineState = async () => {
     vulkanInfo.value = vulkan;
     displayInfo.value = display;
   } catch (e) {
+    if (!isActiveLoadSession(sessionId)) return;
     console.error('Failed to load wine state:', e);
-  }
-};
-
-const saveWineConfig = async () => {
-  if (!props.gameName || !selectedWineVersionId.value) return;
-  try {
-    await setGameWineConfig(props.gameName, selectedWineVersionId.value, protonSettings);
-    // Also save wineVersionId into game config other section
-    config.other.wineVersionId = selectedWineVersionId.value;
-    await saveConfig();
-  } catch (e) {
-    console.error('Failed to save wine config:', e);
-    notify?.error(tr('gamesettingsmodal.message.error.title', '保存失败'), tr('gamesettingsmodal.messages.wineSaveFailed', `Wine 配置保存失败: ${e}`).replace('{error}', String(e)));
-  }
-};
-
-const saveSystemOptions = async () => {
-  try {
-    // 保存 GPU 和语言到 config.other
-    config.other.gpuIndex = selectedGpuIndex.value;
-    config.other.gameLang = gameLang.value;
-    await saveConfig();
-    // 同步保存 Proton 设置（沙盒等）
-    await saveWineConfig();
-    notify?.success(tr('gamesettingsmodal.messages.successTitle', '保存成功'), tr('gamesettingsmodal.messages.systemOptionsSaved', '系统选项已保存'));
-  } catch (e) {
-    notify?.error(tr('gamesettingsmodal.message.error.title', '保存失败'), tr('gamesettingsmodal.messages.systemOptionsSaveFailed', `系统选项保存失败: ${e}`).replace('{error}', String(e)));
   }
 };
 
@@ -306,11 +312,15 @@ const isHoyoverse = computed(() =>
   ),
 );
 
-const loadJadeiteState = async () => {
-  if (!props.gameName) return;
+const loadJadeiteState = async (gameName = props.gameName, sessionId?: number) => {
+  const resolvedGameName = normalizeGameName(gameName);
+  if (!resolvedGameName) return;
   try {
-    jadeiteStatus.value = await getJadeiteStatus(props.gameName);
+    const nextStatus = await getJadeiteStatus(resolvedGameName);
+    if (sessionId !== undefined && !isActiveLoadSession(sessionId)) return;
+    jadeiteStatus.value = nextStatus;
   } catch (e) {
+    if (sessionId !== undefined && !isActiveLoadSession(sessionId)) return;
     jadeiteStatus.value = null;
   }
 };
@@ -321,7 +331,7 @@ const doInstallJadeite = async () => {
     isJadeiteInstalling.value = true;
     const result = await installJadeite(props.gameName);
     await showMessage(result, { title: 'Jadeite', kind: 'info' });
-    await loadJadeiteState();
+    await loadJadeiteState(props.gameName);
   } catch (e) {
     await showMessage(tr('gamesettingsmodal.messages.jadeiteInstallFailed', `安装 jadeite 失败: ${e}`).replace('{error}', String(e)), { title: tr('gamesettingsmodal.message.error.title', '错误'), kind: 'error' });
   } finally {
@@ -329,15 +339,17 @@ const doInstallJadeite = async () => {
   }
 };
 
-const loadPrefixState = async () => {
-  const gameName = String(props.gameName || '').trim();
-  if (!gameName || gameName === 'Default') {
+const loadPrefixState = async (gameName: string, sessionId: number) => {
+  if (!isEditableGameName(gameName)) {
     prefixInfo.value = null;
     return;
   }
   try {
-    prefixInfo.value = await getPrefixInfo(gameName);
+    const nextPrefixInfo = await getPrefixInfo(gameName);
+    if (!isActiveLoadSession(sessionId)) return;
+    prefixInfo.value = nextPrefixInfo;
   } catch (e) {
+    if (!isActiveLoadSession(sessionId)) return;
     prefixInfo.value = {
       game_id: gameName,
       exists: false,
@@ -391,9 +403,8 @@ const buildEmptyDxvkStatus = (): DxvkInstalledStatus => ({
   dlls_found: [],
 });
 
-const loadDxvkState = async () => {
-  const gameName = String(props.gameName || '').trim();
-  if (!gameName || gameName === 'Default') {
+const loadDxvkState = async (gameName: string, sessionId: number) => {
+  if (!isEditableGameName(gameName)) {
     dxvkLocalVersions.value = [];
     dxvkInstalledStatus.value = buildEmptyDxvkStatus();
     dxvkSelectedKey.value = '';
@@ -404,6 +415,7 @@ const loadDxvkState = async () => {
       scanLocalDxvk(),
       detectDxvkStatus(gameName),
     ]);
+    if (!isActiveLoadSession(sessionId)) return;
     dxvkLocalVersions.value = local;
     dxvkInstalledStatus.value = status;
 
@@ -417,6 +429,7 @@ const loadDxvkState = async () => {
       dxvkSelectedKey.value = `${local[0].version}|${local[0].variant}`;
     }
   } catch (e) {
+    if (!isActiveLoadSession(sessionId)) return;
     dxvkLocalVersions.value = [];
     dxvkInstalledStatus.value = buildEmptyDxvkStatus();
     dxvkSelectedKey.value = '';
@@ -433,7 +446,7 @@ const doInstallDxvk = async () => {
     notify?.info(label, tr('gamesettingsmodal.messages.applyingVersion', `正在应用 ${label} ${version}...`).replace('{label}', label).replace('{version}', version));
     const result = await installDxvk(props.gameName, version, variant);
     notify?.success(tr('gamesettingsmodal.messages.applyDone', `${label} 应用完成`).replace('{label}', label), result);
-    await loadDxvkState();
+    await loadDxvkState(normalizeGameName(props.gameName), activeLoadSession.value);
   } catch (e) {
     notify?.error(tr('gamesettingsmodal.messages.dxvkApplyFailedTitle', 'DXVK 应用失败'), `${e}`);
   } finally {
@@ -449,7 +462,7 @@ const doUninstallDxvk = async () => {
     isDxvkBusy.value = true;
     const result = await uninstallDxvk(props.gameName);
     notify?.success(tr('gamesettingsmodal.messages.dxvkUninstallDone', 'DXVK 卸载完成'), result);
-    await loadDxvkState();
+    await loadDxvkState(normalizeGameName(props.gameName), activeLoadSession.value);
   } catch (e) {
     notify?.error(tr('gamesettingsmodal.messages.dxvkUninstallFailed', 'DXVK 卸载失败'), `${e}`);
   } finally {
@@ -469,9 +482,8 @@ const buildEmptyVkd3dStatus = (): Vkd3dInstalledStatus => ({
   dlls_found: [],
 });
 
-const loadVkd3dState = async () => {
-  const gameName = String(props.gameName || '').trim();
-  if (!gameName || gameName === 'Default') {
+const loadVkd3dState = async (gameName: string, sessionId: number) => {
+  if (!isEditableGameName(gameName)) {
     vkd3dLocalVersions.value = [];
     vkd3dInstalledStatus.value = buildEmptyVkd3dStatus();
     vkd3dSelectedVersion.value = '';
@@ -482,6 +494,7 @@ const loadVkd3dState = async () => {
       scanLocalVkd3d(),
       detectVkd3dStatus(gameName),
     ]);
+    if (!isActiveLoadSession(sessionId)) return;
     vkd3dLocalVersions.value = local;
     vkd3dInstalledStatus.value = status;
 
@@ -491,6 +504,7 @@ const loadVkd3dState = async () => {
       vkd3dSelectedVersion.value = local[0].version;
     }
   } catch (e) {
+    if (!isActiveLoadSession(sessionId)) return;
     vkd3dLocalVersions.value = [];
     vkd3dInstalledStatus.value = buildEmptyVkd3dStatus();
     vkd3dSelectedVersion.value = '';
@@ -504,7 +518,7 @@ const doInstallVkd3d = async () => {
     notify?.info('VKD3D-Proton', tr('gamesettingsmodal.messages.vkd3dApplying', `正在应用 VKD3D-Proton ${vkd3dSelectedVersion.value}...`).replace('{version}', vkd3dSelectedVersion.value));
     const result = await installVkd3d(props.gameName, vkd3dSelectedVersion.value);
     notify?.success(tr('gamesettingsmodal.messages.vkd3dApplyDone', 'VKD3D 应用完成'), result);
-    await loadVkd3dState();
+    await loadVkd3dState(normalizeGameName(props.gameName), activeLoadSession.value);
   } catch (e) {
     notify?.error(tr('gamesettingsmodal.messages.vkd3dApplyFailed', 'VKD3D 应用失败'), `${e}`);
   } finally {
@@ -520,7 +534,7 @@ const doUninstallVkd3d = async () => {
     isVkd3dBusy.value = true;
     const result = await uninstallVkd3d(props.gameName);
     notify?.success(tr('gamesettingsmodal.messages.vkd3dUninstallDone', 'VKD3D 卸载完成'), result);
-    await loadVkd3dState();
+    await loadVkd3dState(normalizeGameName(props.gameName), activeLoadSession.value);
   } catch (e) {
     notify?.error(tr('gamesettingsmodal.messages.vkd3dUninstallFailed', 'VKD3D 卸载失败'), `${e}`);
   } finally {
@@ -558,7 +572,7 @@ const saveMigotoEnabled = async () => {
   if (!config.other.migoto) config.other.migoto = {};
   config.other.migoto.enabled = migotoEnabled.value;
   try {
-    await saveConfig();
+    await persistLegacyConfig();
     notify?.success(t('gamesettingsmodal.migoto.saved'), '');
   } catch (e) {
     notify?.error(t('gamesettingsmodal.migoto.saveFailed'), `${e}`);
@@ -654,12 +668,14 @@ const syncInfoConfigToLegacyState = () => {
   config.other.displayName = infoConfig.value.meta.displayName;
 };
 
-const loadInfoConfig = async () => {
-  if (!props.gameName) return;
+const loadInfoConfig = async (gameName: string, sessionId: number) => {
+  if (!isEditableGameName(gameName)) return;
   try {
-    await loadGameInfoState(props.gameName);
+    await loadGameInfoState(gameName, () => isActiveLoadSession(sessionId));
+    if (!isActiveLoadSession(sessionId)) return;
     syncInfoConfigToLegacyState();
   } catch (e) {
+    if (!isActiveLoadSession(sessionId)) return;
     console.error('[GameInfoV2] load failed:', e);
   }
 };
@@ -688,7 +704,7 @@ const saveInfoMetaSection = async () => {
   try {
     await saveInfoMetaRaw(props.gameName);
     syncInfoConfigToLegacyState();
-    await loadJadeiteState();
+    await loadJadeiteState(props.gameName);
     notify?.success(tr('gamesettingsmodal.messages.successTitle', '保存成功'), tr('gamesettingsmodal.messages.infoSaved', '游戏信息已保存'));
   } catch (e) {
     console.error('[GameInfoV2] save meta failed:', e);
@@ -696,24 +712,41 @@ const saveInfoMetaSection = async () => {
   }
 };
 
-const saveInfoRuntimeSection = async () => {
-  if (!props.gameName) return;
-  try {
-    await saveInfoRuntimeRaw(props.gameName);
-    syncInfoConfigToLegacyState();
-  } catch (e) {
-    console.error('[GameInfoV2] save runtime failed:', e);
-    notify?.error(tr('gamesettingsmodal.message.error.title', '保存失败'), tr('gamesettingsmodal.messages.runtimeSaveFailed', `运行环境保存失败: ${e}`).replace('{error}', String(e)));
-  }
-};
+const {
+  persistLegacyConfig,
+  persistManagedState,
+  persistRuntimeSection,
+  persistSystemSection,
+} = useGameSettingsPersistence({
+  normalizeGameName,
+  isEditableGameName,
+  currentGameName: () => props.gameName,
+  isSaveBlocked: () => isLoading.value,
+  config,
+  protonSettings,
+  selectedWineVersionId: () => selectedWineVersionId.value,
+  syncSystemOptionsIntoConfig,
+  syncInfoConfigToLegacyState,
+  saveGameConfig: apiSaveGameConfig,
+  saveWineConfig: setGameWineConfig,
+  saveInfoRuntime: saveInfoRuntimeRaw,
+});
 
 const saveRuntimeTabSettings = async () => {
   try {
-    await saveInfoRuntimeSection();
-    await saveWineConfig();
+    await persistRuntimeSection();
     notify?.success(tr('gamesettingsmodal.messages.successTitle', '保存成功'), tr('gamesettingsmodal.messages.runtimeSaved', '运行环境配置已保存'));
   } catch (e) {
     notify?.error(tr('gamesettingsmodal.message.error.title', '保存失败'), tr('gamesettingsmodal.messages.runtimeSaveConfigFailed', `运行环境配置保存失败: ${e}`).replace('{error}', String(e)));
+  }
+};
+
+const saveSystemOptions = async () => {
+  try {
+    await persistSystemSection();
+    notify?.success(tr('gamesettingsmodal.messages.successTitle', '保存成功'), tr('gamesettingsmodal.messages.systemOptionsSaved', '系统选项已保存'));
+  } catch (e) {
+    notify?.error(tr('gamesettingsmodal.message.error.title', '保存失败'), tr('gamesettingsmodal.messages.systemOptionsSaveFailed', `系统选项保存失败: ${e}`).replace('{error}', String(e)));
   }
 };
 
@@ -814,12 +847,13 @@ const refreshGameVersion = async () => {
 const isBusy = computed(() => isLoading.value || infoLoading.value);
 
 // Load/Save Logic
-const loadConfig = async () => {
-  if (!props.gameName) return;
+const loadConfig = async (gameName: string, sessionId: number) => {
+  if (!isEditableGameName(gameName)) return;
   isLoading.value = true;
   hasLoadedConfig.value = false;
   try {
-    const data = await apiLoadGameConfig(props.gameName);
+    const data = await apiLoadGameConfig(gameName);
+    if (!isActiveLoadSession(sessionId)) return;
     const normalized = normalizeLoadedConfig(data);
     config.basic = normalized.basic;
     config.other = normalized.other || {};
@@ -831,19 +865,12 @@ const loadConfig = async () => {
     loadMigotoConfig();
     // Note: configName is NOT set from file, but from props
   } catch (e) {
+    if (!isActiveLoadSession(sessionId)) return;
     console.error(t('gamesettingsmodal.error.failloadconfig'), e);
   } finally {
-    isLoading.value = false;
-  }
-};
-
-const saveConfig = async () => {
-  if (!props.gameName || isLoading.value) return; // Prevent saving if loading isn't complete
-
-  try {
-    await apiSaveGameConfig(props.gameName, config);
-  } catch (e) {
-    console.error(t('gamesettingsmodal.error.configfailedsaving'), { e: e });
+    if (isActiveLoadSession(sessionId)) {
+      isLoading.value = false;
+    }
   }
 };
 
@@ -856,6 +883,8 @@ const resetToDefault = async () => {
 
   try {
     isLoading.value = true;
+    const gameName = normalizeGameName(props.gameName);
+    const sessionId = startLoadSession();
     // 并行重置图标和背景
     await Promise.all([
       apiResetGameIcon(props.gameName),
@@ -865,8 +894,8 @@ const resetToDefault = async () => {
     await apiSaveGameConfig(props.gameName, createDefaultGameConfig(props.gameName));
     // 并行重新加载
     await Promise.all([
-      loadConfig(),
-      loadInfoConfig(),
+      loadConfig(gameName, sessionId),
+      loadInfoConfig(gameName, sessionId),
       loadGames(),
     ]);
     notify?.success(tr('gamesettingsmodal.messages.resetSuccessTitle', '重置成功'), tr('gamesettingsmodal.messages.resetSuccess', '游戏配置已恢复默认'));
@@ -886,8 +915,10 @@ const selectIcon = async () => {
     });
 
     if (file) {
+      const gameName = normalizeGameName(props.gameName);
+      const sessionId = startLoadSession();
       await apiSetGameIcon(props.gameName, file);
-      await Promise.all([loadInfoConfig(), loadGames()]);
+      await Promise.all([loadInfoConfig(gameName, sessionId), loadGames()]);
       notify?.success(tr('gamesettingsmodal.messages.iconUpdatedTitle', '图标已更新'), tr('gamesettingsmodal.messages.iconUpdated', '游戏图标设置成功'));
     }
   } catch (e) {
@@ -901,8 +932,10 @@ const selectBackground = async () => {
     const filters = [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp', 'ico', 'avif'] }];
     const file = await openFileDialog({ multiple: false, filters });
     if (file) {
+      const gameName = normalizeGameName(props.gameName);
+      const sessionId = startLoadSession();
       await apiSetGameBackground(props.gameName, file, infoConfig.value.assets.backgroundType);
-      await Promise.all([loadInfoConfig(), loadGames()]);
+      await Promise.all([loadInfoConfig(gameName, sessionId), loadGames()]);
       notify?.success(tr('gamesettingsmodal.messages.backgroundUpdatedTitle', '背景已更新'), tr('gamesettingsmodal.messages.backgroundUpdated', '背景图片设置成功'));
     }
   } catch (e) {
@@ -914,12 +947,14 @@ const selectBackground = async () => {
 const resetBackgroundToDefault = async () => {
   if (!props.gameName) return;
   try {
+    const gameName = normalizeGameName(props.gameName);
+    const sessionId = startLoadSession();
     await Promise.all([
       apiResetGameIcon(props.gameName),
       apiResetGameBackground(props.gameName),
     ]);
     await Promise.all([
-      loadInfoConfig(),
+      loadInfoConfig(gameName, sessionId),
       loadGames(),
     ]);
     notify?.success(tr('gamesettingsmodal.messages.restoreSuccessTitle', '恢复成功'), tr('gamesettingsmodal.messages.restoreSuccess', '图标和背景已恢复默认'));
@@ -1018,59 +1053,73 @@ const deleteCurrentConfig = async () => {
 };
 
 const loadAllSections = () => {
-  if (!props.gameName) return;
-  configName.value = props.gameName;
-  hasLoadedConfig.value = false;
-  void loadConfig();
-  void loadInfoConfig();
-  void loadWineState();
-  void loadJadeiteState();
-  void loadPrefixState();
-  void loadDxvkState();
-  void loadVkd3dState();
+  return loadManagedSectionGroups(
+    props.gameName,
+    [
+      [loadConfig, loadInfoConfig],
+      [
+        loadWineState,
+        loadJadeiteState,
+        loadPrefixState,
+        loadDxvkState,
+        loadVkd3dState,
+      ],
+    ],
+    {
+      beforeLoad: (gameName) => {
+        configName.value = gameName;
+      },
+    },
+  );
+};
+
+const persistManagedSections = async (targetGameName = props.gameName) => {
+  await saveManagedSections(targetGameName, async (gameName) => {
+    await persistManagedState(gameName);
+  });
 };
 
 // Open/Close
 watch(() => props.modelValue, async (val) => {
   if (val) {
     activeTab.value = 'info'; // Reset to first tab
-    loadAllSections();
+    await loadAllSections();
     await nextTick();
     await applyOpenRequest(pendingOpenRequest.value);
   } else {
+    startLoadSession();
     clearRuntimeAttention();
-    // Only save when current modal session loaded successfully.
-    if (hasLoadedConfig.value) {
-      await saveConfig();
-      await saveWineConfig();
-    }
+    await persistManagedSections();
   }
 }, { immediate: true });
 
 // 切换游戏时重新加载配置，确保每个游戏的设置独立
 watch(() => props.gameName, async (newGame, oldGame) => {
-  if (!newGame || newGame === oldGame) return;
-  // 先保存旧游戏的配置
-  if (oldGame && hasLoadedConfig.value && props.modelValue) {
-    await saveConfig();
-    await saveWineConfig();
-  }
-  // 加载新游戏的配置
-  if (props.modelValue) {
-    loadAllSections();
-  }
+  await handleGameNameChange({
+    newGame,
+    oldGame,
+    isModalOpen: props.modelValue,
+    hasLoadedConfig: hasLoadedConfig.value,
+    hasUnsavedInfoChanges: hasUnsavedInfoChanges.value,
+    saveManagedSections: persistManagedSections,
+    loadAllSections,
+    revertToGame: (gameName) => {
+      const previousGame = gamesList.find((game) => game.name === gameName);
+      if (previousGame) {
+        switchToGame(previousGame);
+      }
+    },
+  });
 });
 
 const close = async () => {
-  if (hasUnsavedInfoChanges.value) {
-    const discard = await askConfirm(t('gamesettingsmodal.info.unsavedPrompt'), {
-      title: t('gamesettingsmodal.info.unsavedTitle'),
-      kind: 'warning',
-    });
-    if (!discard) return;
-  }
-  clearRuntimeAttention();
-  emit('update:modelValue', false);
+  await requestClose({
+    hasUnsavedInfoChanges: hasUnsavedInfoChanges.value,
+    onClose: () => {
+      clearRuntimeAttention();
+      emit('update:modelValue', false);
+    },
+  });
 };
 
 // Expose methods to parent

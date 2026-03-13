@@ -1,4 +1,6 @@
 use crate::configs::app_config;
+use crate::downloader::fetcher;
+use crate::utils::github_releases::{fetch_repo_releases, GitHubRelease, GitHubReleaseAsset};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
@@ -107,25 +109,6 @@ pub struct XxmiLocalStatus {
 }
 
 // ============================================================
-// GitHub API 响应（只取需要的字段）
-// ============================================================
-
-#[derive(Debug, Deserialize)]
-struct GhRelease {
-    tag_name: String,
-    published_at: Option<String>,
-    assets: Vec<GhAsset>,
-    body: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct GhAsset {
-    name: String,
-    size: u64,
-    browser_download_url: String,
-}
-
-// ============================================================
 // 扫描本地已安装的包
 // ============================================================
 
@@ -197,35 +180,9 @@ pub async fn fetch_xxmi_remote_versions(
         .find(|s| s.id == source_id)
         .ok_or_else(|| format!("未知的包源 ID: {}", source_id))?;
 
-    let url = format!(
-        "https://api.github.com/repos/{}/releases?per_page={}",
-        source.github_repo, max_count
-    );
-
-    let client = reqwest::Client::new();
-    let mut req = client
-        .get(&url)
-        .header("User-Agent", "SSMT4/0.1")
-        .header("Accept", "application/vnd.github+json");
-    if let Some(token) = github_token {
-        if !token.is_empty() {
-            req = req.header("Authorization", format!("Bearer {}", token));
-        }
-    }
-
-    let resp = req
-        .send()
+    let releases = fetch_repo_releases(&source.github_repo, max_count, github_token)
         .await
         .map_err(|e| format!("获取 {} 版本列表失败: {}", source.display_name, e))?;
-
-    if !resp.status().is_success() {
-        return Err(format!("GitHub API 返回 HTTP {}: {}", resp.status(), url));
-    }
-
-    let releases: Vec<GhRelease> = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析 GitHub releases JSON 失败: {}", e))?;
 
     // 获取本地已安装版本
     let local = scan_local_xxmi_packages();
@@ -238,25 +195,19 @@ pub async fn fetch_xxmi_remote_versions(
 
     let mut versions = Vec::new();
     for rel in releases {
-        // 找到 zip 资产（排除 Manifest.json）
-        let zip_asset = rel
-            .assets
-            .iter()
-            .find(|a| a.name.starts_with(&source.asset_prefix) && a.name.ends_with(".zip"));
-
-        if let Some(asset) = zip_asset {
+        if let Some(asset) = find_zip_asset(&rel, &source.asset_prefix) {
             let installed = local_versions.contains(&rel.tag_name);
             versions.push(XxmiRemoteVersion {
                 source_id: source.id.clone(),
                 source_name: source.display_name.clone(),
                 version: rel.tag_name.clone(),
                 tag: rel.tag_name.clone(),
-                published_at: rel.published_at.unwrap_or_default(),
-                download_url: asset.browser_download_url.clone(),
+                published_at: rel.published_at.clone(),
+                download_url: asset.download_url.clone(),
                 asset_name: asset.name.clone(),
                 asset_size: asset.size,
                 installed,
-                body: rel.body.unwrap_or_default(),
+                body: rel.body.clone(),
             });
         }
     }
@@ -286,9 +237,8 @@ pub async fn download_xxmi_package(
     let cache_dir = packages_cache_dir().join(&source.id);
     std::fs::create_dir_all(&cache_dir).map_err(|e| format!("创建包缓存目录失败: {}", e))?;
 
-    let zip_name = format!("{}-{}.zip", source.asset_prefix, version);
-    let zip_path = cache_dir.join(&zip_name);
-    let extract_dir = cache_dir.join(version);
+    let zip_path = package_zip_path(&source, version);
+    let extract_dir = package_extract_dir(&source.id, version);
 
     // 如果已解压，直接返回
     if extract_dir.exists() {
@@ -304,7 +254,7 @@ pub async fn download_xxmi_package(
             "正在下载 {} {} 从 {}",
             source.display_name, version, download_url
         );
-        download_file(download_url, &zip_path).await?;
+        download_package_archive(download_url, &zip_path).await?;
     }
 
     // 解压 zip
@@ -314,7 +264,10 @@ pub async fn download_xxmi_package(
         version,
         extract_dir.display()
     );
-    extract_zip(&zip_path, &extract_dir)?;
+    if let Err(e) = extract_zip(&zip_path, &extract_dir).await {
+        let _ = std::fs::remove_dir_all(&extract_dir);
+        return Err(e);
+    }
 
     // 解压成功后删除 zip 文件（节省空间）
     if let Err(e) = std::fs::remove_file(&zip_path) {
@@ -349,20 +302,19 @@ pub fn deploy_xxmi_package(
 
 /// 删除本地已下载的包
 pub fn delete_local_xxmi_package(source_id: &str, version: &str) -> Result<String, String> {
-    let cache_dir = packages_cache_dir().join(source_id);
-    let extract_dir = cache_dir.join(version);
-    let zip_name_candidates = vec![format!("{}.zip", version)];
+    let source = known_package_sources()
+        .into_iter()
+        .find(|s| s.id == source_id)
+        .ok_or_else(|| format!("未知的包源 ID: {}", source_id))?;
+    let extract_dir = package_extract_dir(source_id, version);
+    let zip_path = package_zip_path(&source, version);
 
     if extract_dir.exists() {
         std::fs::remove_dir_all(&extract_dir).map_err(|e| format!("删除包目录失败: {}", e))?;
     }
 
-    // 也尝试删除 zip
-    for name in zip_name_candidates {
-        let zip_path = cache_dir.join(&name);
-        if zip_path.exists() {
-            std::fs::remove_file(&zip_path).ok();
-        }
+    if zip_path.exists() {
+        std::fs::remove_file(&zip_path).ok();
     }
 
     Ok(format!("已删除 {} {}", source_id, version))
@@ -372,49 +324,68 @@ pub fn delete_local_xxmi_package(source_id: &str, version: &str) -> Result<Strin
 // 工具函数
 // ============================================================
 
-async fn download_file(url: &str, dest: &Path) -> Result<(), String> {
+fn package_zip_path(source: &XxmiPackageSource, version: &str) -> PathBuf {
+    packages_cache_dir()
+        .join(&source.id)
+        .join(format!("{}-{}.zip", source.asset_prefix, version))
+}
+
+fn package_extract_dir(source_id: &str, version: &str) -> PathBuf {
+    packages_cache_dir().join(source_id).join(version)
+}
+
+fn find_zip_asset<'a>(
+    release: &'a GitHubRelease,
+    asset_prefix: &str,
+) -> Option<&'a GitHubReleaseAsset> {
+    release
+        .assets
+        .iter()
+        .find(|asset| asset.name.starts_with(asset_prefix) && asset.name.ends_with(".zip"))
+}
+
+async fn download_package_archive(url: &str, dest: &Path) -> Result<(), String> {
     let client = reqwest::Client::new();
-    let resp = client
-        .get(url)
-        .header("User-Agent", "SSMT4/0.1")
-        .send()
-        .await
-        .map_err(|e| format!("下载失败: {}", e))?;
+    fetcher::download_with_resume(&client, url, dest, false, None, None).await?;
+    validate_downloaded_zip_file(dest, url)
+}
 
-    if !resp.status().is_success() {
-        return Err(format!("HTTP {}: {}", resp.status(), url));
-    }
-
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).ok();
-    }
-
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("读取响应失败: {}", e))?;
-
-    // 最小大小校验
-    if bytes.len() < 1000 {
+fn validate_downloaded_zip_file(path: &Path, url: &str) -> Result<(), String> {
+    let metadata = std::fs::metadata(path)
+        .map_err(|e| format!("读取下载文件信息失败 {}: {}", path.display(), e))?;
+    if metadata.len() < 1000 {
+        let _ = std::fs::remove_file(path);
         return Err(format!(
             "下载文件异常（仅 {} 字节），疑似错误页面: {}",
-            bytes.len(),
+            metadata.len(),
             url
         ));
     }
 
-    // zip 魔数校验
-    if bytes.len() >= 4 && &bytes[..4] != b"PK\x03\x04" {
+    let mut file = std::fs::File::open(path)
+        .map_err(|e| format!("打开下载文件失败 {}: {}", path.display(), e))?;
+    let mut header = [0u8; 4];
+    std::io::Read::read_exact(&mut file, &mut header)
+        .map_err(|e| format!("读取下载文件头失败 {}: {}", path.display(), e))?;
+    let valid_magic = matches!(&header, b"PK\x03\x04" | b"PK\x05\x06" | b"PK\x07\x08");
+    if !valid_magic {
+        let _ = std::fs::remove_file(path);
         return Err(format!("下载的文件不是有效 ZIP 格式: {}", url));
     }
 
-    std::fs::write(dest, &bytes).map_err(|e| format!("写入文件失败: {}", e))?;
-
-    info!("下载完成: {} ({} bytes)", dest.display(), bytes.len());
     Ok(())
 }
 
-fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
+async fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
+    let zip_path = zip_path.to_path_buf();
+    let dest = dest.to_path_buf();
+
+    tokio::task::spawn_blocking(move || extract_zip_blocking(&zip_path, &dest))
+        .await
+        .map_err(|e| format!("等待 ZIP 解压任务失败: {}", e))?
+}
+
+fn extract_zip_blocking(zip_path: &Path, dest: &Path) -> Result<(), String> {
     let file = std::fs::File::open(zip_path).map_err(|e| format!("打开 ZIP 失败: {}", e))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("解析 ZIP 失败: {}", e))?;
 
@@ -424,26 +395,23 @@ fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
         let mut entry = archive
             .by_index(i)
             .map_err(|e| format!("读取 ZIP 条目失败: {}", e))?;
-
-        let name = entry.name().to_string();
-        // 安全检查：防止路径穿越
-        if name.contains("..") {
+        let Some(relative_path) = entry.enclosed_name().map(|p| p.to_path_buf()) else {
             continue;
-        }
-
-        let out_path = dest.join(&name);
+        };
+        let out_path = dest.join(relative_path);
 
         if entry.is_dir() {
             std::fs::create_dir_all(&out_path).ok();
-        } else {
-            if let Some(parent) = out_path.parent() {
-                std::fs::create_dir_all(parent).ok();
-            }
-            let mut outfile = std::fs::File::create(&out_path)
-                .map_err(|e| format!("创建文件失败 {}: {}", name, e))?;
-            std::io::copy(&mut entry, &mut outfile)
-                .map_err(|e| format!("解压文件失败 {}: {}", name, e))?;
+            continue;
         }
+
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        let mut outfile = std::fs::File::create(&out_path)
+            .map_err(|e| format!("创建文件失败 {}: {}", out_path.display(), e))?;
+        std::io::copy(&mut entry, &mut outfile)
+            .map_err(|e| format!("解压文件失败 {}: {}", out_path.display(), e))?;
     }
 
     Ok(())
@@ -471,4 +439,87 @@ fn copy_dir_contents(src: &Path, dst: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        find_zip_asset, known_package_sources, package_zip_path, validate_downloaded_zip_file,
+    };
+    use crate::utils::github_releases::{GitHubRelease, GitHubReleaseAsset};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_file(label: &str) -> std::path::PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_nanos();
+        std::env::temp_dir()
+            .join("ssmt4-tests")
+            .join(format!("migoto-packages-{label}-{nonce}.zip"))
+    }
+
+    #[test]
+    fn find_zip_asset_ignores_non_matching_assets() {
+        let release = GitHubRelease {
+            tag_name: "v1.0.0".to_string(),
+            published_at: String::new(),
+            body: String::new(),
+            assets: vec![
+                GitHubReleaseAsset {
+                    name: "Manifest.json".to_string(),
+                    size: 10,
+                    download_url: "https://example.invalid/manifest".to_string(),
+                },
+                GitHubReleaseAsset {
+                    name: "WWMI-PACKAGE-v1.0.0.zip".to_string(),
+                    size: 20,
+                    download_url: "https://example.invalid/package.zip".to_string(),
+                },
+            ],
+        };
+
+        let asset = find_zip_asset(&release, "WWMI-PACKAGE").expect("zip asset");
+        assert_eq!(asset.name, "WWMI-PACKAGE-v1.0.0.zip");
+    }
+
+    #[test]
+    fn package_zip_path_uses_consistent_asset_prefix_name() {
+        let source = known_package_sources()
+            .into_iter()
+            .find(|source| source.id == "wwmi")
+            .expect("wwmi source");
+        let path = package_zip_path(&source, "v0.1.0");
+        assert!(path.ends_with("Packages/wwmi/WWMI-PACKAGE-v0.1.0.zip"));
+    }
+
+    #[test]
+    fn validate_downloaded_zip_file_accepts_zip_magic() {
+        let path = unique_temp_file("valid");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create temp dir");
+        }
+        let mut bytes = b"PK\x03\x04".to_vec();
+        bytes.resize(1200, 0u8);
+        std::fs::write(&path, bytes).expect("write zip");
+
+        validate_downloaded_zip_file(&path, "https://example.invalid/test.zip").expect("valid zip");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn validate_downloaded_zip_file_rejects_invalid_magic_and_removes_file() {
+        let path = unique_temp_file("invalid");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create temp dir");
+        }
+        let mut bytes = b"HTML".to_vec();
+        bytes.resize(1200, 0u8);
+        std::fs::write(&path, bytes).expect("write invalid zip");
+
+        let err = validate_downloaded_zip_file(&path, "https://example.invalid/test.zip")
+            .expect_err("invalid");
+        assert!(err.contains("ZIP"));
+        assert!(!path.exists());
+    }
 }

@@ -73,26 +73,16 @@ pub(super) fn enforce_launch_protection(
         &target.game_preset,
         Some(&target.game_root_str),
     )?;
-    let mut protection_required = protection_status
-        .get("enforceAtLaunch")
-        .and_then(|v| v.as_bool())
-        .or_else(|| protection_status.get("supported").and_then(|v| v.as_bool()))
-        .unwrap_or(false);
-    let mut protection_enabled = protection_status
-        .get("enabled")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
+    let mut protection_required =
+        protection_status.enforce_at_launch || protection_status.supported;
+    let mut protection_enabled = protection_status.enabled;
 
     if !protection_required && target.game_preset != game_name {
         let fallback_status = crate::commands::telemetry::check_game_protection_status_internal(
             game_name,
             Some(&target.game_root_str),
         )?;
-        let fallback_required = fallback_status
-            .get("enforceAtLaunch")
-            .and_then(|v| v.as_bool())
-            .or_else(|| fallback_status.get("supported").and_then(|v| v.as_bool()))
-            .unwrap_or(false);
+        let fallback_required = fallback_status.enforce_at_launch || fallback_status.supported;
         if fallback_required {
             info!(
                 "防护判定已从 preset={} 回退到 game_name={}",
@@ -100,48 +90,28 @@ pub(super) fn enforce_launch_protection(
             );
             protection_status = fallback_status;
             protection_required = fallback_required;
-            protection_enabled = protection_status
-                .get("enabled")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
+            protection_enabled = protection_status.enabled;
         }
     }
 
-    if let Some(channel) = protection_status.get("channel") {
-        let mode = channel
-            .get("mode")
-            .and_then(|v| v.as_str())
-            .unwrap_or("n/a");
-        let current = channel
-            .get("currentValue")
-            .and_then(|v| v.as_i64())
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "n/a".to_string());
-        let expected = channel
-            .get("expectedValue")
-            .and_then(|v| v.as_i64())
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "n/a".to_string());
-        let enforcement = channel
-            .get("launchEnforcement")
-            .and_then(|v| v.as_str())
-            .unwrap_or("n/a");
-        info!(
-            "Channel mode={}, current={}, expected={}, enforcement={}",
-            mode, current, expected, enforcement
-        );
-    }
+    let channel = &protection_status.channel;
+    let mode = channel.mode.as_deref().unwrap_or("n/a");
+    let current = channel
+        .current_value
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "n/a".to_string());
+    let expected = channel
+        .expected_value
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "n/a".to_string());
+    let enforcement = channel.launch_enforcement.as_str();
+    info!(
+        "Channel mode={}, current={}, expected={}, enforcement={}",
+        mode, current, expected, enforcement
+    );
 
     if !protection_required {
-        let blocked_domains: Vec<String> = protection_status
-            .pointer("/telemetry/blocked")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let blocked_domains = protection_status.telemetry.blocked.clone();
         if !blocked_domains.is_empty() {
             warn!(
                 "检测到当前游戏已屏蔽域名（{}）。该游戏防护非必需，此设置可能导致联网异常，建议恢复防护后重试",
@@ -151,16 +121,7 @@ pub(super) fn enforce_launch_protection(
     }
 
     if protection_required && !protection_enabled {
-        let missing_items = protection_status
-            .get("missing")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str())
-                    .collect::<Vec<_>>()
-                    .join("；")
-            })
-            .unwrap_or_default();
+        let missing_items = protection_status.missing.join("；");
 
         let detail = if missing_items.is_empty() {
             String::new()

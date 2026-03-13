@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { gamesList, switchToGame, appSettings, isDrawerOpen } from '../store';
+import type { GameInfo } from '../types/ipc';
 
 const scrollContainer = ref<HTMLElement | null>(null);
 let closeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -64,7 +65,7 @@ const onWheel = (e: WheelEvent) => {
     }
 };
 
-const handleGameSelect = (game: any) => {
+const handleGameSelect = (game: GameInfo) => {
     switchToGame(game);
     startAutoCloseTimer(); // Keep open for a moment after select
 };

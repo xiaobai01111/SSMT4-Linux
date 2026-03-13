@@ -5,6 +5,7 @@ import { setGameVisibility, deleteGameConfigFolder, askConfirm, listGameTemplate
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { convertFileSrc } from '@tauri-apps/api/core';
+import type { GameInfo } from '../types/ipc';
 
 const { t, te } = useI18n();
 
@@ -15,7 +16,7 @@ const router = useRouter();
 const showMenu = ref(false);
 const menuX = ref(0);
 const menuY = ref(0);
-const targetGame = ref<any>(null);
+const targetGame = ref<GameInfo | null>(null);
 
 // Search and Filter
 const searchQuery = ref('');
@@ -23,7 +24,7 @@ const searchQuery = ref('');
 const filteredGames = computed(() => {
     if (!searchQuery.value) return gamesList;
     const q = searchQuery.value.toLowerCase();
-    return gamesList.filter((g: any) => {
+    return gamesList.filter((g) => {
         const name = g.name.toLowerCase();
         const display = (te(`games.${g.name}`) ? t(`games.${g.name}`) : (g.displayName || g.name)).toLowerCase();
         return name.includes(q) || display.includes(q);
@@ -37,7 +38,7 @@ const emptyStateText = computed(() => {
   return 'No matches found.';
 });
 
-const handleContextMenu = (e: MouseEvent, game: any) => {
+const handleContextMenu = (e: MouseEvent, game: GameInfo) => {
   e.preventDefault();
   targetGame.value = game;
   menuX.value = e.clientX;
@@ -208,6 +209,7 @@ const meteorStars = ref<MeteorStar[]>([]);
 let meteorId = 0;
 const starColors = ['#ff0000', '#ffaf00', '#ffff00', '#00ff00', '#0000ff', '#4b0082', '#8f00ff', '#ff00ff', '#00ffff'];
 const meteorEmojis = ['⭐', '🌟', '💫', '✨', '☄️', '🪐', '🦄', '🌈', '🍭', '🌸', '🍩', '🍪', '🍕', '🚀', '🛸', '🧚', '💎', '🍄', '🐱', '🐶'];
+type MeteorWrapperStyle = CSSProperties & { '--tx': string; '--ty': string };
 
 const consecutiveClickCount = ref(0);
 const lastClickedGameId = ref('');
@@ -268,7 +270,7 @@ const spawnMeteorStars = () => {
     }
 };
 
-const handleGameSelect = (game: any, event: MouseEvent) => {
+const handleGameSelect = (game: GameInfo, event: MouseEvent) => {
     // 0. Track Consecutive Clicks
     if (lastClickedGameId.value === game.name) {
         consecutiveClickCount.value++;
@@ -349,6 +351,14 @@ const spawnLoveExplosion = (e: MouseEvent) => {
         }, 1500);
     }
 };
+
+const getMeteorWrapperStyle = (star: MeteorStar): MeteorWrapperStyle => ({
+    left: `${star.x}px`,
+    top: `${star.y}px`,
+    '--tx': `${star.tx}px`,
+    '--ty': `${star.ty}px`,
+    animationDuration: star.flyDuration,
+});
 </script>
 
 <template>
@@ -381,13 +391,7 @@ const spawnLoveExplosion = (e: MouseEvent) => {
                 v-for="s in meteorStars" 
                 :key="s.id" 
                 class="meteor-star-wrapper"
-                :style="{
-                    left: s.x + 'px',
-                    top: s.y + 'px',
-                    '--tx': s.tx + 'px',
-                    '--ty': s.ty + 'px',
-                    animationDuration: s.flyDuration
-                } as any"
+                :style="getMeteorWrapperStyle(s)"
             >
                 <div 
                     class="meteor-star-inner"

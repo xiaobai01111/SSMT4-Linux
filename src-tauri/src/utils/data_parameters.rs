@@ -7,16 +7,14 @@ use std::process::Command;
 use std::sync::{Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const DATA_PARAMETERS_GITHUB_REPO_URL: &str =
-    "https://github.com/peachycommit/data-linux.git";
+pub const DATA_PARAMETERS_GITHUB_REPO_URL: &str = "https://github.com/peachycommit/data-linux.git";
 pub const DATA_PARAMETERS_GITEE_REPO_URL: &str =
     "https://gitee.com/xiaobai01111/data-parameters.git";
 pub const DATA_PARAMETERS_REPO_MIRRORS: &[(&str, &str)] = &[
     ("GitHub", DATA_PARAMETERS_GITHUB_REPO_URL),
     ("Gitee", DATA_PARAMETERS_GITEE_REPO_URL),
 ];
-pub const DATA_PARAMETERS_GITHUB_PAGE_URL: &str =
-    "https://github.com/peachycommit/data-linux";
+pub const DATA_PARAMETERS_GITHUB_PAGE_URL: &str = "https://github.com/peachycommit/data-linux";
 pub const DATA_PARAMETERS_GITEE_PAGE_URL: &str = "https://gitee.com/xiaobai01111/data-parameters";
 pub const DATA_PARAMETERS_REPO_PAGES: &[(&str, &str)] = &[
     ("GitHub", DATA_PARAMETERS_GITHUB_PAGE_URL),
@@ -493,9 +491,8 @@ pub fn resolve_data_path(relative: &str) -> Option<PathBuf> {
 }
 
 pub fn read_data_json(relative: &str) -> Result<String, String> {
-    let path = resolve_data_path(relative).ok_or_else(|| {
-        format!("未找到 data-linux 文件: {}（请检查仓库结构）", relative)
-    })?;
+    let path = resolve_data_path(relative)
+        .ok_or_else(|| format!("未找到 data-linux 文件: {}（请检查仓库结构）", relative))?;
     std::fs::read_to_string(&path)
         .map_err(|e| format!("读取 data-linux 文件失败 {}: {}", path.display(), e))
 }
@@ -520,7 +517,10 @@ pub fn resolve_catalog_path(file_name: &str) -> Option<PathBuf> {
 
 pub fn read_catalog_json(file_name: &str) -> Result<String, String> {
     let path = resolve_catalog_path(file_name).ok_or_else(|| {
-        format!("未找到 catalog 文件: {}（请检查 data-linux 仓库是否已拉取）", file_name)
+        format!(
+            "未找到 catalog 文件: {}（请检查 data-linux 仓库是否已拉取）",
+            file_name
+        )
     })?;
     std::fs::read_to_string(&path)
         .map_err(|e| format!("读取 catalog 文件失败 {}: {}", path.display(), e))
@@ -600,7 +600,9 @@ mod tests {
                 resource_dir.join(DATA_REPO_DIR_NAME),
                 resource_dir.join(LEGACY_DATA_REPO_DIR_NAME),
                 resource_dir.join("resources").join(DATA_REPO_DIR_NAME),
-                resource_dir.join("resources").join(LEGACY_DATA_REPO_DIR_NAME),
+                resource_dir
+                    .join("resources")
+                    .join(LEGACY_DATA_REPO_DIR_NAME),
             ]
         );
     }

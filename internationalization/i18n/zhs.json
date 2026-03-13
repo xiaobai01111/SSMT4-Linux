@@ -645,6 +645,7 @@
       "readonlyWarning": "配置已降级为 legacy 只读模式（{code}），请检查迁移日志。",
       "readonlyGeneric": "配置处于只读模式，当前仅允许查看。",
       "unsavedPrompt": "游戏信息页存在未保存更改，确定要关闭吗？",
+      "unsavedSwitchPrompt": "游戏信息页存在未保存更改，切换游戏将丢失这些修改，确定继续吗？",
       "unsavedTitle": "未保存更改",
       "gameVersion": "游戏版本",
       "versionUnknown": "未检测到版本",

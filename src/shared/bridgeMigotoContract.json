@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "migotoForm": {
+    "enabled": "boolean",
+    "importer": "string",
+    "use_hook": "boolean",
+    "enforce_rendering": "boolean",
+    "enable_hunting": "boolean",
+    "dump_shaders": "boolean",
+    "mute_warnings": "boolean",
+    "calls_logging": "boolean",
+    "debug_logging": "boolean",
+    "unsafe_mode": "boolean",
+    "process_timeout": "int",
+    "migoto_path": "string",
+    "importer_folder": "string",
+    "mod_folder": "string",
+    "shader_fixes_folder": "string",
+    "d3dx_ini_path": "string",
+    "bridge_exe_path": "string",
+    "start_args": "string",
+    "process_start_method": "string",
+    "process_priority": "string",
+    "xxmi_dll_init_delay": "int",
+    "extra_libraries_enabled": "boolean",
+    "extra_libraries_paths": "string",
+    "custom_launch_enabled": "boolean",
+    "custom_launch_cmd": "string",
+    "custom_launch_inject_mode": "string",
+    "pre_launch_enabled": "boolean",
+    "pre_launch_cmd": "string",
+    "pre_launch_wait": "boolean",
+    "post_load_enabled": "boolean",
+    "post_load_cmd": "string",
+    "post_load_wait": "boolean",
+    "wwmi_configure_game": "boolean",
+    "wwmi_unlock_fps": "boolean",
+    "wwmi_perf_tweaks": "boolean",
+    "wwmi_disable_wounded_fx": "boolean"
+  },
+  "bridgeConfig": {
+    "$root": {
+      "schemaVersion": "int",
+      "importer": "string"
+    },
+    "paths": {
+      "app_root": "string",
+      "importer_folder": "string",
+      "packages_folder": "string",
+      "game_folder": "string",
+      "game_exe": "string",
+      "cache_folder": "string",
+      "mod_folder": "string",
+      "shader_fixes_folder": "string",
+      "d3dx_ini": "string"
+    },
+    "game": {
+      "start_exe": "string",
+      "start_args": "stringArray",
+      "work_dir": "string",
+      "process_name": "string",
+      "process_start_method": "string",
+      "process_priority": "string",
+      "process_timeout": "int"
+    },
+    "migoto": {
+      "use_hook": "boolean",
+      "use_dll_drop": "boolean",
+      "enforce_rendering": "boolean",
+      "enable_hunting": "boolean",
+      "dump_shaders": "boolean",
+      "mute_warnings": "boolean",
+      "calls_logging": "boolean",
+      "debug_logging": "boolean",
+      "unsafe_mode": "boolean",
+      "xxmi_dll_init_delay": "int"
+    },
+    "d3dx_ini": {
+      "$self": "object"
+    },
+    "signatures": {
+      "xxmi_public_key": "string",
+      "deployed_migoto_signatures": "object"
+    },
+    "extra_libraries": {
+      "enabled": "boolean",
+      "paths": "stringArray"
+    },
+    "custom_launch": {
+      "enabled": "boolean",
+      "cmd": "string",
+      "inject_mode": "string"
+    },
+    "pre_launch": {
+      "enabled": "boolean",
+      "cmd": "string",
+      "wait": "boolean"
+    },
+    "post_load": {
+      "enabled": "boolean",
+      "cmd": "string",
+      "wait": "boolean"
+    },
+    "jadeite": {
+      "enabled": "boolean",
+      "exe_path": "string"
+    }
+  }
+}

@@ -1,3 +1,5 @@
+import type { GlobalSettingsMenu, RuntimeFocusTarget } from './gameSettings';
+
 export type ExecutablePathProbeResult =
   | { kind: 'ok' }
   | {
@@ -35,3 +37,59 @@ export type ProtectionRequirementResult =
       kind: 'check_failed';
       error: string;
     };
+
+export type HomeLaunchDialogKind = 'info' | 'warning' | 'error';
+
+export type HomeLaunchStepParams = Record<string, string | number>;
+
+export type HomeLaunchNavigationAction =
+  | {
+      kind: 'open_global_settings';
+      menu: GlobalSettingsMenu;
+      reasonKey?: string;
+    }
+  | {
+      kind: 'open_runtime_settings';
+      focusTarget: RuntimeFocusTarget;
+      reasonKey?: string;
+    }
+  | {
+      kind: 'open_game_settings_game_tab';
+    }
+  | {
+      kind: 'open_download_modal';
+    };
+
+interface HomeLaunchBaseStep {
+  titleKey: string;
+  messageKey: string;
+  dialogKind: HomeLaunchDialogKind;
+  params?: HomeLaunchStepParams;
+  missingItems?: string[];
+  includeMissingItemsLabel?: boolean;
+}
+
+export interface HomeLaunchMessageStep extends HomeLaunchBaseStep {
+  kind: 'message';
+  navigation?: HomeLaunchNavigationAction;
+  continueLaunch: boolean;
+}
+
+export interface HomeLaunchConfirmStep extends HomeLaunchBaseStep {
+  kind: 'confirm';
+  okLabelKey: string;
+  cancelLabelKey: string;
+  navigationOnConfirm?: HomeLaunchNavigationAction;
+  navigationOnCancel?: HomeLaunchNavigationAction;
+  continueOnConfirm: boolean;
+  continueOnCancel: boolean;
+}
+
+export type HomeLaunchGuardStep =
+  | HomeLaunchMessageStep
+  | HomeLaunchConfirmStep;
+
+export interface HomeLaunchGuardPlan {
+  wineVersionId: string;
+  steps: HomeLaunchGuardStep[];
+}

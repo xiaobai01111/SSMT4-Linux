@@ -1,4 +1,6 @@
-use crate::events::{emit_game_lifecycle, GameLifecycleEvent};
+use crate::commands::bridge_contract_generated::{
+    self as bridge_contract, BridgeFieldContract, BridgeFieldKind, BridgeSectionContract,
+};
 use crate::utils::migoto_layout::{
     ensure_required_start_args, importer_behavior, locked_importer_legacy_defaults,
     normalize_importer_name, resolve_migoto_path_state,
@@ -8,11 +10,96 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tracing::{debug, error, info, warn};
+use std::sync::OnceLock;
+use tracing::{info, warn};
+
+mod runtime;
+
+#[allow(dead_code)]
+pub(crate) type BridgeLaunchContext<'a> = runtime::BridgeLaunchContext<'a>;
 
 pub const BRIDGE_CONFIG_SCHEMA_VERSION: u32 = 1;
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SharedBridgeGameDefaults {
+    process_start_method: String,
+    process_priority: String,
+    process_timeout: u32,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SharedBridgeMigotoDefaultsSection {
+    use_hook: bool,
+    use_dll_drop: bool,
+    enforce_rendering: bool,
+    enable_hunting: bool,
+    dump_shaders: bool,
+    mute_warnings: bool,
+    calls_logging: bool,
+    debug_logging: bool,
+    unsafe_mode: bool,
+    xxmi_dll_init_delay: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SharedBridgeCustomLaunchDefaults {
+    enabled: bool,
+    inject_mode: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SharedBridgeShellCommandDefaults {
+    enabled: bool,
+    wait: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SharedBridgeExtraLibrariesDefaults {
+    enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SharedBridgeJadeiteDefaults {
+    enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SharedBridgeMigotoDefaults {
+    #[serde(rename = "schemaVersion")]
+    schema_version: u32,
+    game: SharedBridgeGameDefaults,
+    migoto: SharedBridgeMigotoDefaultsSection,
+    custom_launch: SharedBridgeCustomLaunchDefaults,
+    shell_command: SharedBridgeShellCommandDefaults,
+    extra_libraries: SharedBridgeExtraLibrariesDefaults,
+    jadeite: SharedBridgeJadeiteDefaults,
+}
+
+fn shared_bridge_migoto_defaults() -> &'static SharedBridgeMigotoDefaults {
+    static DEFAULTS: OnceLock<SharedBridgeMigotoDefaults> = OnceLock::new();
+    DEFAULTS.get_or_init(|| {
+        let defaults = serde_json::from_str::<SharedBridgeMigotoDefaults>(include_str!(
+            "../../../src/shared/bridgeMigotoDefaults.json"
+        ))
+        .expect("bridgeMigotoDefaults.json must remain valid");
+
+        assert_eq!(
+            defaults.schema_version, BRIDGE_CONFIG_SCHEMA_VERSION,
+            "shared bridge defaults schema version must match Rust bridge schema version"
+        );
+
+        defaults
+    })
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -47,7 +134,7 @@ enum BridgeStartArgsInput {
     Array(Vec<String>),
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct BridgeSourceConfig {
     start_args: Option<BridgeStartArgsInput>,
     process_start_method: Option<String>,
@@ -86,8 +173,52 @@ struct BridgeSourceConfig {
     enabled: Option<bool>,
 }
 
+impl Default for BridgeSourceConfig {
+    fn default() -> Self {
+        let defaults = shared_bridge_migoto_defaults();
+        Self {
+            start_args: None,
+            process_start_method: None,
+            process_priority: None,
+            process_timeout: None,
+            use_hook: None,
+            use_dll_drop: defaults.migoto.use_dll_drop,
+            enforce_rendering: None,
+            enable_hunting: defaults.migoto.enable_hunting,
+            dump_shaders: defaults.migoto.dump_shaders,
+            mute_warnings: None,
+            calls_logging: defaults.migoto.calls_logging,
+            debug_logging: defaults.migoto.debug_logging,
+            unsafe_mode: defaults.migoto.unsafe_mode,
+            xxmi_dll_init_delay: None,
+            d3dx_ini: None,
+            xxmi_public_key: None,
+            extra_libraries_enabled: defaults.extra_libraries.enabled,
+            extra_libraries_paths: None,
+            custom_launch_enabled: defaults.custom_launch.enabled,
+            custom_launch_cmd: None,
+            custom_launch_inject_mode: None,
+            pre_launch_enabled: defaults.shell_command.enabled,
+            pre_launch_cmd: None,
+            pre_launch_wait: None,
+            post_load_enabled: defaults.shell_command.enabled,
+            post_load_cmd: None,
+            post_load_wait: None,
+            jadeite_enabled: defaults.jadeite.enabled,
+            jadeite_path: None,
+            migoto_path: None,
+            importer_folder: None,
+            mod_folder: None,
+            shader_fixes_folder: None,
+            d3dx_ini_path: None,
+            enabled: None,
+        }
+    }
+}
+
 impl BridgeSourceConfig {
     fn from_value(value: Option<&Value>) -> Self {
+        let defaults = shared_bridge_migoto_defaults();
         let Some(root) = value else {
             return Self::default();
         };
@@ -100,43 +231,97 @@ impl BridgeSourceConfig {
         }
 
         Self {
-            start_args: bridge_typed_field(root, "start_args"),
-            process_start_method: bridge_string_field(root, "process_start_method"),
-            process_priority: bridge_string_field(root, "process_priority"),
-            process_timeout: bridge_typed_field(root, "process_timeout"),
-            use_hook: bridge_typed_field(root, "use_hook"),
-            use_dll_drop: bridge_typed_field(root, "use_dll_drop").unwrap_or(false),
-            enforce_rendering: bridge_typed_field(root, "enforce_rendering"),
-            enable_hunting: bridge_typed_field(root, "enable_hunting").unwrap_or(false),
-            dump_shaders: bridge_typed_field(root, "dump_shaders").unwrap_or(false),
-            mute_warnings: bridge_typed_field(root, "mute_warnings"),
-            calls_logging: bridge_typed_field(root, "calls_logging").unwrap_or(false),
-            debug_logging: bridge_typed_field(root, "debug_logging").unwrap_or(false),
-            unsafe_mode: bridge_typed_field(root, "unsafe_mode").unwrap_or(false),
-            xxmi_dll_init_delay: bridge_typed_field(root, "xxmi_dll_init_delay"),
-            d3dx_ini: bridge_typed_field(root, "d3dx_ini"),
+            start_args: bridge_typed_field(root, bridge_contract::migoto_form::START_ARGS),
+            process_start_method: bridge_string_field(
+                root,
+                bridge_contract::migoto_form::PROCESS_START_METHOD,
+            ),
+            process_priority: bridge_string_field(
+                root,
+                bridge_contract::migoto_form::PROCESS_PRIORITY,
+            ),
+            process_timeout: bridge_typed_field(
+                root,
+                bridge_contract::migoto_form::PROCESS_TIMEOUT,
+            ),
+            use_hook: bridge_typed_field(root, bridge_contract::migoto_form::USE_HOOK),
+            use_dll_drop: bridge_typed_field(root, "use_dll_drop")
+                .unwrap_or(defaults.migoto.use_dll_drop),
+            enforce_rendering: bridge_typed_field(
+                root,
+                bridge_contract::migoto_form::ENFORCE_RENDERING,
+            ),
+            enable_hunting: bridge_typed_field(root, bridge_contract::migoto_form::ENABLE_HUNTING)
+                .unwrap_or(defaults.migoto.enable_hunting),
+            dump_shaders: bridge_typed_field(root, bridge_contract::migoto_form::DUMP_SHADERS)
+                .unwrap_or(defaults.migoto.dump_shaders),
+            mute_warnings: bridge_typed_field(root, bridge_contract::migoto_form::MUTE_WARNINGS),
+            calls_logging: bridge_typed_field(root, bridge_contract::migoto_form::CALLS_LOGGING)
+                .unwrap_or(defaults.migoto.calls_logging),
+            debug_logging: bridge_typed_field(root, bridge_contract::migoto_form::DEBUG_LOGGING)
+                .unwrap_or(defaults.migoto.debug_logging),
+            unsafe_mode: bridge_typed_field(root, bridge_contract::migoto_form::UNSAFE_MODE)
+                .unwrap_or(defaults.migoto.unsafe_mode),
+            xxmi_dll_init_delay: bridge_typed_field(
+                root,
+                bridge_contract::migoto_form::XXMI_DLL_INIT_DELAY,
+            ),
+            d3dx_ini: bridge_typed_field(root, bridge_contract::sections::D3DX_INI),
             xxmi_public_key: bridge_string_field(root, "xxmi_public_key"),
-            extra_libraries_enabled: bridge_typed_field(root, "extra_libraries_enabled")
-                .unwrap_or(false),
-            extra_libraries_paths: bridge_string_field(root, "extra_libraries_paths"),
-            custom_launch_enabled: bridge_typed_field(root, "custom_launch_enabled")
-                .unwrap_or(false),
-            custom_launch_cmd: bridge_string_field(root, "custom_launch_cmd"),
-            custom_launch_inject_mode: bridge_string_field(root, "custom_launch_inject_mode"),
-            pre_launch_enabled: bridge_typed_field(root, "pre_launch_enabled").unwrap_or(false),
-            pre_launch_cmd: bridge_string_field(root, "pre_launch_cmd"),
-            pre_launch_wait: bridge_typed_field(root, "pre_launch_wait"),
-            post_load_enabled: bridge_typed_field(root, "post_load_enabled").unwrap_or(false),
-            post_load_cmd: bridge_string_field(root, "post_load_cmd"),
-            post_load_wait: bridge_typed_field(root, "post_load_wait"),
-            jadeite_enabled: bridge_typed_field(root, "jadeite_enabled").unwrap_or(false),
+            extra_libraries_enabled: bridge_typed_field(
+                root,
+                bridge_contract::migoto_form::EXTRA_LIBRARIES_ENABLED,
+            )
+            .unwrap_or(defaults.extra_libraries.enabled),
+            extra_libraries_paths: bridge_string_field(
+                root,
+                bridge_contract::migoto_form::EXTRA_LIBRARIES_PATHS,
+            ),
+            custom_launch_enabled: bridge_typed_field(
+                root,
+                bridge_contract::migoto_form::CUSTOM_LAUNCH_ENABLED,
+            )
+            .unwrap_or(defaults.custom_launch.enabled),
+            custom_launch_cmd: bridge_string_field(
+                root,
+                bridge_contract::migoto_form::CUSTOM_LAUNCH_CMD,
+            ),
+            custom_launch_inject_mode: bridge_string_field(
+                root,
+                bridge_contract::migoto_form::CUSTOM_LAUNCH_INJECT_MODE,
+            ),
+            pre_launch_enabled: bridge_typed_field(
+                root,
+                bridge_contract::migoto_form::PRE_LAUNCH_ENABLED,
+            )
+            .unwrap_or(defaults.shell_command.enabled),
+            pre_launch_cmd: bridge_string_field(root, bridge_contract::migoto_form::PRE_LAUNCH_CMD),
+            pre_launch_wait: bridge_typed_field(
+                root,
+                bridge_contract::migoto_form::PRE_LAUNCH_WAIT,
+            ),
+            post_load_enabled: bridge_typed_field(
+                root,
+                bridge_contract::migoto_form::POST_LOAD_ENABLED,
+            )
+            .unwrap_or(defaults.shell_command.enabled),
+            post_load_cmd: bridge_string_field(root, bridge_contract::migoto_form::POST_LOAD_CMD),
+            post_load_wait: bridge_typed_field(root, bridge_contract::migoto_form::POST_LOAD_WAIT),
+            jadeite_enabled: bridge_typed_field(root, "jadeite_enabled")
+                .unwrap_or(defaults.jadeite.enabled),
             jadeite_path: bridge_string_field(root, "jadeite_path"),
-            migoto_path: bridge_string_field(root, "migoto_path"),
-            importer_folder: bridge_string_field(root, "importer_folder"),
-            mod_folder: bridge_string_field(root, "mod_folder"),
-            shader_fixes_folder: bridge_string_field(root, "shader_fixes_folder"),
-            d3dx_ini_path: bridge_string_field(root, "d3dx_ini_path"),
-            enabled: bridge_typed_field(root, "enabled"),
+            migoto_path: bridge_string_field(root, bridge_contract::migoto_form::MIGOTO_PATH),
+            importer_folder: bridge_string_field(
+                root,
+                bridge_contract::migoto_form::IMPORTER_FOLDER,
+            ),
+            mod_folder: bridge_string_field(root, bridge_contract::migoto_form::MOD_FOLDER),
+            shader_fixes_folder: bridge_string_field(
+                root,
+                bridge_contract::migoto_form::SHADER_FIXES_FOLDER,
+            ),
+            d3dx_ini_path: bridge_string_field(root, bridge_contract::migoto_form::D3DX_INI_PATH),
+            enabled: bridge_typed_field(root, bridge_contract::migoto_form::ENABLED),
         }
     }
 
@@ -155,18 +340,37 @@ impl BridgeSourceConfig {
     fn path_state_value(&self) -> Option<Value> {
         let mut map = Map::new();
 
-        insert_string_override(&mut map, "migoto_path", self.migoto_path.as_deref());
-        insert_string_override(&mut map, "importer_folder", self.importer_folder.as_deref());
-        insert_string_override(&mut map, "mod_folder", self.mod_folder.as_deref());
         insert_string_override(
             &mut map,
-            "shader_fixes_folder",
+            bridge_contract::migoto_form::MIGOTO_PATH,
+            self.migoto_path.as_deref(),
+        );
+        insert_string_override(
+            &mut map,
+            bridge_contract::migoto_form::IMPORTER_FOLDER,
+            self.importer_folder.as_deref(),
+        );
+        insert_string_override(
+            &mut map,
+            bridge_contract::migoto_form::MOD_FOLDER,
+            self.mod_folder.as_deref(),
+        );
+        insert_string_override(
+            &mut map,
+            bridge_contract::migoto_form::SHADER_FIXES_FOLDER,
             self.shader_fixes_folder.as_deref(),
         );
-        insert_string_override(&mut map, "d3dx_ini_path", self.d3dx_ini_path.as_deref());
+        insert_string_override(
+            &mut map,
+            bridge_contract::migoto_form::D3DX_INI_PATH,
+            self.d3dx_ini_path.as_deref(),
+        );
 
         if let Some(enabled) = self.enabled {
-            map.insert("enabled".to_string(), Value::Bool(enabled));
+            map.insert(
+                bridge_contract::migoto_form::ENABLED.to_string(),
+                Value::Bool(enabled),
+            );
         }
 
         if map.is_empty() {
@@ -245,6 +449,10 @@ impl BridgeConfig {
             validate_non_empty_field("jadeite.exe_path", &self.jadeite.exe_path)?;
         }
 
+        let serialized = serde_json::to_value(self)
+            .map_err(|error| format!("serialize bridge config: {error}"))?;
+        validate_bridge_json_contract(&serialized, bridge_contract::BRIDGE_CONFIG_CONTRACT)?;
+
         Ok(())
     }
 }
@@ -319,92 +527,9 @@ pub struct BridgeJadeite {
     pub exe_path: String,
 }
 
-/// Message received from bridge stdout (one JSON object per line).
-#[allow(dead_code)]
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BridgeMessageType {
-    Status,
-    Progress,
-    Warning,
-    Error,
-    InjectResult,
-    Log,
-    Done,
-    #[serde(other)]
-    Unknown,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, Deserialize)]
-pub struct BridgeMessage {
-    #[serde(rename = "type")]
-    pub msg_type: BridgeMessageType,
-    #[serde(default)]
-    pub message: String,
-    #[serde(default)]
-    pub code: String,
-    #[serde(default)]
-    pub stage: String,
-    #[serde(default)]
-    pub current: u32,
-    #[serde(default)]
-    pub total: u32,
-    #[serde(default)]
-    pub method: String,
-    #[serde(default)]
-    pub success: bool,
-    #[serde(default)]
-    pub pid: u32,
-    #[serde(default)]
-    pub level: String,
-}
-
-#[derive(Debug)]
-pub(crate) struct BridgeLaunchContext<'a> {
-    pub(crate) app: &'a tauri::AppHandle,
-    pub(crate) game_name: &'a str,
-    pub(crate) app_root: &'a Path,
-    pub(crate) proton_program: &'a Path,
-    pub(crate) proton_args_prefix: &'a [String],
-    pub(crate) env: &'a HashMap<String, String>,
-    pub(crate) working_dir: &'a Path,
-}
-
-#[derive(Debug)]
-struct BridgeLaunchPaths {
-    bridge_exe: PathBuf,
-    config_path: PathBuf,
-    bridge_wine_path: String,
-    config_wine_path: String,
-}
-
-#[derive(Debug, Default)]
-struct BridgeRunState {
-    game_pid: u32,
-}
-
-enum BridgeStreamControl {
-    Continue,
-    Complete,
-    Fail(String),
-}
-
-struct BridgeEventDispatcher<'a> {
-    app: &'a tauri::AppHandle,
-    game_name: &'a str,
-}
-
 /// Convert a Linux path to a Windows Z: drive path for use inside Proton.
 pub fn linux_to_wine_path(linux_path: &str) -> String {
     format!("Z:{}", linux_path.replace('/', "\\"))
-}
-
-/// Get the path to the bridge executable.
-/// The bridge is deployed at: <app_root>/Windows/ssmt4-bridge.exe
-#[allow(dead_code)]
-pub fn get_bridge_exe_path(app_root: &Path) -> PathBuf {
-    app_root.join("Windows").join("ssmt4-bridge.exe")
 }
 
 fn validate_non_empty_field(label: &str, value: &str) -> Result<(), String> {
@@ -412,6 +537,75 @@ fn validate_non_empty_field(label: &str, value: &str) -> Result<(), String> {
         Err(format!("{} must not be empty", label))
     } else {
         Ok(())
+    }
+}
+
+fn validate_bridge_json_contract(
+    root: &Value,
+    contract: &[BridgeSectionContract],
+) -> Result<(), String> {
+    for section_contract in contract {
+        let section_value = if let Some(section_name) = section_contract.section {
+            root.get(section_name)
+                .ok_or_else(|| format!("bridge config missing section '{}'", section_name))?
+        } else {
+            root
+        };
+        validate_bridge_section_contract(
+            section_contract.section,
+            section_value,
+            section_contract.fields,
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_bridge_section_contract(
+    section_name: Option<&str>,
+    section_value: &Value,
+    fields: &[BridgeFieldContract],
+) -> Result<(), String> {
+    for field in fields {
+        let value = if section_name == Some(field.name) {
+            section_value
+        } else {
+            section_value.get(field.name).ok_or_else(|| {
+                format!(
+                    "bridge config missing field '{}'",
+                    bridge_contract_path(section_name, field.name)
+                )
+            })?
+        };
+
+        if !bridge_contract_kind_matches(value, field.kind) {
+            return Err(format!(
+                "bridge config field '{}' has invalid type",
+                bridge_contract_path(section_name, field.name)
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn bridge_contract_kind_matches(value: &Value, kind: BridgeFieldKind) -> bool {
+    match kind {
+        BridgeFieldKind::String => value.is_string(),
+        BridgeFieldKind::Boolean => value.is_boolean(),
+        BridgeFieldKind::Int => value.as_i64().is_some() || value.as_u64().is_some(),
+        BridgeFieldKind::StringArray => value
+            .as_array()
+            .map(|items| items.iter().all(Value::is_string))
+            .unwrap_or(false),
+        BridgeFieldKind::Object => value.is_object(),
+    }
+}
+
+fn bridge_contract_path(section_name: Option<&str>, field_name: &str) -> String {
+    match section_name {
+        Some(section) if section == field_name => section.to_string(),
+        Some(section) => format!("{section}.{field_name}"),
+        None => field_name.to_string(),
     }
 }
 
@@ -539,6 +733,7 @@ pub fn build_bridge_config(
     let importer_name = normalize_importer_name(importer_name);
     let importer_behavior = importer_behavior(&importer_name);
     let locked_defaults = locked_importer_legacy_defaults();
+    let shared_defaults = shared_bridge_migoto_defaults();
 
     // Extract game-specific settings from the config JSON, or use defaults
     // Settings are stored at config.other.migoto by the frontend
@@ -594,7 +789,7 @@ pub fn build_bridge_config(
     );
 
     BridgeConfig {
-        schema_version: BRIDGE_CONFIG_SCHEMA_VERSION,
+        schema_version: shared_defaults.schema_version,
         importer: importer_name.to_string(),
         paths: BridgePaths {
             app_root: linux_to_wine_path(&migoto_data_linux),
@@ -615,11 +810,11 @@ pub fn build_bridge_config(
             process_start_method: gs
                 .process_start_method
                 .clone()
-                .unwrap_or_else(|| "Native".to_string()),
+                .unwrap_or_else(|| shared_defaults.game.process_start_method.clone()),
             process_priority: gs
                 .process_priority
                 .clone()
-                .unwrap_or_else(|| "Normal".to_string()),
+                .unwrap_or_else(|| shared_defaults.game.process_priority.clone()),
             process_timeout: heal_locked_importer_legacy_u32(
                 importer_behavior.injection_locked,
                 gs.process_timeout.map(u64::from),
@@ -642,7 +837,9 @@ pub fn build_bridge_config(
             ),
             enable_hunting: gs.enable_hunting,
             dump_shaders: gs.dump_shaders,
-            mute_warnings: gs.mute_warnings.unwrap_or(true),
+            mute_warnings: gs
+                .mute_warnings
+                .unwrap_or(shared_defaults.migoto.mute_warnings),
             calls_logging: gs.calls_logging,
             debug_logging: gs.debug_logging,
             unsafe_mode: gs.unsafe_mode,
@@ -682,17 +879,21 @@ pub fn build_bridge_config(
             inject_mode: gs
                 .custom_launch_inject_mode
                 .clone()
-                .unwrap_or_else(|| "Hook".to_string()),
+                .unwrap_or_else(|| shared_defaults.custom_launch.inject_mode.clone()),
         },
         pre_launch: BridgeShellCommand {
             enabled: gs.pre_launch_enabled,
             cmd: gs.pre_launch_cmd.clone().unwrap_or_default(),
-            wait: gs.pre_launch_wait.unwrap_or(true),
+            wait: gs
+                .pre_launch_wait
+                .unwrap_or(shared_defaults.shell_command.wait),
         },
         post_load: BridgeShellCommand {
             enabled: gs.post_load_enabled,
             cmd: gs.post_load_cmd.clone().unwrap_or_default(),
-            wait: gs.post_load_wait.unwrap_or(true),
+            wait: gs
+                .post_load_wait
+                .unwrap_or(shared_defaults.shell_command.wait),
         },
         jadeite: {
             let jadeite_enabled = gs.jadeite_enabled;
@@ -728,286 +929,12 @@ pub fn write_bridge_config(config: &BridgeConfig, app_root: &Path) -> Result<Pat
     Ok(config_path)
 }
 
-/// Run the bridge executable inside the same Proton container as the game.
-///
-/// This function:
-/// 1. Writes bridge-config.json
-/// 2. Launches ssmt4-bridge.exe using the same Proton runner + env + prefix
-/// 3. Reads stdout JSON lines and emits events to the frontend
-/// 4. Returns Ok on success, Err on failure
-///
-/// The bridge MUST run in the same container as the game because:
-/// - DLL injection requires shared process address space
-/// - Windows API calls (EnumWindows, CreateToolhelp32Snapshot) need the same session
-/// - File paths inside the container are relative to the Wine prefix
 #[allow(dead_code)]
 pub(crate) async fn run_bridge(
     bridge_config: &BridgeConfig,
     context: BridgeLaunchContext<'_>,
 ) -> Result<u32, String> {
-    let launch_paths = prepare_bridge_launch_paths(bridge_config, context.app_root)?;
-    let mut child = spawn_bridge_process(&context, &launch_paths)?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or("Failed to capture bridge stdout")?;
-
-    if let Some(stderr) = child.stderr.take() {
-        spawn_bridge_stderr_pipe(context.game_name, stderr);
-    }
-
-    let dispatcher = BridgeEventDispatcher {
-        app: context.app,
-        game_name: context.game_name,
-    };
-    let stdout_result = read_bridge_stdout(&dispatcher, stdout).await;
-    let wait_result = wait_for_bridge_exit(&mut child).await;
-
-    match stdout_result {
-        Ok(state) => {
-            wait_result?;
-            Ok(state.game_pid)
-        }
-        Err(err) => {
-            let _ = wait_result;
-            Err(err)
-        }
-    }
-}
-
-fn prepare_bridge_launch_paths(
-    bridge_config: &BridgeConfig,
-    app_root: &Path,
-) -> Result<BridgeLaunchPaths, String> {
-    let config_path = write_bridge_config(bridge_config, app_root)?;
-    let bridge_exe = get_bridge_exe_path(app_root);
-
-    if !bridge_exe.exists() {
-        return Err(format!(
-            "Bridge executable not found: {}. Please ensure ssmt4-bridge.exe is built and deployed.",
-            bridge_exe.display()
-        ));
-    }
-
-    Ok(BridgeLaunchPaths {
-        bridge_wine_path: linux_to_wine_path(&bridge_exe.to_string_lossy()),
-        config_wine_path: linux_to_wine_path(&config_path.to_string_lossy()),
-        bridge_exe,
-        config_path,
-    })
-}
-
-fn spawn_bridge_process(
-    context: &BridgeLaunchContext<'_>,
-    launch_paths: &BridgeLaunchPaths,
-) -> Result<tokio::process::Child, String> {
-    let mut cmd = build_bridge_command(context, launch_paths);
-    info!(
-        "Launching bridge: {} {:?} {} --config {}",
-        context.proton_program.display(),
-        context.proton_args_prefix,
-        launch_paths.bridge_wine_path,
-        launch_paths.config_wine_path
-    );
-
-    cmd.spawn().map_err(|e| {
-        format!(
-            "Failed to start bridge process: {}. Proton={}, Bridge={}, Config={}",
-            e,
-            context.proton_program.display(),
-            launch_paths.bridge_exe.display(),
-            launch_paths.config_path.display()
-        )
-    })
-}
-
-fn build_bridge_command(
-    context: &BridgeLaunchContext<'_>,
-    launch_paths: &BridgeLaunchPaths,
-) -> tokio::process::Command {
-    let mut cmd = tokio::process::Command::new(context.proton_program);
-
-    for arg in context.proton_args_prefix {
-        cmd.arg(arg);
-    }
-
-    cmd.arg(&launch_paths.bridge_wine_path);
-    cmd.arg("--config");
-    cmd.arg(&launch_paths.config_wine_path);
-    cmd.envs(context.env);
-
-    if context.working_dir.exists() {
-        cmd.current_dir(context.working_dir);
-    }
-
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-    cmd
-}
-
-fn spawn_bridge_stderr_pipe(game_name: &str, stderr: tokio::process::ChildStderr) {
-    let game_name = game_name.to_string();
-    tokio::spawn(async move {
-        let reader = BufReader::new(stderr);
-        let mut lines = reader.lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            debug!("[bridge stderr] {}", line);
-            crate::commands::game_log::append_game_log_line(
-                &game_name,
-                "DEBUG",
-                "bridge-stderr",
-                &line,
-            );
-        }
-    });
-}
-
-async fn read_bridge_stdout(
-    dispatcher: &BridgeEventDispatcher<'_>,
-    stdout: tokio::process::ChildStdout,
-) -> Result<BridgeRunState, String> {
-    let reader = BufReader::new(stdout);
-    let mut lines = reader.lines();
-    let mut state = BridgeRunState::default();
-
-    while let Ok(Some(line)) = lines.next_line().await {
-        let line = line.trim().to_string();
-        if line.is_empty() {
-            continue;
-        }
-
-        debug!("[bridge] {}", line);
-        crate::commands::game_log::append_game_log_line(
-            dispatcher.game_name,
-            "DEBUG",
-            "bridge",
-            &line,
-        );
-
-        match serde_json::from_str::<BridgeMessage>(&line) {
-            Ok(msg) => match dispatch_bridge_message(dispatcher, msg, &mut state) {
-                BridgeStreamControl::Continue => {}
-                BridgeStreamControl::Complete => break,
-                BridgeStreamControl::Fail(err) => return Err(err),
-            },
-            Err(err) => {
-                debug!("[bridge parse] {}", err);
-                debug!("[bridge raw] {}", line);
-            }
-        }
-    }
-
-    Ok(state)
-}
-
-fn dispatch_bridge_message(
-    dispatcher: &BridgeEventDispatcher<'_>,
-    msg: BridgeMessage,
-    state: &mut BridgeRunState,
-) -> BridgeStreamControl {
-    match msg.msg_type {
-        BridgeMessageType::Status => {
-            info!("[bridge] {}", msg.message);
-            emit_bridge_event(
-                dispatcher,
-                GameLifecycleEvent::BridgeStatus {
-                    game: dispatcher.game_name.to_string(),
-                    message: msg.message,
-                },
-            );
-            BridgeStreamControl::Continue
-        }
-        BridgeMessageType::Progress => {
-            emit_bridge_event(
-                dispatcher,
-                GameLifecycleEvent::BridgeProgress {
-                    game: dispatcher.game_name.to_string(),
-                    stage: msg.stage,
-                    current: msg.current,
-                    total: msg.total,
-                },
-            );
-            BridgeStreamControl::Continue
-        }
-        BridgeMessageType::Warning => {
-            warn!("[bridge] {}", msg.message);
-            crate::commands::game_log::append_game_log_line(
-                dispatcher.game_name,
-                "WARN",
-                "bridge",
-                &msg.message,
-            );
-            BridgeStreamControl::Continue
-        }
-        BridgeMessageType::Error => {
-            error!("[bridge] {} - {}", msg.code, msg.message);
-            emit_bridge_event(
-                dispatcher,
-                GameLifecycleEvent::BridgeError {
-                    game: dispatcher.game_name.to_string(),
-                    code: msg.code.clone(),
-                    message: msg.message.clone(),
-                },
-            );
-            BridgeStreamControl::Fail(format!("Bridge error [{}]: {}", msg.code, msg.message))
-        }
-        BridgeMessageType::InjectResult => {
-            state.game_pid = msg.pid;
-            info!(
-                "[bridge] Injection {}: method={}, pid={}",
-                if msg.success { "succeeded" } else { "failed" },
-                msg.method,
-                msg.pid
-            );
-            BridgeStreamControl::Continue
-        }
-        BridgeMessageType::Log => {
-            let level = match msg.level.as_str() {
-                "error" => "ERROR",
-                "warn" => "WARN",
-                "info" => "INFO",
-                _ => "DEBUG",
-            };
-            crate::commands::game_log::append_game_log_line(
-                dispatcher.game_name,
-                level,
-                "bridge",
-                &msg.message,
-            );
-            BridgeStreamControl::Continue
-        }
-        BridgeMessageType::Done => {
-            if msg.success {
-                info!("[bridge] Completed successfully");
-            } else {
-                warn!("[bridge] Completed with failure");
-            }
-            BridgeStreamControl::Complete
-        }
-        BridgeMessageType::Unknown => {
-            debug!("[bridge] Unknown message type");
-            BridgeStreamControl::Continue
-        }
-    }
-}
-
-fn emit_bridge_event(dispatcher: &BridgeEventDispatcher<'_>, payload: GameLifecycleEvent) {
-    emit_game_lifecycle(dispatcher.app, &payload);
-}
-
-async fn wait_for_bridge_exit(child: &mut tokio::process::Child) -> Result<(), String> {
-    match child.wait().await {
-        Ok(status) => {
-            if status.success() {
-                info!("Bridge process exited successfully");
-                Ok(())
-            } else {
-                let code = status.code().unwrap_or(-1);
-                Err(format!("Bridge process exited with code {}", code))
-            }
-        }
-        Err(e) => Err(format!("Failed to wait for bridge process: {}", e)),
-    }
+    runtime::run_bridge(bridge_config, context).await
 }
 
 #[cfg(test)]

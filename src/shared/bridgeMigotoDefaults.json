@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "game": {
+    "processStartMethod": "Native",
+    "processPriority": "Normal",
+    "processTimeout": 30
+  },
+  "migoto": {
+    "useHook": true,
+    "useDllDrop": false,
+    "enforceRendering": true,
+    "enableHunting": false,
+    "dumpShaders": false,
+    "muteWarnings": true,
+    "callsLogging": false,
+    "debugLogging": false,
+    "unsafeMode": false,
+    "xxmiDllInitDelay": 500
+  },
+  "customLaunch": {
+    "enabled": false,
+    "injectMode": "Hook"
+  },
+  "shellCommand": {
+    "enabled": false,
+    "wait": true
+  },
+  "extraLibraries": {
+    "enabled": false
+  },
+  "jadeite": {
+    "enabled": false
+  }
+}

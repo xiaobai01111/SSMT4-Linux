@@ -229,6 +229,135 @@ static std::wstring parse_config_path(int argc, char* argv[]) {
     return L"";
 }
 
+static BridgeConfig load_bridge_config(const std::wstring& config_path, StatusReporter& reporter) {
+    reporter.status("Loading configuration...");
+    BridgeConfig config = BridgeConfig::load(config_path);
+    reporter.log("info", "Loaded config for importer: " + config.importer);
+    return config;
+}
+
+static void configure_reporter_log_file(const BridgeConfig& config, StatusReporter& reporter) {
+    std::wstring config_dir = config.paths.cache_folder;
+    if (config_dir.empty()) {
+        return;
+    }
+
+    std::wstring log_dir = path_join(config_dir, L"bridge");
+    ensure_directory(log_dir);
+    std::string log_path = wide_to_utf8(path_join(log_dir, L"bridge-output.log"));
+    reporter.set_log_file(log_path);
+}
+
+static void run_configured_shell_command(
+    const ShellCommandConfig& command,
+    const char* status_message,
+    StatusReporter& reporter
+) {
+    if (!command.enabled || command.cmd.empty()) {
+        return;
+    }
+
+    reporter.status(status_message);
+    run_shell_command(command.cmd, command.wait);
+}
+
+static void validate_bridge_runtime_files(const BridgeConfig& config, StatusReporter& reporter) {
+    std::wstring ini_path = path_join(config.paths.importer_folder, L"d3dx.ini");
+    if (!file_exists(ini_path)) {
+        reporter.error(
+            "MISSING_D3DX_INI",
+            "d3dx.ini not found in importer folder: " +
+                wide_to_utf8(config.paths.importer_folder)
+        );
+        throw std::runtime_error("Required importer d3dx.ini is missing");
+    }
+
+    ensure_directory(path_join(config.paths.importer_folder, L"Mods"));
+
+    std::wstring game_d3dx = path_join(config.game.work_dir, L"d3dx.ini");
+    if (file_exists(game_d3dx) && config.game.work_dir != config.paths.importer_folder) {
+        std::wstring backup = path_join(config.game.work_dir, L"d3dx.ini.bak");
+        if (file_exists(backup)) {
+            delete_file(backup);
+        }
+        rename_path(game_d3dx, backup);
+        reporter.log("info", "Renamed conflicting d3dx.ini in game directory to d3dx.ini.bak");
+    }
+}
+
+static void optimize_importer_folders(
+    const BridgeConfig& config,
+    D3dxIniConfigurator& d3dx_conf,
+    StatusReporter& reporter
+) {
+    reporter.status("Optimizing INI files in Mods folder...");
+    ModManager mod_mgr;
+
+    std::vector<std::string> exclude_patterns;
+    IniHandler* d3dx_ini = d3dx_conf.get_ini();
+    if (d3dx_ini) {
+        auto values = d3dx_ini->get_option_values("exclude_recursive", "Include");
+        for (auto& kv : values) {
+            exclude_patterns.push_back(kv.second);
+        }
+    }
+    if (exclude_patterns.empty()) {
+        exclude_patterns.push_back("DISABLED*");
+    }
+
+    std::wstring mods_path = path_join(config.paths.importer_folder, L"Mods");
+    std::wstring cache_path = path_join(
+        path_join(config.paths.cache_folder, L"Ini Optimizer"),
+        utf8_to_wide(config.importer + ".json")
+    );
+    mod_mgr.optimize_mods_folder(mods_path, cache_path, exclude_patterns);
+
+    reporter.status("Optimizing INI files in ShaderFixes folder...");
+    std::wstring sf_path = path_join(config.paths.importer_folder, L"ShaderFixes");
+    mod_mgr.optimize_shaderfixes_folder(sf_path, exclude_patterns);
+}
+
+static void initialize_game_runtime(const BridgeConfig& config, StatusReporter& reporter) {
+    auto initializer = GameInitializer::create(config.importer);
+    if (!initializer) {
+        return;
+    }
+
+    reporter.status("Initializing game settings...");
+    initializer->initialize(config, reporter);
+}
+
+static void launch_migoto_runtime(const BridgeConfig& config, StatusReporter& reporter) {
+    reporter.status("Deploying XXMI libraries...");
+    PackageDeployer deployer(config, reporter);
+    deployer.deploy();
+
+    if (config.migoto.use_dll_drop) {
+        reporter.status("Setting up DLL proxy chain...");
+        run_dll_drop(config, reporter);
+        return;
+    }
+
+    reporter.status("Loading injector...");
+    DllInjector injector(config);
+
+    if (config.migoto.use_hook) {
+        try {
+            injector.run_hook_injection(reporter);
+            return;
+        } catch (const std::exception& hook_err) {
+            reporter.warning(
+                std::string("Hook injection failed: ") + hook_err.what() +
+                " — falling back to direct injection"
+            );
+            reporter.log("info", "Retrying with direct injection (CreateRemoteThread)...");
+        }
+    }
+
+    DllInjector injector2(config);
+    injector2.run_direct_injection(reporter);
+}
+
 int main(int argc, char* argv[]) {
     StatusReporter reporter;
 
@@ -241,51 +370,14 @@ int main(int argc, char* argv[]) {
         }
 
         // 2. Load configuration — everything comes from this file, nothing hardcoded
-        reporter.status("Loading configuration...");
-        BridgeConfig config = BridgeConfig::load(config_path);
-
-        // Enable file logging: write all JSON output to bridge-output.log
-        // next to bridge-config.json. This is the fallback when Proton
-        // swallows stdout from Windows console applications.
-        {
-            std::wstring config_dir = config.paths.cache_folder;
-            if (!config_dir.empty()) {
-                std::wstring log_dir = path_join(config_dir, L"bridge");
-                ensure_directory(log_dir);
-                std::string log_path = wide_to_utf8(path_join(log_dir, L"bridge-output.log"));
-                reporter.set_log_file(log_path);
-            }
-        }
-
-        reporter.log("info", "Loaded config for importer: " + config.importer);
+        BridgeConfig config = load_bridge_config(config_path, reporter);
+        configure_reporter_log_file(config, reporter);
 
         // 3. Execute pre-launch script if configured
-        if (config.pre_launch.enabled && !config.pre_launch.cmd.empty()) {
-            reporter.status("Running pre-launch command...");
-            run_shell_command(config.pre_launch.cmd, config.pre_launch.wait);
-        }
+        run_configured_shell_command(config.pre_launch, "Running pre-launch command...", reporter);
 
         // 4. Validate package files (d3dx.ini must exist in the per-game importer folder)
-        std::wstring ini_path = path_join(config.paths.importer_folder, L"d3dx.ini");
-        if (!file_exists(ini_path)) {
-            reporter.error("MISSING_D3DX_INI",
-                "d3dx.ini not found in importer folder: " +
-                wide_to_utf8(config.paths.importer_folder));
-            return 1;
-        }
-        ensure_directory(path_join(config.paths.importer_folder, L"Mods"));
-
-        // 4b. Remove conflicting d3dx.ini from game directory if it exists
-        // 3DMigoto warns about this and it can cause config confusion
-        {
-            std::wstring game_d3dx = path_join(config.game.work_dir, L"d3dx.ini");
-            if (file_exists(game_d3dx) && config.game.work_dir != config.paths.importer_folder) {
-                std::wstring backup = path_join(config.game.work_dir, L"d3dx.ini.bak");
-                if (file_exists(backup)) delete_file(backup);
-                rename_path(game_d3dx, backup);
-                reporter.log("info", "Renamed conflicting d3dx.ini in game directory to d3dx.ini.bak");
-            }
-        }
+        validate_bridge_runtime_files(config, reporter);
 
         // 5. Execute auto_update.xcmd PreLaunch commands
         std::wstring xcmd_path = path_join(
@@ -302,78 +394,16 @@ int main(int argc, char* argv[]) {
         d3dx_conf.update();
 
         // 7. Optimize Mods and ShaderFixes folders
-        {
-            reporter.status("Optimizing INI files in Mods folder...");
-            ModManager mod_mgr;
-
-            // Get exclude patterns from d3dx.ini [Include] section
-            std::vector<std::string> exclude_patterns;
-            IniHandler* d3dx_ini = d3dx_conf.get_ini();
-            if (d3dx_ini) {
-                auto values = d3dx_ini->get_option_values("exclude_recursive", "Include");
-                for (auto& kv : values) {
-                    exclude_patterns.push_back(kv.second);
-                }
-            }
-            if (exclude_patterns.empty()) {
-                exclude_patterns.push_back("DISABLED*");
-            }
-
-            std::wstring mods_path = path_join(config.paths.importer_folder, L"Mods");
-            std::wstring cache_path = path_join(
-                path_join(config.paths.cache_folder, L"Ini Optimizer"),
-                utf8_to_wide(config.importer + ".json"));
-            mod_mgr.optimize_mods_folder(mods_path, cache_path, exclude_patterns);
-
-            reporter.status("Optimizing INI files in ShaderFixes folder...");
-            std::wstring sf_path = path_join(config.paths.importer_folder, L"ShaderFixes");
-            mod_mgr.optimize_shaderfixes_folder(sf_path, exclude_patterns);
-        }
+        optimize_importer_folders(config, d3dx_conf, reporter);
 
         // 8. Game-specific initialization (driven by config.importer name)
-        auto initializer = GameInitializer::create(config.importer);
-        if (initializer) {
-            reporter.status("Initializing game settings...");
-            initializer->initialize(config, reporter);
-        }
+        initialize_game_runtime(config, reporter);
 
         // 9. Deploy XXMI DLL files (per-game importer folder, isolated)
-        reporter.status("Deploying XXMI libraries...");
-        PackageDeployer deployer(config, reporter);
-        deployer.deploy();
-
-        // 10. Load 3DMigoto into game process
-        if (config.migoto.use_dll_drop) {
-            // DLL Proxy Chain mode: copy 3DMigoto DLLs + DXVK proxy to game
-            // directory so the game loads them naturally via DLL search order.
-            // No injection (no hooks, no remote threads) — invisible to anti-cheat.
-            reporter.status("Setting up DLL proxy chain...");
-            run_dll_drop(config, reporter);
-        } else {
-            // Standard injection: hook with direct fallback
-            reporter.status("Loading injector...");
-            DllInjector injector(config);
-
-            if (config.migoto.use_hook) {
-                try {
-                    injector.run_hook_injection(reporter);
-                } catch (const std::exception& hook_err) {
-                    reporter.warning(std::string("Hook injection failed: ") +
-                                     hook_err.what() + " — falling back to direct injection");
-                    reporter.log("info", "Retrying with direct injection (CreateRemoteThread)...");
-                    DllInjector injector2(config);
-                    injector2.run_direct_injection(reporter);
-                }
-            } else {
-                injector.run_direct_injection(reporter);
-            }
-        }
+        launch_migoto_runtime(config, reporter);
 
         // 11. Execute post-load script if configured
-        if (config.post_load.enabled && !config.post_load.cmd.empty()) {
-            reporter.status("Running post-load command...");
-            run_shell_command(config.post_load.cmd, config.post_load.wait);
-        }
+        run_configured_shell_command(config.post_load, "Running post-load command...", reporter);
 
         reporter.done(true);
         return 0;

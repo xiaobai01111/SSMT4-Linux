@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue';
+import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
   getGameState,
@@ -37,10 +37,7 @@ import {
   cancelActive,
   getRepairableFailuresFor,
 } from '../downloadStore';
-import {
-  buildCompletedTaskMarker,
-  shouldHandleCompletedTaskMarker,
-} from '../utils/downloadTaskUi';
+import { useGameDownloadModalLifecycle } from '../composables/useGameDownloadModalLifecycle';
 
 const { t, te } = useI18n();
 const tr = (key: string, fallback: string) => (te(key) ? t(key) : fallback);
@@ -869,48 +866,39 @@ const workingPhase = computed(() => {
   return '';
 });
 
-watch(() => props.modelValue, (val) => {
-  if (val) {
-    error.value = '';
-    statusMsg.value = '';
-    if (!isActiveFor(props.gameName)) {
-      gameState.value = null;
-    }
-    loadState();
+const handleModalOpen = async () => {
+  error.value = '';
+  statusMsg.value = '';
+  if (!isActiveFor(props.gameName)) {
+    gameState.value = null;
   }
-}, { immediate: true });
+  await loadState();
+};
 
-watch(() => props.gameName, () => {
-  if (!props.modelValue) return;
+const handleGameChange = async () => {
   error.value = '';
   statusMsg.value = '';
   gameState.value = null;
-  loadState();
-});
+  await loadState();
+};
 
-watch(launcherApi, (api) => {
-  const normalized = api.trim();
-  if (!normalized || availableServers.value.length === 0) return;
-  const matched = availableServers.value.find((s) => s.launcherApi.trim() === normalized);
-  if (matched) {
-    selectedServer.value = matched;
-  }
-});
-
-let lastHandledDoneTaskMarker = '';
-
-watch(
-  () => buildCompletedTaskMarker(currentTask.value),
-  (marker) => {
-    if (!shouldHandleCompletedTaskMarker(marker, lastHandledDoneTaskMarker, props.modelValue)) return;
-    lastHandledDoneTaskMarker = marker;
-    void Promise.allSettled([
+useGameDownloadModalLifecycle({
+  modelValue: () => props.modelValue,
+  gameName: () => props.gameName,
+  launcherApi,
+  availableServers,
+  selectedServer,
+  currentTask: () => currentTask.value,
+  onOpen: handleModalOpen,
+  onGameChange: handleGameChange,
+  onCompletedTask: async () => {
+    await Promise.allSettled([
       checkState(),
       loadGames(),
       refreshGameUpdateState(props.gameName),
     ]);
   },
-);
+});
 </script>
 
 <template>

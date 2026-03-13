@@ -1,5 +1,6 @@
 mod app_config_store;
 mod core;
+mod game_catalog_seed;
 mod games;
 mod hash_cache;
 mod proton;

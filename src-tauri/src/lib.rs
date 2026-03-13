@@ -9,7 +9,6 @@ mod services;
 mod utils;
 mod wine;
 
-use configs::app_config::AppConfig;
 use std::sync::Mutex;
 use tauri::Manager;
 

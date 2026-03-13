@@ -33,7 +33,6 @@ import {
   type ProtonFamilyRemoteGroup,
   type ProtonRemoteVersionItem,
   type ProtonSource,
-  type VersionCheckInfo,
   type GameInfo,
   getXxmiPackageSources,
   scanLocalXxmiPackages,
@@ -48,53 +47,13 @@ import {
 import { useI18n } from 'vue-i18n';
 import { useSettingsResourceTasks } from '../composables/useSettingsResourceTasks';
 import { useSettingsMigotoConfig } from '../composables/useSettingsMigotoConfig';
+import { useSettingsPageController } from '../composables/useSettingsPageController';
 import { NOTIFY_KEY } from '../types/notify';
 
 const { t, te } = useI18n()
 const route = useRoute();
 const router = useRouter();
 const notify = inject(NOTIFY_KEY, null);
-
-const activeMenu = ref('basic')
-const guideMenu = ref('');
-let guideMenuTimer: ReturnType<typeof setTimeout> | null = null;
-
-const VALID_MENUS = new Set([
-  'basic',
-  'appearance',
-  'display',
-  'version',
-  'resource',
-  'proton',
-  'dxvk',
-  'vkd3d',
-  'migoto',
-]);
-
-const applyMenuFromRoute = () => {
-  const menu = String(route.query.menu || '').trim();
-  const guide = String(route.query.guide || '').trim();
-  if (VALID_MENUS.has(menu)) {
-    activeMenu.value = menu;
-    if (guide === '1') {
-      guideMenu.value = menu;
-      if (guideMenuTimer) {
-        clearTimeout(guideMenuTimer);
-      }
-      guideMenuTimer = setTimeout(() => {
-        guideMenu.value = '';
-        guideMenuTimer = null;
-      }, 2600);
-    }
-  }
-};
-const versionInfo = ref<VersionCheckInfo | null>(null);
-const isVersionChecking = ref(false);
-const versionCheckLoaded = ref(false);
-const resourceInfo = ref<VersionCheckInfo | null>(null);
-const isResourceChecking = ref(false);
-const isResourcePulling = ref(false);
-const resourceCheckLoaded = ref(false);
 
 const protonCatalog = ref<ProtonCatalog>({ families: [], sources: [] });
 const localGroups = ref<ProtonFamilyLocalGroup[]>([]);
@@ -107,7 +66,6 @@ const isRemoteLoading = ref(false);
 const isDownloading = ref(false);
 const downloadingFamilyKey = ref('');
 const downloadingTag = ref('');
-const protonLoaded = ref(false);
 const showProtonCatalogEditor = ref(false);
 
 const selectedLocalByFamily = reactive<Record<string, string>>({});
@@ -134,50 +92,6 @@ const toast = async (
     return;
   }
   await showMessage(message, { title, kind });
-};
-
-const checkVersionInfo = async () => {
-  if (isVersionChecking.value) return;
-  try {
-    isVersionChecking.value = true;
-    versionInfo.value = await getVersionCheckInfo();
-    versionCheckLoaded.value = true;
-  } catch (e) {
-    await toast('error', tr('settings.messages.title.error', '错误'), tr('settings.messages.versionCheckFailed', `版本检查失败: ${e}`));
-  } finally {
-    isVersionChecking.value = false;
-  }
-};
-
-const checkResourceInfo = async () => {
-  if (isResourceChecking.value) return;
-  try {
-    isResourceChecking.value = true;
-    resourceInfo.value = await getResourceVersionInfo();
-    resourceCheckLoaded.value = true;
-  } catch (e) {
-    await toast('error', tr('settings.messages.title.error', '错误'), tr('settings.messages.resourceCheckFailed', `资源检查失败: ${e}`));
-  } finally {
-    isResourceChecking.value = false;
-  }
-};
-
-const pullResources = async () => {
-  if (isResourcePulling.value) return;
-  try {
-    isResourcePulling.value = true;
-    const msg = await pullResourceUpdates();
-    await checkResourceInfo();
-    await toast('info', tr('settings.resource.title', '资源更新'), msg);
-  } catch (e) {
-    await toast('error', tr('settings.messages.title.error', '错误'), tr('settings.messages.resourcePullFailed', `拉取资源失败: ${e}`));
-  } finally {
-    isResourcePulling.value = false;
-  }
-};
-
-const reenterOnboarding = async () => {
-  startFeatureOnboarding(0);
 };
 
 const remoteItemKey = (item: ProtonRemoteVersionItem) => `${item.tag}@@${item.source_repo}`;
@@ -560,7 +474,6 @@ const dxvkRemoteVersions = ref<DxvkRemoteVersion[]>([]);
 const dxvkSelectedKey = ref('');  // "version|variant" 格式
 const isDxvkFetching = ref(false);
 const isDxvkDownloading = ref(false);
-const dxvkLoaded = ref(false);
 
 interface DxvkVersionItem {
   version: string;
@@ -747,7 +660,6 @@ const vkd3dRemoteVersions = ref<Vkd3dRemoteVersion[]>([]);
 const vkd3dSelectedVersion = ref('');
 const isVkd3dFetching = ref(false);
 const isVkd3dDownloading = ref(false);
-const vkd3dLoaded = ref(false);
 const vkd3dFetchWarning = ref('');
 
 interface Vkd3dVersionItem {
@@ -967,6 +879,45 @@ const refreshXxmiState = async () => {
   await Promise.all([refreshXxmiLocal(), refreshXxmiRemote()]);
 };
 
+const {
+  activeMenu,
+  guideMenu,
+  versionInfo,
+  isVersionChecking,
+  checkVersionInfo,
+  resourceInfo,
+  isResourceChecking,
+  checkResourceInfo,
+  isResourcePulling,
+  pullResources,
+  reenterOnboarding,
+} = useSettingsPageController({
+  route,
+  tr,
+  toast,
+  getVersionCheckInfo,
+  getResourceVersionInfo,
+  pullResourceUpdates,
+  reenterOnboarding: () => startFeatureOnboarding(0),
+  globalMigotoEnabled: () => globalMigotoEnabled.value,
+  loadProton: async () => {
+    await loadCatalog();
+    await Promise.all([refreshLocalGrouped(), refreshRemoteGrouped()]);
+  },
+  loadDxvk: async () => {
+    await Promise.all([refreshDxvkLocal(), refreshDxvkRemote()]);
+  },
+  loadVkd3d: async () => {
+    await Promise.all([refreshVkd3dLocal(), refreshVkd3dRemote()]);
+  },
+  loadMigoto: async () => {
+    await Promise.all([ensureMigotoLoaded(), loadXxmiSources(), refreshXxmiLocal()]);
+  },
+  setProtonEditorCollapsed: () => {
+    showProtonCatalogEditor.value = false;
+  },
+});
+
 const runXxmiAction = async <T>({
   pendingMessage,
   run,
@@ -1099,44 +1050,6 @@ const selectDataDir = async () => {
   }
 };
 
-watch(
-  () => [activeMenu.value, globalMigotoEnabled.value] as const,
-  async ([menu, migotoEnabled]) => {
-    if (menu === 'version' && !versionCheckLoaded.value) {
-      await checkVersionInfo();
-    }
-    if (menu === 'resource' && !resourceCheckLoaded.value) {
-      await checkResourceInfo();
-    }
-    if (menu === 'proton' && !protonLoaded.value) {
-      await loadCatalog();
-      await Promise.all([refreshLocalGrouped(), refreshRemoteGrouped()]);
-      protonLoaded.value = true;
-    }
-    if (menu === 'proton') {
-      // 默认折叠重型编辑器，避免滚动时大量表单常驻渲染
-      showProtonCatalogEditor.value = false;
-    }
-    if (menu === 'dxvk' && !dxvkLoaded.value) {
-      await Promise.all([refreshDxvkLocal(), refreshDxvkRemote()]);
-      dxvkLoaded.value = true;
-    }
-    if (menu === 'vkd3d' && !vkd3dLoaded.value) {
-      await Promise.all([refreshVkd3dLocal(), refreshVkd3dRemote()]);
-      vkd3dLoaded.value = true;
-    }
-    if (menu === 'migoto' && migotoEnabled) {
-      await Promise.all([ensureMigotoLoaded(), loadXxmiSources(), refreshXxmiLocal()]);
-    }
-  },
-  { immediate: true }
-);
-
-watch(
-  () => [route.query.menu, route.query.guide, route.query.t],
-  () => applyMenuFromRoute(),
-  { immediate: true },
-);
 </script>
 
 <template>

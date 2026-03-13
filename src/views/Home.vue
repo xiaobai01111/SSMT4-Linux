@@ -1,5 +1,5 @@
 <script setup lang="ts" >
-import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   gamesList,
@@ -16,14 +16,14 @@ import {
   setGameVisibility,
   loadGameConfig,
   startGame as apiStartGame,
-  listenAppEvent,
   openGameLogWindow,
 } from '../api'
-import type { ComponentDownloadProgressEvent } from '../types/events';
 import GameSettingsModal from '../components/GameSettingsModal.vue'
 import GameDownloadModal from '../components/GameDownloadModal.vue'
 import { activeDownloadTask } from '../downloadStore'
 import { useHomeLaunchGuards } from '../composables/useHomeLaunchGuards'
+import { useHomeLaunchGuardUi } from '../composables/useHomeLaunchGuardUi'
+import { useHomeRuntimeController } from '../composables/useHomeRuntimeController'
 import {
   resolveHomePrimaryAction,
   resolveHomePrimaryLabelKey,
@@ -217,6 +217,11 @@ const onOnboardingActionEvent = (event: Event) => {
   void applyOnboardingHomeAction(detail);
 };
 
+const errorText = (error: unknown): string => {
+  if (error instanceof Error) return error.message;
+  return String(error ?? '');
+};
+
 // 检查当前游戏是否已配置可执行文件
 const gameHasExe = ref(false);
 const gameExeCache = new Map<string, boolean>();
@@ -246,49 +251,27 @@ const checkGameExe = async (force = false) => {
   }
 };
 
-// 组件下载进度（Proton/DXVK）
-const componentDlProgress = ref<ComponentDownloadProgressEvent | null>(null);
-
-// Start Game Logic
-const isLaunching = ref(false);
-const isGameRunning = ref(false);
-const runningGameName = ref('');
-
-const ensureRiskAcknowledged = async () => {
-  if (appSettings.tosRiskAcknowledged) return true;
-
-  const accepted = await askConfirm(
-    t('home.messages.tosPrimary'),
-    {
-      title: t('home.messages.title.tosRisk'),
-      kind: 'warning',
-      okLabel: t('home.messages.ok.riskUnderstood'),
-      cancelLabel: t('home.messages.cancel.cancel'),
-    }
-  );
-  if (!accepted) return false;
-
-  const second = await askConfirm(
-    t('home.messages.tosSecondary'),
-    {
-      title: t('home.messages.title.secondConfirm'),
-      kind: 'warning',
-      okLabel: t('home.messages.ok.confirmContinue'),
-      cancelLabel: t('home.messages.cancel.back'),
-    }
-  );
-  if (!second) return false;
-
-  appSettings.tosRiskAcknowledged = true;
-  return true;
-};
-
 const {
-  checkExecutablePathMismatch,
-  ensureProtectionEnabled,
-  ensureRuntimeReady,
-  resolveWineVersionId,
-} = useHomeLaunchGuards({
+  isLaunching,
+  isGameRunning,
+  componentDlProgress,
+  markLaunchRequested,
+  resetLaunchState,
+} = useHomeRuntimeController({
+  currentGameName: () => String(appSettings.currentConfigName || ''),
+  checkGameExe,
+  refreshGameUpdateState,
+  closeMenu,
+  onOnboardingActionEvent,
+  showAnticheatWarning: (message) =>
+    showMessage(message, {
+      title: t('home.messages.title.anticheatWarning'),
+      kind: 'warning',
+    }),
+});
+
+const { planLaunchGuards } = useHomeLaunchGuards();
+const { ensureRiskAcknowledged, executeGuardPlan } = useHomeLaunchGuardUi({
   openGlobalSettingsMenu,
   openRuntimeSettings,
   openGameSettingsGameTab,
@@ -298,59 +281,50 @@ const {
 });
 
 const launchGame = async () => {
-  // 立即检查，防止竞态条件
-  if (isLaunching.value || isGameRunning.value) {
+  if (!markLaunchRequested()) {
     return;
   }
-  // 先置位，避免 await 期间重复触发
-  isLaunching.value = true;
 
   const gameName = appSettings.currentConfigName;
   if (!gameName || gameName === 'Default') {
     await showMessage(t('home.messages.needSelectGame'), { title: t('home.messages.title.info'), kind: 'info' });
-    isLaunching.value = false;
+    resetLaunchState();
     return;
   }
 
-  if (!(await ensureRiskAcknowledged())) {
-    isLaunching.value = false;
+  if (!(await ensureRiskAcknowledged(
+    appSettings.tosRiskAcknowledged,
+    () => {
+      appSettings.tosRiskAcknowledged = true;
+    },
+  ))) {
+    resetLaunchState();
     return;
   }
 
   try {
       // Load game config to resolve paths
       const data = await loadGameConfig(gameName);
-      if (!(await ensureProtectionEnabled(gameName, data))) {
-        isLaunching.value = false;
+      const gameExePath = data.other?.gamePath || '';
+      const guardPlan = await planLaunchGuards(gameName, data, !!gameExePath);
+      if (!(await executeGuardPlan(guardPlan))) {
+        resetLaunchState();
         return;
       }
 
-      const gameExePath = data.other?.gamePath || '';
-      const wineVersionId = await resolveWineVersionId(gameName, data);
-      
       if (!gameExePath) {
         await showMessage(t('home.messages.needGameExePath'), { title: t('home.messages.title.info'), kind: 'info' });
-        isLaunching.value = false;
+        resetLaunchState();
         return;
       }
 
-      if (!(await ensureRuntimeReady(gameName, data, wineVersionId))) {
-        isLaunching.value = false;
-        return;
-      }
-
-      // 主程序路径不匹配仅提示，不阻止启动
-      await checkExecutablePathMismatch(gameName, data);
-
-      await apiStartGame(gameName, gameExePath, wineVersionId);
+      await apiStartGame(gameName, gameExePath, guardPlan.wineVersionId);
       // 启动成功后，等待 game-lifecycle 事件来更新状态
       // 不在这里重置 isLaunching，由事件处理器负责
       
-  } catch (e: any) {
-    console.error('Start Game Error:', e);
-    // 只在启动失败时重置状态
-    isLaunching.value = false;
-    const errText = String(e || '');
+  } catch (e: unknown) {
+    resetLaunchState();
+    const errText = errorText(e);
     if (
       errText.includes('Wine/Proton') ||
       errText.includes('运行环境') ||
@@ -382,8 +356,8 @@ const openCurrentGameLog = async () => {
   }
   try {
     await openGameLogWindow(gameName);
-  } catch (e: any) {
-    await showMessage(t('home.messages.openGameLogFailed', { error: String(e) }), { title: t('home.messages.title.error'), kind: 'error' });
+  } catch (e: unknown) {
+    await showMessage(t('home.messages.openGameLogFailed', { error: errorText(e) }), { title: t('home.messages.title.error'), kind: 'error' });
   }
 }
 
@@ -395,60 +369,6 @@ const handlePrimaryAction = () => {
   }
   void launchGame();
 }
-
-watch(() => appSettings.currentConfigName, () => {
-  checkGameExe(false);
-  const gameName = String(appSettings.currentConfigName || '').trim();
-  if (!gameName || gameName === 'Default') return;
-  void refreshGameUpdateState(gameName);
-});
-
-let unlistenLifecycle: (() => void) | null = null;
-let unlistenComponentDl: (() => void) | null = null;
-let unlistenAnticheat: (() => void) | null = null;
-
-onMounted(async () => {
-  document.addEventListener('click', closeMenu);
-  window.addEventListener('ssmt4-onboarding-action', onOnboardingActionEvent as EventListener);
-  checkGameExe();
-  unlistenLifecycle = await listenAppEvent('game-lifecycle', (event) => {
-    const data = event.payload;
-    switch (data.event) {
-      case 'started':
-        isGameRunning.value = true;
-        runningGameName.value = data.game;
-        isLaunching.value = false;
-        break;
-      case 'exited':
-        isGameRunning.value = false;
-        runningGameName.value = '';
-        isLaunching.value = false;
-        break;
-      default:
-        break;
-    }
-  });
-  unlistenComponentDl = await listenAppEvent('component-download-progress', (event) => {
-    const data = event.payload;
-    if (data.phase === 'done') {
-      componentDlProgress.value = null;
-    } else {
-      componentDlProgress.value = data;
-    }
-  });
-  unlistenAnticheat = await listenAppEvent('game-anticheat-warning', (event) => {
-    const data = event.payload;
-    showMessage(data.message, { title: t('home.messages.title.anticheatWarning'), kind: 'warning' });
-  });
-});
-
-onUnmounted(() => {
-  document.removeEventListener('click', closeMenu);
-  window.removeEventListener('ssmt4-onboarding-action', onOnboardingActionEvent as EventListener);
-  if (unlistenLifecycle) unlistenLifecycle();
-  if (unlistenComponentDl) unlistenComponentDl();
-  if (unlistenAnticheat) unlistenAnticheat();
-});
 </script>
 
 <template>

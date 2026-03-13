@@ -646,6 +646,7 @@
       "readonlyWarning": "Config is in legacy read-only fallback mode ({code}). Check migration logs.",
       "readonlyGeneric": "Config is currently read-only.",
       "unsavedPrompt": "There are unsaved changes in Game Info. Close anyway?",
+      "unsavedSwitchPrompt": "There are unsaved changes in Game Info. Switching games will discard them. Continue?",
       "unsavedTitle": "Unsaved Changes",
       "gameVersion": "Game Version",
       "versionUnknown": "Version not detected",

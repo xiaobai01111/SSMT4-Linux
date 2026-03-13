@@ -10,13 +10,15 @@ export const messages = {
 const missingWithFallbackLogged = new Set<string>()
 const missingWithoutFallbackLogged = new Set<string>()
 
-const getByPath = (obj: Record<string, any>, key: string): string | undefined => {
-    return key.split('.').reduce<any>((acc, segment) => {
-        if (acc && typeof acc === 'object' && segment in acc) {
-            return acc[segment]
+const getByPath = (obj: Record<string, unknown>, key: string): string | undefined => {
+    let current: unknown = obj
+    for (const segment of key.split('.')) {
+        if (!current || typeof current !== 'object' || !(segment in current)) {
+            return undefined
         }
-        return undefined
-    }, obj)
+        current = (current as Record<string, unknown>)[segment]
+    }
+    return typeof current === 'string' ? current : undefined
 }
 
 export const i18n = createI18n({
@@ -26,7 +28,7 @@ export const i18n = createI18n({
     messages,
     missing: (locale, key) => {
         const dedupeKey = `${locale}:${key}`
-        const fallback = getByPath(zhs as Record<string, any>, key)
+        const fallback = getByPath(zhs as Record<string, unknown>, key)
         if (typeof fallback === 'string') {
             if (import.meta.env.DEV && !missingWithFallbackLogged.has(dedupeKey)) {
                 missingWithFallbackLogged.add(dedupeKey)

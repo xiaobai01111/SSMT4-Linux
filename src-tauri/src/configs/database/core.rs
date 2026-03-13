@@ -152,7 +152,7 @@ fn init_tables(conn: &Connection) -> Result<(), String> {
     .map_err(|e| format!("创建数据库表失败: {}", e))?;
 
     super::proton::ensure_proton_catalog_schema(conn);
-    super::games::ensure_game_catalog_seed(conn);
+    super::game_catalog_seed::ensure_game_catalog_seed(conn);
     super::proton::ensure_proton_catalog_seed(conn);
     Ok(())
 }

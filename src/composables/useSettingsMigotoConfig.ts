@@ -24,6 +24,8 @@ import {
   splitMigotoStartArgs,
   trimMigotoPathValue,
 } from '../utils/migotoLayout';
+import { sharedBridgeMigotoDefaults } from '../shared/bridgeMigotoDefaults';
+import type { BridgeMigotoFormModel } from '../shared/generated/bridgeMigotoContract';
 
 type TranslateFn = (key: string, params?: Record<string, unknown>) => string;
 type FallbackTranslateFn = (
@@ -43,44 +45,7 @@ interface UseSettingsMigotoConfigOptions {
   toast: ToastFn;
 }
 
-export interface MigotoGameConfig {
-  enabled: boolean;
-  importer: string;
-  use_hook: boolean;
-  enforce_rendering: boolean;
-  enable_hunting: boolean;
-  dump_shaders: boolean;
-  mute_warnings: boolean;
-  calls_logging: boolean;
-  debug_logging: boolean;
-  unsafe_mode: boolean;
-  process_timeout: number;
-  migoto_path: string;
-  importer_folder: string;
-  mod_folder: string;
-  shader_fixes_folder: string;
-  d3dx_ini_path: string;
-  bridge_exe_path: string;
-  start_args: string;
-  process_start_method: string;
-  process_priority: string;
-  xxmi_dll_init_delay: number;
-  extra_libraries_enabled: boolean;
-  extra_libraries_paths: string;
-  custom_launch_enabled: boolean;
-  custom_launch_cmd: string;
-  custom_launch_inject_mode: string;
-  pre_launch_enabled: boolean;
-  pre_launch_cmd: string;
-  pre_launch_wait: boolean;
-  post_load_enabled: boolean;
-  post_load_cmd: string;
-  post_load_wait: boolean;
-  wwmi_configure_game: boolean;
-  wwmi_unlock_fps: boolean;
-  wwmi_perf_tweaks: boolean;
-  wwmi_disable_wounded_fx: boolean;
-}
+export type MigotoGameConfig = BridgeMigotoFormModel;
 
 export type MigotoPathOverrideField =
   | 'importer_folder'
@@ -99,15 +64,15 @@ type MigotoSelectablePathField =
 const defaultMigotoConfig: MigotoGameConfig = {
   enabled: false,
   importer: MIGOTO_DEFAULT_IMPORTER,
-  use_hook: true,
-  enforce_rendering: true,
-  enable_hunting: false,
-  dump_shaders: false,
-  mute_warnings: true,
-  calls_logging: false,
-  debug_logging: false,
-  unsafe_mode: false,
-  process_timeout: 30,
+  use_hook: sharedBridgeMigotoDefaults.migoto.useHook,
+  enforce_rendering: sharedBridgeMigotoDefaults.migoto.enforceRendering,
+  enable_hunting: sharedBridgeMigotoDefaults.migoto.enableHunting,
+  dump_shaders: sharedBridgeMigotoDefaults.migoto.dumpShaders,
+  mute_warnings: sharedBridgeMigotoDefaults.migoto.muteWarnings,
+  calls_logging: sharedBridgeMigotoDefaults.migoto.callsLogging,
+  debug_logging: sharedBridgeMigotoDefaults.migoto.debugLogging,
+  unsafe_mode: sharedBridgeMigotoDefaults.migoto.unsafeMode,
+  process_timeout: sharedBridgeMigotoDefaults.game.processTimeout,
   migoto_path: '',
   importer_folder: '',
   mod_folder: '',
@@ -115,20 +80,20 @@ const defaultMigotoConfig: MigotoGameConfig = {
   d3dx_ini_path: '',
   bridge_exe_path: '',
   start_args: '',
-  process_start_method: 'Native',
-  process_priority: 'Normal',
-  xxmi_dll_init_delay: 500,
-  extra_libraries_enabled: false,
+  process_start_method: sharedBridgeMigotoDefaults.game.processStartMethod,
+  process_priority: sharedBridgeMigotoDefaults.game.processPriority,
+  xxmi_dll_init_delay: sharedBridgeMigotoDefaults.migoto.xxmiDllInitDelay,
+  extra_libraries_enabled: sharedBridgeMigotoDefaults.extraLibraries.enabled,
   extra_libraries_paths: '',
-  custom_launch_enabled: false,
+  custom_launch_enabled: sharedBridgeMigotoDefaults.customLaunch.enabled,
   custom_launch_cmd: '',
-  custom_launch_inject_mode: 'Hook',
-  pre_launch_enabled: false,
+  custom_launch_inject_mode: sharedBridgeMigotoDefaults.customLaunch.injectMode,
+  pre_launch_enabled: sharedBridgeMigotoDefaults.shellCommand.enabled,
   pre_launch_cmd: '',
-  pre_launch_wait: true,
-  post_load_enabled: false,
+  pre_launch_wait: sharedBridgeMigotoDefaults.shellCommand.wait,
+  post_load_enabled: sharedBridgeMigotoDefaults.shellCommand.enabled,
   post_load_cmd: '',
-  post_load_wait: true,
+  post_load_wait: sharedBridgeMigotoDefaults.shellCommand.wait,
   wwmi_configure_game: true,
   wwmi_unlock_fps: true,
   wwmi_perf_tweaks: true,

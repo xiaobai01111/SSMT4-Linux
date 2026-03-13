@@ -1,4 +1,5 @@
 pub mod bridge;
+pub(crate) mod bridge_contract_generated;
 pub mod common;
 pub mod game_config;
 pub mod game_downloader;

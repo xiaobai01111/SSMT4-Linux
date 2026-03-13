@@ -7,6 +7,7 @@
   "scripts": {
     "preinstall": "node -e \"const ua = process.env.npm_config_user_agent || ''; const execPath = process.env.npm_execpath || ''; if (!ua.includes('pnpm') && !execPath.includes('pnpm')) { console.error('This project uses pnpm. Run corepack enable once, then pnpm install.'); process.exit(1); }\"",
     "sync-version": "bash scripts/sync-version.sh",
+    "sync:bridge-contracts": "node scripts/generate-bridge-contracts.mjs",
     "package:linux": "bash scripts/build-install-packages.sh",
     "package:appimage": "bash scripts/build-install-packages.sh --appimage-only",
     "dev": "bash scripts/sync-version.sh && vite",

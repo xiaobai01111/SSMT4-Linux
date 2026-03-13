@@ -76,13 +76,16 @@ export function useGameInfoEditor() {
     nameValidation.value = null;
   };
 
-  const load = async (gameName: string) => {
+  const load = async (gameName: string, shouldApply?: () => boolean) => {
     loading.value = true;
     try {
       const [presetCatalog, config] = await Promise.all([
         listGamePresetsForInfo(),
         loadGameInfoV2(gameName),
       ]);
+      if (shouldApply && !shouldApply()) {
+        return config;
+      }
       presets.value = presetCatalog;
       infoConfig.value = config;
       resetEditorFlags();
