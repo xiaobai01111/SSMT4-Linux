@@ -396,6 +396,7 @@ pub(super) fn resolve_preferred_launch_exe(game_preset: &str, game_exe: &Path) -
     game_exe.to_path_buf()
 }
 
+#[cfg(test)]
 pub(super) fn normalize_endfield_launcher_start_args(start_args: &mut Vec<String>) {
     let mut normalized = Vec::with_capacity(start_args.len() + 1);
     let mut saw_dx11 = false;

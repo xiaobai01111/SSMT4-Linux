@@ -570,6 +570,7 @@ fn resolve_preferred_launch_exe(game_preset: &str, game_exe: &Path) -> PathBuf {
     target_resolver::resolve_preferred_launch_exe(game_preset, game_exe)
 }
 
+#[cfg(test)]
 fn normalize_endfield_launcher_start_args(start_args: &mut Vec<String>) {
     target_resolver::normalize_endfield_launcher_start_args(start_args)
 }

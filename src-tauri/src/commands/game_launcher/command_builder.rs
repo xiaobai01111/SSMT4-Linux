@@ -255,8 +255,7 @@ pub(super) fn resolve_run_target(
 
                 info!(
                     "ArknightsEndfield EFMI 对齐原版 XXMI: start_exe={}, launcher={}",
-                    chain.endfield_exe.display()
-                    ,
+                    chain.endfield_exe.display(),
                     chain.launcher_exe.display()
                 );
                 super::append_game_log(
@@ -1067,7 +1066,7 @@ mod tests {
 
     #[test]
     fn endfield_keeps_original_efmi_direct_injection_defaults() {
-        let mut migoto = BridgeMigotoConfig {
+        let migoto = BridgeMigotoConfig {
             use_hook: false,
             use_dll_drop: false,
             enforce_rendering: false,
