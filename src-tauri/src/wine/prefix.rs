@@ -230,6 +230,94 @@ pub fn get_prefix_pfx_dir(game_id: &str) -> PathBuf {
     get_prefix_dir(game_id).join("pfx")
 }
 
+fn is_proton_compat_root(path: &Path) -> bool {
+    path.join("version").exists()
+        && path.join("tracked_files").exists()
+        && path.join("config_info").exists()
+}
+
+fn uses_proton_compat_layout(config: &PrefixConfig) -> bool {
+    let id = config.wine_version_id.trim().to_ascii_lowercase();
+    id.starts_with("official_proton-")
+        || id.starts_with("experimental-")
+        || id.starts_with("ge_proton-")
+        || id.starts_with("dw_proton-")
+        || id.starts_with("proton_tkg-")
+}
+
+#[cfg(unix)]
+fn ensure_proton_pfx_link(prefix_dir: &Path) -> Result<(), String> {
+    let pfx_dir = prefix_dir.join("pfx");
+
+    if pfx_dir.is_symlink() {
+        let target = std::fs::read_link(&pfx_dir)
+            .map_err(|e| format!("读取现有 pfx 符号链接失败 {}: {}", pfx_dir.display(), e))?;
+        let canonical_target = if target.is_absolute() {
+            std::fs::canonicalize(&target).unwrap_or(target)
+        } else {
+            std::fs::canonicalize(prefix_dir.join(target))
+                .unwrap_or_else(|_| prefix_dir.to_path_buf())
+        };
+        let canonical_prefix =
+            std::fs::canonicalize(prefix_dir).unwrap_or(prefix_dir.to_path_buf());
+        if canonical_target == canonical_prefix {
+            return Ok(());
+        }
+        return Err(format!(
+            "检测到异常 pfx 符号链接，拒绝覆盖: {} -> {}",
+            pfx_dir.display(),
+            canonical_target.display()
+        ));
+    }
+
+    if pfx_dir.exists() {
+        let is_empty_dir = pfx_dir.is_dir()
+            && std::fs::read_dir(&pfx_dir)
+                .map(|mut entries| entries.next().is_none())
+                .unwrap_or(false);
+        if is_empty_dir {
+            std::fs::remove_dir(&pfx_dir)
+                .map_err(|e| format!("移除空的 pfx 目录失败 {}: {}", pfx_dir.display(), e))?;
+        } else {
+            warn!(
+                "检测到非标准 Proton prefix 布局，保留现有实体 pfx 目录: {}",
+                pfx_dir.display()
+            );
+            return Ok(());
+        }
+    }
+
+    std::os::unix::fs::symlink(prefix_dir, &pfx_dir).map_err(|e| {
+        format!(
+            "创建 Proton compat pfx 符号链接失败 {} -> {}: {}",
+            pfx_dir.display(),
+            prefix_dir.display(),
+            e
+        )
+    })?;
+    Ok(())
+}
+
+/// 返回 Proton/umu-run 实际应使用的 compat root。
+///
+/// 兼容两种布局：
+/// - 标准 compatdata 根目录：`prefix/`
+/// - 历史错误嵌套布局：`prefix/pfx/`
+pub fn get_proton_compat_root_dir(game_id: &str) -> PathBuf {
+    let prefix_dir = get_prefix_dir(game_id);
+    let nested_root = prefix_dir.join("pfx");
+
+    if is_proton_compat_root(&nested_root) {
+        return std::fs::canonicalize(&nested_root).unwrap_or(nested_root);
+    }
+
+    if is_proton_compat_root(&prefix_dir) {
+        return std::fs::canonicalize(&prefix_dir).unwrap_or(prefix_dir);
+    }
+
+    prefix_dir
+}
+
 pub fn get_prefix_config_path(game_id: &str) -> PathBuf {
     get_prefix_dir(game_id).join("prefix.json")
 }
@@ -239,7 +327,14 @@ pub fn create_prefix(game_id: &str, config: &PrefixConfig) -> Result<PathBuf, St
     let pfx_dir = prefix_dir.join("pfx");
 
     file_manager::ensure_dir(&prefix_dir)?;
-    file_manager::ensure_dir(&pfx_dir)?;
+    if uses_proton_compat_layout(config) {
+        #[cfg(unix)]
+        ensure_proton_pfx_link(&prefix_dir)?;
+        #[cfg(not(unix))]
+        file_manager::ensure_dir(&pfx_dir)?;
+    } else {
+        file_manager::ensure_dir(&pfx_dir)?;
+    }
 
     save_prefix_config(game_id, config)?;
 
@@ -653,4 +748,39 @@ pub struct PrefixInfo {
     pub path: PathBuf,
     pub size_bytes: u64,
     pub config: Option<PrefixConfig>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn proton_family_ids_use_compat_layout() {
+        let config = PrefixConfig {
+            wine_version_id: "dw_proton-dwproton-10.0-18".to_string(),
+            ..Default::default()
+        };
+        assert!(uses_proton_compat_layout(&config));
+
+        let config = PrefixConfig {
+            wine_version_id: "ge_proton-GE-Proton10-32".to_string(),
+            ..Default::default()
+        };
+        assert!(uses_proton_compat_layout(&config));
+    }
+
+    #[test]
+    fn non_proton_family_ids_do_not_use_compat_layout() {
+        let config = PrefixConfig {
+            wine_version_id: "lutris-wine-ge-8-26-x86_64".to_string(),
+            ..Default::default()
+        };
+        assert!(!uses_proton_compat_layout(&config));
+
+        let config = PrefixConfig {
+            wine_version_id: String::new(),
+            ..Default::default()
+        };
+        assert!(!uses_proton_compat_layout(&config));
+    }
 }

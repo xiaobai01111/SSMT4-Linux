@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, provide } from "vue";
-import { useRoute } from "vue-router";
+import { computed, onMounted, onUnmounted, provide, ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { appSettings, BGType } from "./store";
 import TitleBar from "./components/TitleBar.vue";
 import FeatureOnboarding from "./components/FeatureOnboarding.vue";
@@ -14,6 +15,12 @@ import { NOTIFY_KEY, type NotifyApi } from "./types/notify";
 
 
 const route = useRoute();
+const router = useRouter();
+const currentWindowLabel = ref('');
+const isViewerRoute = computed(() => route.path === '/log-viewer' || route.path === '/game-log-viewer');
+const isViewerWindow = computed(
+  () => currentWindowLabel.value === 'log-viewer' || currentWindowLabel.value === 'game-log-viewer',
+);
 const blurEnabledRoutes = new Set(['/', '/websites']);
 const isBlurRoute = computed(() => blurEnabledRoutes.has(route.path));
 const effectiveContentBlur = computed(() => {
@@ -99,6 +106,18 @@ const preventContextMenu = (event: Event) => {
 
 onMounted(() => {
   document.addEventListener('contextmenu', preventContextMenu);
+
+  try {
+    const label = getCurrentWindow().label;
+    currentWindowLabel.value = label;
+    if (label === 'game-log-viewer' && route.path !== '/game-log-viewer') {
+      void router.replace({ path: '/game-log-viewer' });
+    } else if (label === 'log-viewer' && route.path !== '/log-viewer') {
+      void router.replace({ path: '/log-viewer' });
+    }
+  } catch {
+    // Keep web-only fallback behavior unchanged.
+  }
 });
 
 onUnmounted(() => {
@@ -110,7 +129,7 @@ onUnmounted(() => {
 
 <template>
   <!-- 日志查看器独立窗口：无 TitleBar、无背景层 -->
-  <template v-if="route.path === '/log-viewer' || route.path === '/game-log-viewer'">
+  <template v-if="isViewerRoute || isViewerWindow">
     <router-view />
   </template>
 

@@ -51,23 +51,6 @@ fn push_line(session: &mut GameLogSession, level: &str, source: &str, message: &
         .push_back(format_log_line(level, source, message));
 }
 
-pub fn start_game_log_session(game_name: &str) {
-    let game_name = canonical_game_name(game_name);
-    let mut session = GameLogSession {
-        game_name: game_name.clone(),
-        started_at: now_string(),
-        lines: VecDeque::with_capacity(512),
-    };
-    push_line(
-        &mut session,
-        "INFO",
-        "session",
-        &format!("日志会话已创建: {}", game_name),
-    );
-    let mut guard = GAME_LOG_SESSION.lock().unwrap();
-    *guard = Some(session);
-}
-
 pub fn ensure_game_log_session(game_name: &str) {
     let canonical = canonical_game_name(game_name);
     let mut guard = GAME_LOG_SESSION.lock().unwrap();
@@ -138,7 +121,7 @@ pub async fn open_game_log_window(app: tauri::AppHandle, game_name: String) -> R
         return Err("请先选择有效的游戏配置".to_string());
     }
 
-    start_game_log_session(&canonical);
+    ensure_game_log_session(&canonical);
 
     let window_title = format!("{} - 游戏日志", canonical);
     if let Some(window) = app.get_webview_window(GAME_LOG_WINDOW_LABEL) {
@@ -179,7 +162,7 @@ pub async fn open_game_log_window(app: tauri::AppHandle, game_name: String) -> R
 mod tests {
     use super::{
         append_game_log_line, clear_game_log_session, ensure_game_log_session, format_log_line,
-        read_game_log_snapshot, start_game_log_session,
+        read_game_log_snapshot,
     };
     use once_cell::sync::Lazy;
     use std::sync::Mutex;
@@ -212,7 +195,7 @@ mod tests {
         clear_game_log_session();
 
         let game = unique_game_name("Primary");
-        start_game_log_session(&game);
+        ensure_game_log_session(&game);
         append_game_log_line(&game, "INFO", "launcher", "hello");
         append_game_log_line("OtherGame", "WARN", "launcher", "ignored");
 

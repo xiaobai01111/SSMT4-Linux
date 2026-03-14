@@ -50,7 +50,7 @@ private:
     void hook_library(const std::wstring& dll_path, const std::wstring& process_name);
     bool wait_for_injection(int timeout);
     bool unhook_library();
-    void open_process(const std::vector<std::wstring>* inject_dll_paths = nullptr);
+    unsigned long open_process(const std::vector<std::wstring>* inject_dll_paths = nullptr);
     void start_process_native(const std::wstring& exe, const std::wstring& work_dir,
                               const std::vector<std::wstring>& args, unsigned long flags);
     void start_process_shell(const std::wstring& exe, const std::wstring& work_dir,

@@ -41,6 +41,15 @@ const loadLogs = async () => {
       await nextTick();
       scrollToBottom();
     }
+  } catch (e: unknown) {
+    const text = e instanceof Error ? e.message : String(e);
+    snapshot.value = {
+      active: false,
+      gameName: '',
+      startedAt: '',
+      lineCount: 0,
+      content: `${t('logviewer.readFailed')}: ${text}`,
+    };
   } finally {
     isLoading.value = false;
   }

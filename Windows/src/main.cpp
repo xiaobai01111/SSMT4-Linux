@@ -290,6 +290,15 @@ static void optimize_importer_folders(
     D3dxIniConfigurator& d3dx_conf,
     StatusReporter& reporter
 ) {
+    if (iequals(config.importer, "EFMI")) {
+        reporter.status("Skipping INI optimizer for EFMI...");
+        reporter.log(
+            "info",
+            "EFMI optimization bypassed to preserve ALPHA-4 mod semantics"
+        );
+        return;
+    }
+
     reporter.status("Optimizing INI files in Mods folder...");
     ModManager mod_mgr;
 

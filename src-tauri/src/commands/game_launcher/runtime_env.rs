@@ -5,7 +5,25 @@ pub(super) fn load_prefix_runtime_context(
     wine_version_id: &str,
 ) -> Result<PrefixRuntimeContext, String> {
     let prefix_dir = prefix::get_prefix_dir(game_name);
+    let compat_root_dir = prefix::get_proton_compat_root_dir(game_name);
     info!("prefix 路径: {}", prefix_dir.display());
+    if compat_root_dir != prefix_dir {
+        warn!(
+            "检测到 Proton compat root 与 prefix 根目录不一致，启动时将使用 compat root: prefix={}, compat_root={}",
+            prefix_dir.display(),
+            compat_root_dir.display()
+        );
+        super::append_game_log(
+            game_name,
+            "WARN",
+            "runtime",
+            format!(
+                "detected nested Proton compat root; using compat root {} instead of {}",
+                compat_root_dir.display(),
+                prefix_dir.display()
+            ),
+        );
+    }
     let mut prefix_config = match prefix::load_prefix_config(game_name) {
         Ok(cfg) => {
             info!(
@@ -104,15 +122,12 @@ pub(super) fn load_prefix_runtime_context(
 
     let versions = detector::scan_all_versions(&[]);
     debug!("运行时扫描结果: total_versions={}", versions.len());
-    let wine_version = versions
-        .iter()
-        .find(|v| v.id == wine_version_id)
-        .ok_or_else(|| {
-            format!(
-                "未找到已配置的 Wine/Proton 版本: {}。请在“游戏设置 -> 运行环境”重新选择。",
-                wine_version_id
-            )
-        })?;
+    let wine_version = select_wine_runtime_for_id(&versions, wine_version_id).ok_or_else(|| {
+        format!(
+            "未找到已配置的 Wine/Proton 版本: {}。请在“游戏设置 -> 运行环境”重新选择。",
+            wine_version_id
+        )
+    })?;
     debug!(
         "运行时匹配成功: id={}, name={}, variant={}, version={}, path={}",
         wine_version.id,
@@ -123,6 +138,18 @@ pub(super) fn load_prefix_runtime_context(
     );
 
     let proton_path = wine_version.path.clone();
+    let use_proton_compat_env = is_proton_runtime_variant(&wine_version.variant)
+        || proton_path
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .contains("proton");
+    if use_proton_compat_env {
+        debug!(
+            "运行时判定为 Proton 兼容环境: variant={}, path={}",
+            wine_version.variant,
+            proton_path.display()
+        );
+    }
     if !proton_path.exists() {
         return Err(format!(
             "启动配置错误：所选 Wine/Proton 路径不存在：{}。请在“游戏设置 -> 运行环境”修复。",
@@ -189,10 +216,66 @@ pub(super) fn load_prefix_runtime_context(
     Ok(PrefixRuntimeContext {
         prefix_dir,
         pfx_dir,
+        compat_root_dir,
+        use_proton_compat_env,
         prefix_config,
         settings,
         proton_path,
     })
+}
+
+fn is_proton_runtime_variant(variant: &crate::configs::wine_config::ProtonVariant) -> bool {
+    matches!(
+        variant,
+        crate::configs::wine_config::ProtonVariant::Official
+            | crate::configs::wine_config::ProtonVariant::Experimental
+            | crate::configs::wine_config::ProtonVariant::GEProton
+            | crate::configs::wine_config::ProtonVariant::DWProton
+            | crate::configs::wine_config::ProtonVariant::ProtonTKG
+    )
+}
+
+fn runtime_path_source_priority(path: &Path) -> u8 {
+    let lower = path.to_string_lossy().to_ascii_lowercase();
+    if lower.contains("/compatibilitytools.d/") {
+        0
+    } else if lower.contains("/steamapps/common/proton") {
+        1
+    } else if lower.contains("/.local/share/ssmt4/proton/") {
+        3
+    } else {
+        2
+    }
+}
+
+fn select_wine_runtime_for_id<'a>(
+    versions: &'a [crate::configs::wine_config::WineVersion],
+    wine_version_id: &str,
+) -> Option<&'a crate::configs::wine_config::WineVersion> {
+    let mut matches: Vec<&crate::configs::wine_config::WineVersion> = versions
+        .iter()
+        .filter(|v| v.id == wine_version_id)
+        .collect();
+    if matches.is_empty() {
+        return None;
+    }
+    if matches.len() > 1 {
+        let candidates = matches
+            .iter()
+            .map(|v| format!("{}@{}", v.name, v.path.display()))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        warn!(
+            "检测到重复 Wine/Proton ID: {}，将按来源优先级选择。candidates={}",
+            wine_version_id, candidates
+        );
+    }
+    matches.sort_by(|a, b| {
+        runtime_path_source_priority(&a.path)
+            .cmp(&runtime_path_source_priority(&b.path))
+            .then_with(|| a.path.to_string_lossy().cmp(&b.path.to_string_lossy()))
+    });
+    matches.first().copied()
 }
 
 fn should_prefer_umu_runtime_for_launch(
@@ -228,20 +311,76 @@ fn should_prefer_umu_runtime_for_launch_with_availability(
     lower.contains("proton")
 }
 
+const END_FIELD_IME_ENV_KEYS: [&str; 4] = [
+    "XMODIFIERS",
+    "GTK_IM_MODULE",
+    "QT_IM_MODULE",
+    "SDL_IM_MODULE",
+];
+
+fn inherit_endfield_ime_env_with_provider<F>(
+    game_preset: &str,
+    env: &mut HashMap<String, String>,
+    host_env: F,
+) where
+    F: Fn(&str) -> Option<String>,
+{
+    if !game_preset.eq_ignore_ascii_case("ArknightsEndfield") {
+        return;
+    }
+
+    for key in END_FIELD_IME_ENV_KEYS {
+        if env.contains_key(key) {
+            continue;
+        }
+
+        if let Some(value) = host_env(key)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+        {
+            env.insert(key.to_string(), value);
+        }
+    }
+
+    if env.contains_key("QT_IM_MODULES") {
+        return;
+    }
+    if let Some(value) = host_env("QT_IM_MODULES")
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+    {
+        env.insert("QT_IM_MODULES".to_string(), value);
+    }
+}
+
+fn inherit_endfield_ime_env(game_preset: &str, env: &mut HashMap<String, String>) {
+    inherit_endfield_ime_env_with_provider(game_preset, env, |key| std::env::var(key).ok());
+}
+
 pub(super) fn build_launch_environment(
     target: &ResolvedLaunchTarget,
     runtime: &PrefixRuntimeContext,
 ) -> HashMap<String, String> {
     let settings = &runtime.settings;
     let mut env: HashMap<String, String> = HashMap::new();
+    let compat_data_dir = if runtime.use_proton_compat_env {
+        &runtime.compat_root_dir
+    } else {
+        &runtime.prefix_dir
+    };
+    let wineprefix_dir = if runtime.use_proton_compat_env {
+        &runtime.compat_root_dir
+    } else {
+        &runtime.pfx_dir
+    };
 
     env.insert(
         "STEAM_COMPAT_DATA_PATH".to_string(),
-        runtime.prefix_dir.to_string_lossy().to_string(),
+        compat_data_dir.to_string_lossy().to_string(),
     );
     env.insert(
         "WINEPREFIX".to_string(),
-        runtime.pfx_dir.to_string_lossy().to_string(),
+        wineprefix_dir.to_string_lossy().to_string(),
     );
     env.insert(
         "STEAM_COMPAT_INSTALL_PATH".to_string(),
@@ -257,6 +396,9 @@ pub(super) fn build_launch_environment(
             .to_string(),
     );
 
+    let resolved_steam_app_id = resolve_numeric_steam_app_id(settings, target.preset_meta);
+    // GE-Proton may hard-require STEAM_COMPAT_CLIENT_INSTALL_PATH during prefix setup.
+    // Keep this available whenever we can resolve Steam root, regardless of app id.
     if let Some(steam_root) = detector::get_steam_root_path() {
         env.insert(
             "STEAM_COMPAT_CLIENT_INSTALL_PATH".to_string(),
@@ -264,7 +406,6 @@ pub(super) fn build_launch_environment(
         );
     }
 
-    let resolved_steam_app_id = resolve_numeric_steam_app_id(settings, target.preset_meta);
     apply_steam_app_id_env(&mut env, resolved_steam_app_id.as_deref());
     env.insert(
         "STEAM_PROTON_PATH".to_string(),
@@ -297,6 +438,9 @@ pub(super) fn build_launch_environment(
 
     apply_preset_env_defaults(target.preset_meta, &mut env);
 
+    apply_lutris_like_proton_defaults(target.game_preset.as_str(), &mut env);
+    inherit_endfield_ime_env(target.game_preset.as_str(), &mut env);
+
     for (key, value) in &runtime.prefix_config.env_overrides {
         env.insert(key.clone(), value.clone());
     }
@@ -313,12 +457,25 @@ pub(super) fn build_launch_environment(
         warn!("检测到 PROTON_NO_ESYNC=1：该设置可能导致部分游戏稳定性或联网异常，建议关闭后重试");
     }
 
+    if target.game_preset.eq_ignore_ascii_case("ArknightsEndfield") {
+        info!(
+            "Endfield 输入法环境: XMODIFIERS={}, GTK_IM_MODULE={}, QT_IM_MODULE={}, SDL_IM_MODULE={}, QT_IM_MODULES={}",
+            env.get("XMODIFIERS").unwrap_or(&"(未设置)".to_string()),
+            env.get("GTK_IM_MODULE").unwrap_or(&"(未设置)".to_string()),
+            env.get("QT_IM_MODULE").unwrap_or(&"(未设置)".to_string()),
+            env.get("SDL_IM_MODULE").unwrap_or(&"(未设置)".to_string()),
+            env.get("QT_IM_MODULES").unwrap_or(&"(未设置)".to_string()),
+        );
+    }
+
     info!(
-        "环境变量汇总: SteamDeck={}, steamdeck={}, SteamOS={}, SteamAppId={}, WINEPREFIX={}, custom_env_count={}",
+        "环境变量汇总: SteamDeck={}, steamdeck={}, SteamOS={}, SteamAppId={}, STEAM_COMPAT_DATA_PATH={}, WINEPREFIX={}, custom_env_count={}",
         env.get("SteamDeck").unwrap_or(&"(未设置)".to_string()),
         env.get("steamdeck").unwrap_or(&"(未设置)".to_string()),
         env.get("SteamOS").unwrap_or(&"(未设置)".to_string()),
         env.get("SteamAppId").unwrap_or(&"(未设置)".to_string()),
+        env.get("STEAM_COMPAT_DATA_PATH")
+            .unwrap_or(&"(未设置)".to_string()),
         env.get("WINEPREFIX").unwrap_or(&"(未设置)".to_string()),
         settings.custom_env.len(),
     );
@@ -380,6 +537,52 @@ pub(super) fn build_launch_environment(
     env
 }
 
+pub(super) fn align_endfield_umu_default_prefix(env: &mut HashMap<String, String>) {
+    let gameid = env
+        .get("GAMEID")
+        .map(|v| v.trim().to_ascii_lowercase())
+        .unwrap_or_default();
+    let umu_id = env
+        .get("UMU_ID")
+        .map(|v| v.trim().to_ascii_lowercase())
+        .unwrap_or_default();
+    let compat_app = env
+        .get("STEAM_COMPAT_APP_ID")
+        .map(|v| v.trim().to_ascii_lowercase())
+        .unwrap_or_default();
+    if gameid != "umu-default" && umu_id != "umu-default" && compat_app != "default" {
+        return;
+    }
+
+    let Ok(home) = std::env::var("HOME") else {
+        return;
+    };
+    let compat_data_path = PathBuf::from(home).join("Games/umu/umu-default");
+    if let Err(err) = std::fs::create_dir_all(compat_data_path.join("shadercache")) {
+        warn!(
+            "创建 Endfield umu-default compat 目录失败 ({}): {}",
+            compat_data_path.display(),
+            err
+        );
+        return;
+    }
+    let compat_data = compat_data_path.to_string_lossy().to_string();
+    env.insert("STEAM_COMPAT_DATA_PATH".to_string(), compat_data.clone());
+    env.insert("WINEPREFIX".to_string(), compat_data.clone());
+    env.insert(
+        "STEAM_COMPAT_SHADER_PATH".to_string(),
+        PathBuf::from(&compat_data_path)
+            .join("shadercache")
+            .to_string_lossy()
+            .to_string(),
+    );
+    env.remove("STEAM_COMPAT_CLIENT_INSTALL_PATH");
+    info!(
+        "Endfield umu-default 启动：兼容前缀对齐到 {}（与 Lutris 默认行为一致）",
+        compat_data
+    );
+}
+
 fn resolve_numeric_steam_app_id(
     settings: &crate::configs::wine_config::ProtonSettings,
     preset: Option<&crate::configs::game_presets::GamePreset>,
@@ -398,7 +601,12 @@ fn resolve_numeric_steam_app_id(
 }
 
 fn resolve_numeric_steam_app_id_from_env(env: &HashMap<String, String>) -> Option<String> {
-    for key in ["SteamAppId", "SteamGameId", "STEAMAPPID", "STEAM_COMPAT_APP_ID"] {
+    for key in [
+        "SteamAppId",
+        "SteamGameId",
+        "STEAMAPPID",
+        "STEAM_COMPAT_APP_ID",
+    ] {
         let Some(value) = env.get(key) else {
             continue;
         };
@@ -457,7 +665,7 @@ pub(super) fn find_umu_run_binary() -> Option<PathBuf> {
 }
 
 pub(super) fn apply_umu_env_defaults(
-    game_preset: &str,
+    _game_preset: &str,
     proton_path: &Path,
     settings: &crate::configs::wine_config::ProtonSettings,
     preset: Option<&crate::configs::game_presets::GamePreset>,
@@ -478,7 +686,7 @@ pub(super) fn apply_umu_env_defaults(
                 if settings.steam_app_id != "0" && !settings.steam_app_id.trim().is_empty() {
                     format!("umu-{}", settings.steam_app_id.trim())
                 } else {
-                    format!("nonsteam-{}", game_preset.to_lowercase())
+                    "umu-default".to_string()
                 }
             });
         env.insert("GAMEID".to_string(), game_id);
@@ -502,6 +710,9 @@ pub(super) fn apply_umu_env_defaults(
     if !env.contains_key("UMU_LOG") {
         env.insert("UMU_LOG".to_string(), "1".to_string());
     }
+    if !env.contains_key("PROTON_VERB") {
+        env.insert("PROTON_VERB".to_string(), "waitforexitandrun".to_string());
+    }
 
     if env
         .get("SteamAppId")
@@ -516,6 +727,9 @@ pub(super) fn apply_umu_env_defaults(
         if let Some(numeric_id) = maybe_numeric_id {
             env.insert("SteamAppId".to_string(), numeric_id.clone());
             env.insert("SteamGameId".to_string(), numeric_id);
+        } else {
+            env.insert("SteamAppId".to_string(), "default".to_string());
+            env.insert("SteamGameId".to_string(), "default".to_string());
         }
     }
     if env
@@ -529,7 +743,11 @@ pub(super) fn apply_umu_env_defaults(
             .filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()))
             .map(|id| id.to_string());
         if let Some(numeric_id) = maybe_numeric_id {
-            env.insert("STEAM_COMPAT_APP_ID".to_string(), numeric_id);
+            env.insert("STEAM_COMPAT_APP_ID".to_string(), numeric_id.clone());
+            env.insert("STEAMAPPID".to_string(), numeric_id);
+        } else {
+            env.insert("STEAM_COMPAT_APP_ID".to_string(), "default".to_string());
+            env.insert("STEAMAPPID".to_string(), "default".to_string());
         }
     }
 
@@ -546,6 +764,45 @@ pub(super) fn apply_umu_env_defaults(
     );
 }
 
+fn apply_lutris_like_proton_defaults(game_preset: &str, env: &mut HashMap<String, String>) {
+    if !game_preset.eq_ignore_ascii_case("ArknightsEndfield") {
+        return;
+    }
+
+    let defaults = [
+        ("WINEARCH", "win64"),
+        ("WINEDEBUG", "-all"),
+        ("DXVK_LOG_LEVEL", "error"),
+        ("WINEESYNC", "1"),
+        ("WINEFSYNC", "1"),
+        ("WINE_LARGE_ADDRESS_AWARE", "1"),
+        ("DXVK_ENABLE_NVAPI", "1"),
+        ("DXVK_NVAPIHACK", "0"),
+        ("PROTON_DXVK_D3D8", "1"),
+    ];
+
+    for (key, value) in defaults {
+        env.entry(key.to_string())
+            .or_insert_with(|| value.to_string());
+    }
+
+    match env.get("WINEDLLOVERRIDES") {
+        Some(existing) if existing.contains("winemenubuilder=") => {}
+        Some(existing) if !existing.trim().is_empty() => {
+            env.insert(
+                "WINEDLLOVERRIDES".to_string(),
+                format!("{};winemenubuilder=", existing.trim()),
+            );
+        }
+        _ => {
+            env.insert(
+                "WINEDLLOVERRIDES".to_string(),
+                "winemenubuilder=".to_string(),
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -554,9 +811,7 @@ mod tests {
         crate::configs::wine_config::ProtonSettings::default()
     }
 
-    fn preset_with_umu_id(
-        umu_game_id: Option<&str>,
-    ) -> crate::configs::game_presets::GamePreset {
+    fn preset_with_umu_id(umu_game_id: Option<&str>) -> crate::configs::game_presets::GamePreset {
         crate::configs::game_presets::GamePreset {
             id: "ArknightsEndfield".to_string(),
             legacy_ids: Vec::new(),
@@ -626,6 +881,30 @@ mod tests {
     }
 
     #[test]
+    fn umu_defaults_use_default_placeholders_for_non_numeric_games() {
+        let settings = default_settings();
+        let mut env = HashMap::new();
+
+        apply_umu_env_defaults(
+            "ArknightsEndfield",
+            Path::new("/tmp/proton"),
+            &settings,
+            None,
+            &mut env,
+        );
+
+        assert_eq!(env.get("GAMEID").map(String::as_str), Some("umu-default"));
+        assert_eq!(env.get("UMU_ID").map(String::as_str), Some("umu-default"));
+        assert_eq!(env.get("SteamAppId").map(String::as_str), Some("default"));
+        assert_eq!(env.get("SteamGameId").map(String::as_str), Some("default"));
+        assert_eq!(
+            env.get("STEAM_COMPAT_APP_ID").map(String::as_str),
+            Some("default")
+        );
+        assert_eq!(env.get("STEAMAPPID").map(String::as_str), Some("default"));
+    }
+
+    #[test]
     fn endfield_prefers_umu_when_proton_build_and_umu_available() {
         let settings = default_settings();
         assert!(should_prefer_umu_runtime_for_launch_with_availability(
@@ -665,5 +944,42 @@ mod tests {
             &settings,
             false,
         ));
+    }
+
+    #[test]
+    fn inherit_endfield_ime_env_only_inherits_host_values() {
+        let mut env = HashMap::new();
+        let host = HashMap::from([
+            ("XMODIFIERS".to_string(), "@im=fcitx5".to_string()),
+            ("GTK_IM_MODULE".to_string(), "fcitx".to_string()),
+            ("QT_IM_MODULES".to_string(), "wayland;fcitx".to_string()),
+        ]);
+
+        inherit_endfield_ime_env_with_provider("ArknightsEndfield", &mut env, |key| {
+            host.get(key).cloned()
+        });
+
+        assert_eq!(
+            env.get("XMODIFIERS").map(String::as_str),
+            Some("@im=fcitx5")
+        );
+        assert_eq!(env.get("GTK_IM_MODULE").map(String::as_str), Some("fcitx"));
+        assert_eq!(env.get("QT_IM_MODULE"), None);
+        assert_eq!(env.get("SDL_IM_MODULE"), None);
+        assert_eq!(
+            env.get("QT_IM_MODULES").map(String::as_str),
+            Some("wayland;fcitx")
+        );
+    }
+
+    #[test]
+    fn inherit_endfield_ime_env_skips_non_endfield() {
+        let mut env = HashMap::new();
+
+        inherit_endfield_ime_env_with_provider("HonkaiStarRail", &mut env, |_key| {
+            Some("dummy".to_string())
+        });
+
+        assert!(env.is_empty());
     }
 }

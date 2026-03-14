@@ -238,8 +238,12 @@ pub(super) async fn restore_managed_telemetry_hosts_entries(
     game_preset: &str,
     servers: &[String],
 ) -> Result<usize, String> {
-    restore_managed_telemetry_hosts_entries_with_access(game_preset, servers, &SystemHostsFileAccess)
-        .await
+    restore_managed_telemetry_hosts_entries_with_access(
+        game_preset,
+        servers,
+        &SystemHostsFileAccess,
+    )
+    .await
 }
 
 async fn restore_managed_telemetry_hosts_entries_with_access<A: HostsFileAccess + Sync>(
@@ -308,9 +312,9 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::{
-        build_managed_telemetry_hosts_block, partition_blocked_servers,
-        remove_managed_telemetry_hosts_entries, restore_managed_telemetry_hosts_entries_with_access,
-        ensure_managed_telemetry_hosts_blocked_with_access,
+        build_managed_telemetry_hosts_block, ensure_managed_telemetry_hosts_blocked_with_access,
+        partition_blocked_servers, remove_managed_telemetry_hosts_entries,
+        restore_managed_telemetry_hosts_entries_with_access,
     };
 
     #[derive(Clone)]
@@ -334,7 +338,10 @@ mod tests {
             Box::pin(async move { Ok(content) })
         }
 
-        fn overwrite<'a>(&'a self, content: &'a str) -> super::HostsIoFuture<'a, Result<(), String>> {
+        fn overwrite<'a>(
+            &'a self,
+            content: &'a str,
+        ) -> super::HostsIoFuture<'a, Result<(), String>> {
             let content = content.to_string();
             let this = self.clone();
             Box::pin(async move {
@@ -441,10 +448,13 @@ mod tests {
         );
         let servers = vec!["telemetry.example.com".to_string()];
 
-        let removed =
-            restore_managed_telemetry_hosts_entries_with_access("WutheringWaves", &servers, &access)
-                .await
-                .expect("restore hosts");
+        let removed = restore_managed_telemetry_hosts_entries_with_access(
+            "WutheringWaves",
+            &servers,
+            &access,
+        )
+        .await
+        .expect("restore hosts");
 
         assert_eq!(removed, 3);
         let final_content = access.content.lock().expect("content lock").clone();

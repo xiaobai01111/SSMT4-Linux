@@ -345,6 +345,8 @@ struct ResolvedLaunchTarget {
 struct PrefixRuntimeContext {
     prefix_dir: PathBuf,
     pfx_dir: PathBuf,
+    compat_root_dir: PathBuf,
+    use_proton_compat_env: bool,
     prefix_config: crate::configs::wine_config::PrefixConfig,
     settings: crate::configs::wine_config::ProtonSettings,
     proton_path: PathBuf,

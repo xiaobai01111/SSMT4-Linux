@@ -216,10 +216,11 @@ unsigned long DllInjector::inject_libraries(const std::vector<std::wstring>& dll
 #endif
 }
 
-void DllInjector::open_process(const std::vector<std::wstring>* inject_dll_paths) {
+unsigned long DllInjector::open_process(const std::vector<std::wstring>* inject_dll_paths) {
     std::string method = config_.game.process_start_method;
     std::wstring exe;
     std::wstring work_dir = config_.game.work_dir;
+    unsigned long injected_pid = 0;
 
     auto start_args = config_.game.start_args;
 
@@ -264,13 +265,21 @@ void DllInjector::open_process(const std::vector<std::wstring>* inject_dll_paths
 
     // If direct injection DLLs are provided, inject them now
     if (inject_dll_paths && !inject_dll_paths->empty()) {
-        inject_libraries(*inject_dll_paths, config_.game.process_name,
-                         config_.game.process_timeout);
+        injected_pid = inject_libraries(*inject_dll_paths, config_.game.process_name,
+                                        config_.game.process_timeout);
+        if (injected_pid == static_cast<unsigned long>(-1) || injected_pid == 0) {
+            throw std::runtime_error(
+                "Direct injection target process not found before timeout: " +
+                wide_to_utf8(config_.game.process_name)
+            );
+        }
     }
+
+    return injected_pid;
 }
 
 void DllInjector::launch_process_only() {
-    open_process(nullptr);
+    (void)open_process(nullptr);
 }
 
 void DllInjector::run_hook_injection(StatusReporter& reporter) {
@@ -284,7 +293,7 @@ void DllInjector::run_hook_injection(StatusReporter& reporter) {
 
         // 2. Start the game process (through jadeite if configured)
         reporter.status("Starting game process...");
-        open_process();
+        (void)open_process();
 
         // 3. Verify injection succeeded
         reporter.status("Waiting for injection...");
@@ -335,7 +344,7 @@ void DllInjector::run_direct_injection(StatusReporter& reporter) {
 
         // 1. Start game + inject DLLs
         reporter.status("Starting game and injecting...");
-        open_process(&dll_paths);
+        unsigned long injected_pid = open_process(&dll_paths);
 
         // 2. Wait for game window
         reporter.status("Waiting for game window...");
@@ -349,6 +358,9 @@ void DllInjector::run_direct_injection(StatusReporter& reporter) {
 
         // 3. Report success
         pid = ProcessTracker::find_process(config_.game.process_name);
+        if (pid == 0) {
+            pid = injected_pid;
+        }
         reporter.inject_result("direct", true, pid);
 
     } catch (...) {

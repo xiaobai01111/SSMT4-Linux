@@ -467,6 +467,9 @@ mod tests {
         let missing = vec!["未找到渠道配置文件".to_string()];
 
         assert!(launch_protection_required(true));
-        assert_eq!(optional_protection_warning(true, true, false, &missing), None);
+        assert_eq!(
+            optional_protection_warning(true, true, false, &missing),
+            None
+        );
     }
 }

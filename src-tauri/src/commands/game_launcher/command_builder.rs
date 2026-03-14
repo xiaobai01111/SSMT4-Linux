@@ -1,7 +1,7 @@
 use super::*;
 use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn migoto_section<'a>(config: Option<&'a Value>) -> Option<&'a Value> {
     config
@@ -105,6 +105,345 @@ fn should_force_umu_runner(
     )
 }
 
+fn should_apply_efmi_legacy_rabbitfx_compat() -> bool {
+    std::env::var("SSMT4_ENABLE_EFMI_COMPAT_REWRITE")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn should_use_endfield_official_launcher_chain() -> bool {
+    std::env::var("SSMT4_ENDFIELD_USE_OFFICIAL_LAUNCHER")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn configure_endfield_bridge_chain(
+    game_name: &str,
+    bridge_config: &mut super::super::bridge::BridgeConfig,
+    chain: &super::EndfieldLaunchChain,
+) -> Result<(), String> {
+    let launcher_root = chain.launcher_exe.parent().ok_or_else(|| {
+        format!(
+            "无法推断终末地官方启动器目录: {}",
+            chain.launcher_exe.display()
+        )
+    })?;
+    let launcher_exe_name = chain
+        .launcher_exe
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("Launcher.exe")
+        .to_string();
+    let endfield_exe_name = chain
+        .endfield_exe
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("Endfield.exe")
+        .to_string();
+    let endfield_root = chain.endfield_exe.parent().ok_or_else(|| {
+        format!(
+            "无法推断终末地主程序目录: {}",
+            chain.endfield_exe.display()
+        )
+    })?;
+
+    // d3dx.ini [Loader] target should always be the real game process.
+    bridge_config.paths.game_exe = endfield_exe_name.clone();
+    if should_use_endfield_official_launcher_chain() {
+        bridge_config.paths.game_folder =
+            super::super::bridge::linux_to_wine_path(&launcher_root.to_string_lossy());
+        // Keep launcher startup chain for auth / patch flow stability.
+        bridge_config.game.start_exe = launcher_exe_name.clone();
+        bridge_config.game.work_dir =
+            super::super::bridge::linux_to_wine_path(&launcher_root.to_string_lossy());
+        // Injector waits for real game process, not launcher shell process.
+        bridge_config.game.process_name = endfield_exe_name.clone();
+
+        info!(
+            "ArknightsEndfield 启动链(官方启动器): launcher={}, process_name={}, loader_target={}, start_args={:?}",
+            chain.launcher_exe.display(),
+            endfield_exe_name,
+            bridge_config.paths.game_exe,
+            bridge_config.game.start_args
+        );
+        super::append_game_log(
+            game_name,
+            "INFO",
+            "bridge",
+            format!(
+                "Endfield bridge chain (official launcher): launcher={}, process_name={}, loader_target={}, start_args={:?}",
+                chain.launcher_exe.display(),
+                endfield_exe_name,
+                bridge_config.paths.game_exe,
+                bridge_config.game.start_args
+            ),
+        );
+    } else {
+        // Align with upstream EFMI behavior: launch Endfield.exe directly so
+        // importer-required args (e.g. -force-d3d11) apply to the real process.
+        bridge_config.paths.game_folder =
+            super::super::bridge::linux_to_wine_path(&endfield_root.to_string_lossy());
+        bridge_config.game.start_exe = endfield_exe_name.clone();
+        bridge_config.game.work_dir =
+            super::super::bridge::linux_to_wine_path(&endfield_root.to_string_lossy());
+        bridge_config.game.process_name = endfield_exe_name.clone();
+
+        info!(
+            "ArknightsEndfield 启动链(直连主程序): endfield={}, loader_target={}, start_args={:?}",
+            chain.endfield_exe.display(),
+            bridge_config.paths.game_exe,
+            bridge_config.game.start_args
+        );
+        super::append_game_log(
+            game_name,
+            "INFO",
+            "bridge",
+            format!(
+                "Endfield bridge chain (direct exe): endfield={}, loader_target={}, start_args={:?}",
+                chain.endfield_exe.display(),
+                bridge_config.paths.game_exe,
+                bridge_config.game.start_args
+            ),
+        );
+    }
+
+    Ok(())
+}
+
+fn enforce_migoto_runtime_graphics_mode(
+    game_name: &str,
+    importer_name: &str,
+    start_args: &mut Vec<String>,
+) {
+    let before_args = start_args.clone();
+    crate::utils::migoto_layout::ensure_required_start_args(start_args, importer_name);
+    let args_changed = *start_args != before_args;
+
+    if args_changed {
+        info!(
+            "3DMigoto 启动参数已按 importer 规则对齐: importer={}, start_args={:?}",
+            importer_name, start_args,
+        );
+        super::append_game_log(
+            game_name,
+            "INFO",
+            "bridge",
+            format!(
+                "migoto start args aligned by importer: importer={}, start_args={:?}",
+                importer_name, start_args,
+            ),
+        );
+    }
+}
+
+fn build_bridge_config_args(config_wine_path: &str) -> Vec<String> {
+    vec!["--config".to_string(), config_wine_path.to_string()]
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct EfmiLegacyRabbitFxCompatSummary {
+    files_rewritten: usize,
+    converted_bindings: usize,
+    removed_settextures_runs: usize,
+    removed_stale_compat_runs: usize,
+    removed_stale_compat_sections: usize,
+    typo_fixes: usize,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct EfmiLegacyRabbitFxCompatFileRewrite {
+    converted_bindings: usize,
+    removed_settextures_runs: usize,
+    removed_stale_compat_runs: usize,
+    removed_stale_compat_sections: usize,
+    typo_fixes: usize,
+}
+
+fn collect_ini_files_recursive(root: &Path, output: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_ini_files_recursive(&path, output);
+            continue;
+        }
+        if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("ini"))
+        {
+            output.push(path);
+        }
+    }
+}
+
+fn is_rabbitfx_settextures_run(line: &str) -> bool {
+    let lower = line.trim().to_ascii_lowercase();
+    lower.starts_with("run")
+        && lower.contains("commandlist\\rabbitfx\\settextures")
+        && lower.contains('=')
+}
+
+fn is_stale_ssmt4_rabbitfx_compat_section_header(line: &str) -> bool {
+    let trimmed = line.trim();
+    if !(trimmed.starts_with('[') && trimmed.ends_with(']')) {
+        return false;
+    }
+    let inner = trimmed[1..trimmed.len() - 1].to_ascii_lowercase();
+    inner.contains("ssmt4_rabbitfx_compat")
+}
+
+fn is_stale_ssmt4_rabbitfx_compat_run(line: &str) -> bool {
+    let lower = line.trim().to_ascii_lowercase();
+    lower.starts_with("run") && lower.contains("ssmt4_rabbitfx_compat") && lower.contains('=')
+}
+
+fn convert_rabbitfx_assignment_to_ps_slot(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if !lower.starts_with("resource\\rabbitfx\\") {
+        return None;
+    }
+
+    let (lhs, rhs) = trimmed.split_once('=')?;
+    let key = lhs
+        .trim()
+        .strip_prefix("Resource\\RabbitFX\\")
+        .or_else(|| lhs.trim().strip_prefix("resource\\rabbitfx\\"))?
+        .trim()
+        .to_ascii_lowercase();
+
+    let slot = match key.as_str() {
+        "diffuse" => 0,
+        "lightmap" => 1,
+        "normalmap" => 2,
+        _ => return None,
+    };
+
+    let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+    Some(format!("{}ps-t{} = {}", indent, slot, rhs.trim()))
+}
+
+fn rewrite_efmi_legacy_rabbitfx_ini(
+    content: &str,
+) -> Option<(String, EfmiLegacyRabbitFxCompatFileRewrite)> {
+    if !content.contains("RabbitFX")
+        && !content.contains("handling = ski")
+        && !content.contains("SSMT4_RabbitFX_Compat")
+        && !content.contains("ssmt4_rabbitfx_compat")
+    {
+        return None;
+    }
+
+    let mut rewritten = Vec::<String>::new();
+    let mut summary = EfmiLegacyRabbitFxCompatFileRewrite::default();
+    let mut changed = false;
+    let mut in_stale_compat_section = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        if is_stale_ssmt4_rabbitfx_compat_section_header(line) {
+            in_stale_compat_section = true;
+            summary.removed_stale_compat_sections += 1;
+            changed = true;
+            continue;
+        }
+
+        if in_stale_compat_section {
+            if trimmed.starts_with('[') && trimmed.ends_with(']') {
+                in_stale_compat_section = false;
+            } else {
+                changed = true;
+                continue;
+            }
+        }
+
+        if is_stale_ssmt4_rabbitfx_compat_run(line) {
+            summary.removed_stale_compat_runs += 1;
+            changed = true;
+            continue;
+        }
+
+        let trimmed = line.trim();
+
+        let trimmed_lower = trimmed.to_ascii_lowercase();
+        if trimmed_lower == "handling = ski" || trimmed_lower == "handling=ski" {
+            let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+            rewritten.push(format!("{}handling = skip", indent));
+            summary.typo_fixes += 1;
+            changed = true;
+            continue;
+        }
+
+        if let Some(converted) = convert_rabbitfx_assignment_to_ps_slot(line) {
+            rewritten.push(converted);
+            summary.converted_bindings += 1;
+            changed = true;
+            continue;
+        }
+
+        if is_rabbitfx_settextures_run(line) {
+            summary.removed_settextures_runs += 1;
+            changed = true;
+            continue;
+        }
+
+        rewritten.push(line.to_string());
+    }
+
+    if !changed {
+        return None;
+    }
+
+    let mut output = rewritten.join("\n");
+    if content.ends_with('\n') {
+        output.push('\n');
+    }
+    Some((output, summary))
+}
+
+fn apply_efmi_legacy_rabbitfx_compat(
+    mod_root: &Path,
+) -> Result<EfmiLegacyRabbitFxCompatSummary, String> {
+    let mut ini_files = Vec::new();
+    collect_ini_files_recursive(mod_root, &mut ini_files);
+
+    let mut summary = EfmiLegacyRabbitFxCompatSummary::default();
+    for ini_file in ini_files {
+        let Ok(content) = fs::read_to_string(&ini_file) else {
+            continue;
+        };
+        let Some((rewritten, file_summary)) = rewrite_efmi_legacy_rabbitfx_ini(&content) else {
+            continue;
+        };
+        fs::write(&ini_file, rewritten)
+            .map_err(|err| format!("写入 EFMI 兼容补丁失败 {}: {}", ini_file.display(), err))?;
+
+        summary.files_rewritten += 1;
+        summary.converted_bindings += file_summary.converted_bindings;
+        summary.removed_settextures_runs += file_summary.removed_settextures_runs;
+        summary.removed_stale_compat_runs += file_summary.removed_stale_compat_runs;
+        summary.removed_stale_compat_sections += file_summary.removed_stale_compat_sections;
+        summary.typo_fixes += file_summary.typo_fixes;
+    }
+
+    Ok(summary)
+}
+
 pub(super) fn resolve_run_target(
     game_name: &str,
     target: &ResolvedLaunchTarget,
@@ -125,8 +464,7 @@ pub(super) fn resolve_run_target(
     };
 
     let migoto_globally_enabled = runtime_config.migoto_enabled;
-    let migoto_supported =
-        crate::configs::game_presets::supports_migoto(&target.game_preset);
+    let migoto_supported = crate::configs::game_presets::supports_migoto(&target.game_preset);
     let migoto_requested = target
         .game_config_data
         .as_ref()
@@ -136,7 +474,11 @@ pub(super) fn resolve_run_target(
     let app_data_dir = crate::configs::app_config::get_app_data_dir();
     let migoto_enabled = migoto_globally_enabled && migoto_supported && migoto_requested;
     let migoto_runtime_required = migoto_enabled
-        && should_run_migoto_bridge(&target.game_preset, target.game_config_data.as_ref(), &app_data_dir);
+        && should_run_migoto_bridge(
+            &target.game_preset,
+            target.game_config_data.as_ref(),
+            &app_data_dir,
+        );
     let configured_migoto_importer = target
         .game_config_data
         .as_ref()
@@ -202,6 +544,60 @@ pub(super) fn resolve_run_target(
     }
 
     let (run_exe, extra_args) = if migoto_runtime_required {
+        if migoto_importer.eq_ignore_ascii_case("EFMI") && should_apply_efmi_legacy_rabbitfx_compat()
+        {
+            let path_state = crate::utils::migoto_layout::resolve_migoto_path_state_for_game(
+                &target.game_preset,
+                target.game_config_data.as_ref().unwrap_or(&Value::Null),
+                app_data_dir.join("3Dmigoto-data"),
+            );
+            match apply_efmi_legacy_rabbitfx_compat(&path_state.mod_folder) {
+                Ok(summary)
+                    if summary.files_rewritten > 0
+                        || summary.converted_bindings > 0
+                        || summary.removed_settextures_runs > 0
+                        || summary.removed_stale_compat_runs > 0
+                        || summary.removed_stale_compat_sections > 0
+                        || summary.typo_fixes > 0 =>
+                {
+                    info!(
+                        "EFMI 兼容修复已应用: files={}, converted_bindings={}, removed_settextures_runs={}, removed_stale_compat_runs={}, removed_stale_compat_sections={}, typo_fixes={}, mod_root={}",
+                        summary.files_rewritten,
+                        summary.converted_bindings,
+                        summary.removed_settextures_runs,
+                        summary.removed_stale_compat_runs,
+                        summary.removed_stale_compat_sections,
+                        summary.typo_fixes,
+                        path_state.mod_folder.display()
+                    );
+                    super::append_game_log(
+                        game_name,
+                        "INFO",
+                        "bridge",
+                        format!(
+                            "EFMI compatibility patch applied: files={}, converted_bindings={}, removed_settextures_runs={}, removed_stale_compat_runs={}, removed_stale_compat_sections={}, typo_fixes={}",
+                            summary.files_rewritten,
+                            summary.converted_bindings,
+                            summary.removed_settextures_runs,
+                            summary.removed_stale_compat_runs,
+                            summary.removed_stale_compat_sections,
+                            summary.typo_fixes
+                        ),
+                    );
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    warn!("EFMI 兼容修复执行失败: {}", err);
+                    super::append_game_log(
+                        game_name,
+                        "WARN",
+                        "bridge",
+                        format!("EFMI compatibility patch failed: {}", err),
+                    );
+                }
+            }
+        }
+
         let bridge_exe = target
             .game_config_data
             .as_ref()
@@ -225,7 +621,7 @@ pub(super) fn resolve_run_target(
             .unwrap_or("game.exe")
             .to_string();
 
-        let mut bridge_config = super::super::bridge::build_bridge_config(
+        let mut bridge_config = crate::commands::bridge::build_bridge_config(
             &migoto_importer,
             &app_data_dir,
             &game_folder_linux,
@@ -235,43 +631,15 @@ pub(super) fn resolve_run_target(
 
         if target.game_preset == "ArknightsEndfield" {
             if let Some(chain) = super::find_endfield_launcher_chain(&target.launch_exe) {
-                let game_root = chain.endfield_exe.parent().ok_or_else(|| {
-                    format!("无法推断终末地主程序目录: {}", chain.endfield_exe.display())
-                })?;
-                let target_exe_name = chain
-                    .endfield_exe
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("Endfield.exe")
-                    .to_string();
-
-                bridge_config.paths.game_folder =
-                    super::super::bridge::linux_to_wine_path(&game_root.to_string_lossy());
-                bridge_config.paths.game_exe = target_exe_name.clone();
-                bridge_config.game.start_exe = target_exe_name.clone();
-                bridge_config.game.work_dir =
-                    super::super::bridge::linux_to_wine_path(&game_root.to_string_lossy());
-                bridge_config.game.process_name = target_exe_name.clone();
-
-                info!(
-                    "ArknightsEndfield EFMI 对齐原版 XXMI: start_exe={}, launcher={}",
-                    chain.endfield_exe.display(),
-                    chain.launcher_exe.display()
-                );
-                super::append_game_log(
-                    game_name,
-                    "INFO",
-                    "bridge",
-                    format!(
-                        "Endfield EFMI aligned to original XXMI flow: start_exe={}, process_name={}, start_args={:?}, launcher={}",
-                        chain.endfield_exe.display(),
-                        target_exe_name,
-                        bridge_config.game.start_args,
-                        chain.launcher_exe.display()
-                    ),
-                );
+                configure_endfield_bridge_chain(game_name, &mut bridge_config, &chain)?;
             }
         }
+
+        enforce_migoto_runtime_graphics_mode(
+            game_name,
+            &migoto_importer,
+            &mut bridge_config.game.start_args,
+        );
 
         if let Some(ref jade) = jadeite_exe {
             let jade_wine = super::super::bridge::linux_to_wine_path(&jade.to_string_lossy());
@@ -312,7 +680,8 @@ pub(super) fn resolve_run_target(
             ),
         );
 
-        (bridge_exe, vec!["--config".to_string(), config_wine_path])
+        let bridge_args = build_bridge_config_args(&config_wine_path);
+        (bridge_exe, bridge_args)
     } else if let Some(ref jade) = jadeite_exe {
         info!("使用 jadeite 反作弊补丁: {}", jade.display());
         let win_game_path = format!(
@@ -430,9 +799,7 @@ pub(super) fn prepare_launch_command(
         launch_profile.runtime_flags.force_direct_proton,
     ) {
         if launch_profile.runner != LaunchRunner::UmuRun {
-            info!(
-                "ArknightsEndfield 运行时覆盖: 强制使用 umu-run 以对齐 Lutris Proton 启动链"
-            );
+            info!("ArknightsEndfield 运行时覆盖: 强制使用 umu-run 以对齐 Lutris Proton 启动链");
             super::append_game_log(
                 game_name,
                 "INFO",
@@ -495,6 +862,10 @@ pub(super) fn prepare_launch_command(
         &run_target.extra_args,
         &mut launch_profile,
     )?;
+    if command_spec.use_umu_runtime && target.game_preset.eq_ignore_ascii_case("ArknightsEndfield")
+    {
+        super::runtime_env::align_endfield_umu_default_prefix(&mut launch_profile.env);
+    }
 
     let runner_name = command_spec.runner.as_str().to_string();
     let command_program_path = command_spec.program.to_string_lossy().to_string();
@@ -1034,9 +1405,7 @@ fn build_direct_proton_command_spec_with_args(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::bridge::{
-        BridgeMigotoConfig,
-    };
+    use crate::commands::bridge::BridgeMigotoConfig;
 
     #[test]
     fn endfield_launcher_uses_run_verb_for_direct_proton() {
@@ -1124,6 +1493,186 @@ mod tests {
             false,
             true,
         ));
+    }
+
+    #[test]
+    fn rewrite_efmi_legacy_rabbitfx_converts_to_standard_ps_slots() {
+        let input = r#"[TextureOverride_Component1]
+hash = 48e5c5f7
+if $mod_enabled && DRAW_TYPE == 4
+    handling = ski
+    Resource\RabbitFX\Diffuse = ref ResourceDiffuse05
+    Resource\RabbitFX\Lightmap = ref ResourceLightmap05
+    Resource\RabbitFX\Normalmap = ref ResourceNormalmap05
+    run = CommandList\RabbitFX\SetTextures
+    run = CommandList_Draw_Component1
+endif
+"#;
+
+        let (rewritten, summary) = rewrite_efmi_legacy_rabbitfx_ini(input).expect("compat rewrite");
+
+        assert_eq!(summary.converted_bindings, 3);
+        assert_eq!(summary.removed_settextures_runs, 1);
+        assert_eq!(summary.typo_fixes, 1);
+        assert!(rewritten.contains("handling = skip"));
+        assert!(rewritten.contains("ps-t0 = ref ResourceDiffuse05"));
+        assert!(rewritten.contains("ps-t1 = ref ResourceLightmap05"));
+        assert!(rewritten.contains("ps-t2 = ref ResourceNormalmap05"));
+        assert!(!rewritten.contains("CommandList\\RabbitFX\\SetTextures"));
+    }
+
+    #[test]
+    fn rewrite_efmi_legacy_rabbitfx_is_noop_without_rabbitfx_lines() {
+        let input = r#"[TextureOverride_Component1]
+hash = 48e5c5f7
+if $mod_enabled && DRAW_TYPE == 4
+    handling = skip
+    run = CommandList_Draw_Component1
+endif
+"#;
+        assert!(rewrite_efmi_legacy_rabbitfx_ini(input).is_none());
+    }
+
+    #[test]
+    fn rewrite_efmi_legacy_rabbitfx_handles_previous_compat_section() {
+        let input = r#"[CommandList_SSMT4_RabbitFX_Compat_TextureOverride_Component4_LOD0_10]
+    Resource\RabbitFX\Diffuse = ref ResourceDiffuse01
+    Resource\RabbitFX\Lightmap = ref ResourceLightmap01
+    Resource\RabbitFX\Normalmap = ref ResourceNormalmap01
+    run = CommandList\RabbitFX\SetTextures
+"#;
+        let (rewritten, summary) = rewrite_efmi_legacy_rabbitfx_ini(input).expect("compat rewrite");
+        assert_eq!(summary.converted_bindings, 0);
+        assert_eq!(summary.removed_settextures_runs, 0);
+        assert_eq!(summary.removed_stale_compat_sections, 1);
+        assert!(!rewritten.contains("Resource\\RabbitFX\\Diffuse"));
+        assert!(!rewritten.contains("CommandList\\RabbitFX\\SetTextures"));
+        assert!(!rewritten.contains("CommandList_SSMT4_RabbitFX_Compat"));
+    }
+
+    #[test]
+    fn rewrite_efmi_legacy_rabbitfx_cleans_stale_ssmt4_sections_and_runs() {
+        let input = r#"[TextureOverride_Component1]
+hash = 48e5c5f7
+if $mod_enabled
+    run = CommandList_SSMT4_RabbitFX_Compat_TextureOverride_Component1_2
+endif
+
+[CommandList_SSMT4_RabbitFX_Compat_TextureOverride_Component1_2]
+; Auto-generated by SSMT4
+    ps-t0 = ref ResourceDiffuse05
+    ps-t2 = ref ResourceNormalmap05
+
+[TextureOverride_Component2]
+hash = 5104e6f9
+if $mod_enabled
+    handling = skip
+endif
+"#;
+        let (rewritten, summary) = rewrite_efmi_legacy_rabbitfx_ini(input).expect("compat rewrite");
+        assert_eq!(summary.removed_stale_compat_runs, 1);
+        assert_eq!(summary.removed_stale_compat_sections, 1);
+        assert!(
+            !rewritten.contains("CommandList_SSMT4_RabbitFX_Compat_TextureOverride_Component1_2")
+        );
+        assert!(!rewritten.contains("ps-t0 = ref ResourceDiffuse05"));
+        assert!(rewritten.contains("[TextureOverride_Component2]"));
+    }
+
+    #[test]
+    fn enforce_runtime_graphics_mode_keeps_efmi_force_d3d11() {
+        let mut args = vec!["-windowed".to_string(), "-force-d3d11".to_string()];
+        enforce_migoto_runtime_graphics_mode("ArknightsEndfield", "EFMI", &mut args);
+
+        assert_eq!(
+            args,
+            vec!["-windowed".to_string(), "-force-d3d11".to_string()]
+        );
+    }
+
+    #[test]
+    fn enforce_runtime_graphics_mode_appends_manifest_required_arg_without_rewrite() {
+        let mut args = vec!["-windowed".to_string()];
+        enforce_migoto_runtime_graphics_mode("ArknightsEndfield", "EFMI", &mut args);
+
+        assert_eq!(
+            args,
+            vec!["-windowed".to_string(), "-force-d3d11".to_string()]
+        );
+        assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-dx11")));
+    }
+
+    #[test]
+    fn runtime_graphics_mode_uses_importer_manifest_required_args() {
+        let mut wwmi_args = Vec::<String>::new();
+        enforce_migoto_runtime_graphics_mode("WutheringWaves", "WWMI", &mut wwmi_args);
+        assert!(wwmi_args
+            .iter()
+            .any(|arg| arg.eq_ignore_ascii_case("-dx11")));
+
+        let mut efmi_args = Vec::<String>::new();
+        enforce_migoto_runtime_graphics_mode("ArknightsEndfield", "EFMI", &mut efmi_args);
+        assert!(efmi_args
+            .iter()
+            .any(|arg| arg.eq_ignore_ascii_case("-force-d3d11")));
+
+        let mut zzmi_args = vec!["-windowed".to_string()];
+        enforce_migoto_runtime_graphics_mode("ZenlessZoneZero", "ZZMI", &mut zzmi_args);
+        assert_eq!(zzmi_args, vec!["-windowed".to_string()]);
+    }
+
+    #[test]
+    fn bridge_config_args_keep_positional_and_flag_forms() {
+        let args = build_bridge_config_args("Z:\\\\home\\\\xiaobai\\\\Cache\\\\bridge\\\\bridge-config.json");
+        assert_eq!(
+            args,
+            vec![
+                "--config".to_string(),
+                "Z:\\\\home\\\\xiaobai\\\\Cache\\\\bridge\\\\bridge-config.json".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn endfield_bridge_chain_prefers_direct_endfield_start_by_default() {
+        let mut bridge_config = crate::commands::bridge::build_bridge_config(
+            "EFMI",
+            Path::new("/tmp/ssmt4-test"),
+            "/home/xiaobai/.local/share/ssmt4/Games/ArknightsEndfield/Hypergryph Launcher",
+            "Launcher.exe",
+            Some(&serde_json::json!({
+                "other": {
+                    "migoto": {
+                        "start_args": "-force-d3d11"
+                    }
+                }
+            })),
+        );
+        let chain = super::super::EndfieldLaunchChain {
+            launcher_exe: PathBuf::from(
+                "/home/xiaobai/.local/share/ssmt4/Games/ArknightsEndfield/Hypergryph Launcher/Launcher.exe",
+            ),
+            endfield_exe: PathBuf::from(
+                "/home/xiaobai/.local/share/ssmt4/Games/ArknightsEndfield/Hypergryph Launcher/games/EndField Game/Endfield.exe",
+            ),
+        };
+
+        configure_endfield_bridge_chain("ArknightsEndfield", &mut bridge_config, &chain)
+            .expect("configure chain");
+
+        assert_eq!(bridge_config.game.start_exe, "Endfield.exe");
+        assert_eq!(bridge_config.game.process_name, "Endfield.exe");
+        assert_eq!(bridge_config.paths.game_exe, "Endfield.exe");
+        assert!(
+            bridge_config
+                .game
+                .work_dir
+                .contains("Hypergryph Launcher\\games\\EndField Game")
+        );
+        assert_eq!(
+            bridge_config.game.start_args,
+            vec!["-force-d3d11".to_string()]
+        );
     }
 }
 
@@ -1250,6 +1799,11 @@ fn build_bwrap_command(
         "DBUS_SESSION_BUS_ADDRESS",
         "LANG",
         "LC_ALL",
+        "XMODIFIERS",
+        "GTK_IM_MODULE",
+        "QT_IM_MODULE",
+        "QT_IM_MODULES",
+        "SDL_IM_MODULE",
     ] {
         if let Ok(value) = std::env::var(key) {
             cmd.arg("--setenv").arg(key).arg(value);

@@ -520,7 +520,11 @@ fn catalog_schema_version(path: &Path) -> u64 {
     std::fs::read_to_string(path)
         .ok()
         .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
-        .and_then(|value| value.get("schemaVersion").and_then(serde_json::Value::as_u64))
+        .and_then(|value| {
+            value
+                .get("schemaVersion")
+                .and_then(serde_json::Value::as_u64)
+        })
         .unwrap_or(0)
 }
 
