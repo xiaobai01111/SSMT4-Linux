@@ -47,6 +47,9 @@ declare module 'vue' {
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     TitleBar: typeof import('./src/components/TitleBar.vue')['default']
+    VirtualList: typeof import('./src/components/VirtualList.vue')['default']
+    VirtualLogViewer: typeof import('./src/components/VirtualLogViewer.vue')['default']
+    VirtualTable: typeof import('./src/components/VirtualTable.vue')['default']
   }
   export interface GlobalDirectives {
     vLoading: typeof import('element-plus/es')['ElLoadingDirective']

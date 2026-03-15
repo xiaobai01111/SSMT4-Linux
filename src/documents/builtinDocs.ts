@@ -1,8 +1,7 @@
 const docModules = import.meta.glob('./content/*.md', {
-  eager: true,
   import: 'default',
   query: '?raw',
-}) as Record<string, string>;
+}) as Record<string, () => Promise<string>>;
 
 export type BuiltinDocDefinition = {
   id: string;
@@ -27,9 +26,16 @@ export const builtinDocCatalog: BuiltinDocDefinition[] = [
   { id: 'troubleshooting', titleKey: 'documents.items.troubleshooting', fallbackTitle: '日志分析与标准排查流程', file: '07-日志分析与标准排查流程.md' },
 ];
 
-export const builtinDocs: Record<string, string> = Object.fromEntries(
-  Object.entries(docModules).map(([path, content]) => {
+const builtinDocLoaders = new Map(
+  Object.entries(docModules).map(([path, load]) => {
     const fileName = path.split('/').pop() || path;
-    return [fileName, String(content)];
+    return [fileName, load];
   }),
 );
+
+export const loadBuiltinDocContent = async (file: string): Promise<string | null> => {
+  const loader = builtinDocLoaders.get(file);
+  if (!loader) return null;
+  const content = await loader();
+  return typeof content === 'string' ? content : String(content);
+};

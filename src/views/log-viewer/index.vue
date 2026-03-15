@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ComponentPublicInstance } from 'vue';
+import VirtualLogViewer from '../../components/VirtualLogViewer.vue';
 import { useLogViewer } from './useLogViewer';
 
 const {
@@ -8,14 +8,9 @@ const {
   logDir,
   autoScroll,
   isLoading,
-  logContainer,
   loadLogs,
   copyLogs,
 } = useLogViewer();
-
-const setLogContainer = (element: Element | ComponentPublicInstance | null) => {
-  logContainer.value = element as HTMLElement | null;
-};
 </script>
 
 <template>
@@ -32,9 +27,13 @@ const setLogContainer = (element: Element | ComponentPublicInstance | null) => {
         <button class="log-btn" @click="copyLogs">{{ t('logviewer.copyAll') }}</button>
       </div>
     </div>
-    <div class="log-content" :ref="setLogContainer">
-      <pre>{{ logContent || t('logviewer.empty') }}</pre>
-    </div>
+    <!-- 使用虚拟日志查看器替代原来的 <pre> 标签 -->
+    <VirtualLogViewer
+      :content="logContent || t('logviewer.empty')"
+      :auto-scroll="autoScroll"
+      :estimate-line-height="25.6"
+      :overscan="5"
+    />
   </div>
 </template>
 
@@ -114,35 +113,5 @@ const setLogContainer = (element: Element | ComponentPublicInstance | null) => {
 .log-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-}
-
-.log-content {
-  flex: 1;
-  overflow: auto;
-  padding: 12px 16px;
-}
-
-.log-content pre {
-  margin: 0;
-  font-size: 11px;
-  line-height: 1.6;
-  white-space: pre;
-  word-break: normal;
-  color: #c8c8c8;
-}
-
-/* 滚动条样式 */
-.log-content::-webkit-scrollbar {
-  width: 6px;
-}
-.log-content::-webkit-scrollbar-track {
-  background: transparent;
-}
-.log-content::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 3px;
-}
-.log-content::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
 }
 </style>

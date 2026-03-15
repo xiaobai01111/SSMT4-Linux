@@ -1,4 +1,4 @@
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, shallowRef } from 'vue';
 import {
   deleteLocalDxvk,
   deleteLocalVkd3d,
@@ -75,16 +75,16 @@ export function useSettingsGraphicsManager({
   runDownloadTask: RunDownloadTask;
   runDeleteTask: RunDeleteTask;
 }) {
-  const dxvkLocalVersions = ref<DxvkLocalVersion[]>([]);
-  const dxvkRemoteVersions = ref<DxvkRemoteVersion[]>([]);
+  const dxvkLocalVersions = shallowRef<DxvkLocalVersion[]>([]);
+  const dxvkRemoteVersions = shallowRef<DxvkRemoteVersion[]>([]);
   const dxvkSelectedKey = ref('');
   const isDxvkFetching = ref(false);
   const isDxvkDownloading = ref(false);
   const dxvkFetchWarning = ref('');
   const deletingDxvkKeys = reactive<Record<string, boolean>>({});
 
-  const vkd3dLocalVersions = ref<Vkd3dLocalVersion[]>([]);
-  const vkd3dRemoteVersions = ref<Vkd3dRemoteVersion[]>([]);
+  const vkd3dLocalVersions = shallowRef<Vkd3dLocalVersion[]>([]);
+  const vkd3dRemoteVersions = shallowRef<Vkd3dRemoteVersion[]>([]);
   const vkd3dSelectedVersion = ref('');
   const isVkd3dFetching = ref(false);
   const isVkd3dDownloading = ref(false);

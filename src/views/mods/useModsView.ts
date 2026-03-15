@@ -1,4 +1,4 @@
-import { computed, inject, onMounted, ref, watch } from 'vue';
+import { computed, inject, onMounted, ref, shallowRef, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { appSettings, gamesList, loadGames } from '../../store';
 import {
@@ -75,9 +75,9 @@ export function useModsView() {
   const gameKeyword = ref('');
   const modKeyword = ref('');
   const modStatusFilter = ref<ModStatusFilter>('all');
-  const gameSummaries = ref<ModGameSummary[]>([]);
+  const gameSummaries = shallowRef<ModGameSummary[]>([]);
   const selectedGameName = ref('');
-  const selectedState = ref<GameModDirectoryState | null>(null);
+  const selectedState = shallowRef<GameModDirectoryState | null>(null);
 
   const isLoadingGames = ref(false);
   const isLoadingSelectedMods = ref(false);

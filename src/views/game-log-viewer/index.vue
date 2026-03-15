@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ComponentPublicInstance } from 'vue';
+import VirtualLogViewer from '../../components/VirtualLogViewer.vue';
 import { useGameLogViewer } from './useGameLogViewer';
 
 const {
@@ -7,14 +7,9 @@ const {
   snapshot,
   autoScroll,
   isLoading,
-  logContainer,
   loadLogs,
   copyLogs,
 } = useGameLogViewer();
-
-const setLogContainer = (element: Element | ComponentPublicInstance | null) => {
-  logContainer.value = element as HTMLElement | null;
-};
 </script>
 
 <template>
@@ -34,9 +29,13 @@ const setLogContainer = (element: Element | ComponentPublicInstance | null) => {
         <button class="btn" @click="copyLogs">{{ t('gamelogviewer.copyAll') }}</button>
       </div>
     </div>
-    <div class="content" :ref="setLogContainer">
-      <pre>{{ snapshot.content || t('gamelogviewer.empty') }}</pre>
-    </div>
+    <!-- 使用虚拟日志查看器替代原来的 <pre> 标签 -->
+    <VirtualLogViewer
+      :content="snapshot.content || t('gamelogviewer.empty')"
+      :auto-scroll="autoScroll"
+      :estimate-line-height="25.6"
+      :overscan="5"
+    />
   </div>
 </template>
 
@@ -114,20 +113,5 @@ const setLogContainer = (element: Element | ComponentPublicInstance | null) => {
 .btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-}
-
-.content {
-  flex: 1;
-  overflow: auto;
-  padding: 12px 16px;
-}
-
-.content pre {
-  margin: 0;
-  font-size: 11px;
-  line-height: 1.6;
-  white-space: pre;
-  word-break: normal;
-  color: #c8c8c8;
 }
 </style>

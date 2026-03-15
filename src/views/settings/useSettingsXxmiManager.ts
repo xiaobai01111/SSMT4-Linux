@@ -1,4 +1,4 @@
-import { computed, ref, watch } from 'vue';
+import { computed, ref, shallowRef, watch } from 'vue';
 import {
   deleteLocalXxmiPackage,
   deployXxmiPackage,
@@ -26,10 +26,10 @@ export function useSettingsXxmiManager({
   getSelectedGame: () => string;
   getDeployTargetDir: () => string;
 }) {
-  const xxmiSources = ref<XxmiPackageSource[]>([]);
+  const xxmiSources = shallowRef<XxmiPackageSource[]>([]);
   const xxmiSelectedSource = ref('xxmi-libs');
-  const xxmiRemoteVersions = ref<XxmiRemoteVersion[]>([]);
-  const xxmiLocalPackages = ref<XxmiLocalPackage[]>([]);
+  const xxmiRemoteVersions = shallowRef<XxmiRemoteVersion[]>([]);
+  const xxmiLocalPackages = shallowRef<XxmiLocalPackage[]>([]);
   const isXxmiFetching = ref(false);
   const isXxmiDownloading = ref(false);
   const xxmiDownloadingVersion = ref('');

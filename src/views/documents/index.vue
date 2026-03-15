@@ -8,6 +8,7 @@ const {
   activeDocId,
   activeDoc,
   renderedHtml,
+  isDocLoading,
   wikiUrl,
   openWiki,
   handleDocClick,
@@ -35,7 +36,11 @@ const {
         <div class="doc-content-title">{{ tr(activeDoc.titleKey, activeDoc.fallbackTitle) }}</div>
         <a :href="wikiUrl" target="_blank" rel="noopener noreferrer" class="doc-link">{{ wikiUrl }}</a>
       </div>
-      <article class="doc-content markdown-body" v-html="renderedHtml" @click="handleDocClick"></article>
+      <div v-if="isDocLoading" class="doc-loading">
+        <div class="doc-loading-spinner"></div>
+        <div class="doc-loading-text">{{ tr('documents.loading', '加载中...') }}</div>
+      </div>
+      <article v-else class="doc-content markdown-body" v-html="renderedHtml" @click="handleDocClick"></article>
     </section>
   </div>
 </template>
@@ -190,6 +195,37 @@ const {
   color: rgba(255, 255, 255, 0.85); /* Slightly darker for contrast */
   line-height: 1.8;
   font-size: 14px;
+}
+
+.doc-loading {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.doc-loading-spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 240, 255, 0.2);
+  border-top-color: #00f0ff;
+  animation: docSpin 0.75s linear infinite;
+}
+
+.doc-loading-text {
+  font-size: 13px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+@keyframes docSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /* Markdown overrides for Tech Terminal look */

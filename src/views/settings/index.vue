@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, markRaw } from 'vue';
+import { computed, markRaw, type Component } from 'vue';
 import SettingsAppearancePanel from './components/SettingsAppearancePanel.vue';
 import SettingsBasicPanel from './components/SettingsBasicPanel.vue';
 import SettingsDxvkPanel from './components/SettingsDxvkPanel.vue';
@@ -160,15 +160,15 @@ const activeSettingsPanelProps = computed<Record<string, unknown>>(() => {
       };
     case 'version':
       return {
-        versionInfo,
-        isVersionChecking,
+        versionInfo: versionInfo.value,
+        isVersionChecking: isVersionChecking.value,
         checkVersionInfo,
       };
     case 'resource':
       return {
-        resourceInfo,
-        isResourceChecking,
-        isResourcePulling,
+        resourceInfo: resourceInfo.value,
+        isResourceChecking: isResourceChecking.value,
+        isResourcePulling: isResourcePulling.value,
         checkResourceInfo,
         pullResources,
       };
@@ -212,7 +212,7 @@ const activeSettingsPanelProps = computed<Record<string, unknown>>(() => {
     case 'dxvk':
       return {
         guideMenu: guideMenu.value,
-        dxvkLocalVersions,
+        dxvkLocalVersions: dxvkLocalVersions.value,
         dxvkGroupedList: dxvkGroupedList.value,
         selectedKey: dxvkSelectedKey.value,
         selectedDxvkItem: selectedDxvkItem.value,
@@ -231,7 +231,7 @@ const activeSettingsPanelProps = computed<Record<string, unknown>>(() => {
       };
     case 'vkd3d':
       return {
-        vkd3dLocalVersions,
+        vkd3dLocalVersions: vkd3dLocalVersions.value,
         vkd3dVersionList: vkd3dVersionList.value,
         selectedVersion: vkd3dSelectedVersion.value,
         selectedVkd3dItem: selectedVkd3dItem.value,
@@ -253,10 +253,10 @@ const activeSettingsPanelProps = computed<Record<string, unknown>>(() => {
         globalMigotoEnabled: globalMigotoEnabled.value,
         isMigotoTogglePending: isMigotoTogglePending.value,
         isMigotoSaving: isMigotoSaving.value,
-        migotoRiskStatement: migotoRiskStatement.value,
+        migotoRiskStatement,
         migotoSelectedGame: migotoSelectedGame.value,
         migotoGamesList: migotoGamesList.value,
-        migotoConfig: migotoConfig.value,
+        migotoConfig,
         migotoAvailableImporterOptions: migotoAvailableImporterOptions.value,
         migotoImporterHint: migotoImporterHint.value,
         migotoInjectionHint: migotoInjectionHint.value,
@@ -315,6 +315,14 @@ const activeSettingsPanelProps = computed<Record<string, unknown>>(() => {
   }
 });
 
+const activeSettingsPanelComponent = computed(
+  () => activeSettingsPanel.value as Component,
+);
+
+const activeSettingsPanelBindings = computed(
+  () => activeSettingsPanelProps.value as Record<string, unknown>,
+);
+
 </script>
 
 <template>
@@ -333,8 +341,8 @@ const activeSettingsPanelProps = computed<Record<string, unknown>>(() => {
       <div class="settings-content">
         <KeepAlive :max="9">
           <component
-            :is="activeSettingsPanel"
-            v-bind="activeSettingsPanelProps"
+            :is="activeSettingsPanelComponent"
+            v-bind="activeSettingsPanelBindings"
           />
         </KeepAlive>
       </div>

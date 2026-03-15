@@ -91,6 +91,7 @@ const modStatusFilterModel = computed({
       v-loading="isLoadingSelectedMods || isBulkOperating"
       class="mod-table"
       empty-text=""
+      max-height="500"
     >
       <el-table-column prop="displayName" :label="tr('mods.columnName', '名称')" min-width="240">
         <template #default="{ row }">

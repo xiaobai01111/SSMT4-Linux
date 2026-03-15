@@ -1,4 +1,4 @@
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, shallowRef } from 'vue';
 import {
   deleteLocalProton,
   downloadProton,
@@ -64,9 +64,9 @@ export function useSettingsProtonManager({
   runDeleteTask: RunDeleteTask;
   getDataDir: () => string;
 }) {
-  const protonCatalog = ref<ProtonCatalog>({ families: [], sources: [] });
-  const localGroups = ref<ProtonFamilyLocalGroup[]>([]);
-  const remoteGroups = ref<ProtonFamilyRemoteGroup[]>([]);
+  const protonCatalog = shallowRef<ProtonCatalog>({ families: [], sources: [] });
+  const localGroups = shallowRef<ProtonFamilyLocalGroup[]>([]);
+  const remoteGroups = shallowRef<ProtonFamilyRemoteGroup[]>([]);
 
   const isCatalogLoading = ref(false);
   const isCatalogSaving = ref(false);

@@ -1,11 +1,7 @@
-import { computed, ref, watch } from 'vue';
+import { computed, ref, shallowRef, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import { builtinDocCatalog, builtinDocs, type BuiltinDocDefinition } from '../../documents/builtinDocs';
-
-type DocItem = BuiltinDocDefinition & {
-  content: string;
-};
+import { builtinDocCatalog, loadBuiltinDocContent, type BuiltinDocDefinition } from '../../documents/builtinDocs';
 
 export const useDocumentsView = () => {
   const { t, te } = useI18n();
@@ -25,20 +21,13 @@ export const useDocumentsView = () => {
     t('documents.fallback.openWikiHint'),
   ].join('\n');
 
-  const loadDocContent = (file: string, title: string): string => {
-    const builtin = builtinDocs[file];
-    if (builtin) return builtin;
-    return fallbackDocContent(title, file);
-  };
-
-  const docs: DocItem[] = builtinDocCatalog.map((doc) => ({
-    ...doc,
-    content: loadDocContent(doc.file, doc.fallbackTitle),
-  }));
+  const docs = builtinDocCatalog;
 
   const docById = new Map(docs.map((doc) => [doc.id, doc]));
   const docByFile = new Map(docs.map((doc) => [doc.file.toLowerCase(), doc.id]));
   const defaultDocId = docs[0]?.id ?? 'home';
+  const docContentCache = new Map<string, string>();
+  const docHtmlCache = new Map<string, string>();
 
   const resolveDocId = (value: unknown): string => {
     const raw = Array.isArray(value) ? value[0] : value;
@@ -49,6 +38,9 @@ export const useDocumentsView = () => {
 
   const activeDocId = ref(resolveDocId(route.query.doc));
   const activeDoc = computed(() => docById.get(activeDocId.value) ?? docs[0]);
+  const renderedHtml = shallowRef('');
+  const isDocLoading = ref(false);
+  let activeLoadToken = 0;
 
   const normalizeDocHref = (href: string): string => {
     let value = href.trim();
@@ -116,11 +108,82 @@ export const useDocumentsView = () => {
     return html;
   };
 
-  const renderedHtml = computed(() => markdownToHtml(activeDoc.value.content));
+  const yieldToBrowser = async () => {
+    await new Promise<void>((resolve) => {
+      if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(() => resolve());
+        return;
+      }
+      setTimeout(resolve, 0);
+    });
+  };
+
+  const loadDocContent = async (doc: BuiltinDocDefinition): Promise<string> => {
+    const cached = docContentCache.get(doc.file);
+    if (cached != null) return cached;
+
+    let builtin: string | null = null;
+    try {
+      builtin = await loadBuiltinDocContent(doc.file);
+    } catch {
+      builtin = null;
+    }
+
+    const content = builtin ?? fallbackDocContent(doc.fallbackTitle, doc.file);
+    docContentCache.set(doc.file, content);
+    return content;
+  };
+
+  const loadDocHtml = async (doc: BuiltinDocDefinition): Promise<string> => {
+    const cached = docHtmlCache.get(doc.file);
+    if (cached != null) return cached;
+
+    const content = await loadDocContent(doc);
+    await yieldToBrowser();
+    const html = markdownToHtml(content);
+    docHtmlCache.set(doc.file, html);
+    return html;
+  };
+
+  const refreshRenderedDoc = async (docId: string) => {
+    const doc = docById.get(docId) ?? docs[0];
+    if (!doc) {
+      renderedHtml.value = '';
+      isDocLoading.value = false;
+      return;
+    }
+
+    const cachedHtml = docHtmlCache.get(doc.file);
+    if (cachedHtml != null) {
+      renderedHtml.value = cachedHtml;
+      isDocLoading.value = false;
+      return;
+    }
+
+    const loadToken = ++activeLoadToken;
+    isDocLoading.value = true;
+    renderedHtml.value = '';
+
+    try {
+      const html = await loadDocHtml(doc);
+      if (loadToken !== activeLoadToken) return;
+      renderedHtml.value = html;
+    } finally {
+      if (loadToken === activeLoadToken) {
+        isDocLoading.value = false;
+      }
+    }
+  };
 
   const openWiki = async () => {
-    const { open } = await import('@tauri-apps/plugin-shell');
-    await open(wikiUrl);
+    try {
+      const { open } = await import('@tauri-apps/plugin-shell');
+      await open(wikiUrl);
+    } catch {
+      if (typeof window !== 'undefined') {
+        window.open(wikiUrl, '_blank', 'noopener,noreferrer');
+      }
+    }
   };
 
   const handleDocClick = (event: MouseEvent) => {
@@ -163,6 +226,14 @@ export const useDocumentsView = () => {
     });
   });
 
+  watch(
+    activeDocId,
+    (value) => {
+      void refreshRenderedDoc(value);
+    },
+    { immediate: true },
+  );
+
   return {
     t,
     tr,
@@ -170,6 +241,7 @@ export const useDocumentsView = () => {
     activeDocId,
     activeDoc,
     renderedHtml,
+    isDocLoading,
     wikiUrl,
     openWiki,
     handleDocClick,
