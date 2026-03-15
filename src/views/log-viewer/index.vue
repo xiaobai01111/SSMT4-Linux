@@ -1,67 +1,21 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick } from 'vue';
-import { readLogFile, getLogDir } from '../api';
-import { useI18n } from 'vue-i18n';
+import type { ComponentPublicInstance } from 'vue';
+import { useLogViewer } from './useLogViewer';
 
-const { t } = useI18n();
-const logContent = ref('');
-const logDir = ref('');
-const autoScroll = ref(true);
-const isLoading = ref(false);
-const logContainer = ref<HTMLElement | null>(null);
-let refreshTimer: ReturnType<typeof setInterval> | null = null;
+const {
+  t,
+  logContent,
+  logDir,
+  autoScroll,
+  isLoading,
+  logContainer,
+  loadLogs,
+  copyLogs,
+} = useLogViewer();
 
-const loadLogs = async () => {
-  if (isLoading.value) return;
-  try {
-    isLoading.value = true;
-    const nextContent = await readLogFile(1200);
-    const changed =
-      nextContent.length !== logContent.value.length ||
-      nextContent.slice(-120) !== logContent.value.slice(-120);
-    if (!changed) return;
-    logContent.value = nextContent;
-    if (autoScroll.value) {
-      await nextTick();
-      scrollToBottom();
-    }
-  } catch (e) {
-    logContent.value = `${t('logviewer.readFailed')}: ${e}`;
-  } finally {
-    isLoading.value = false;
-  }
+const setLogContainer = (element: Element | ComponentPublicInstance | null) => {
+  logContainer.value = element as HTMLElement | null;
 };
-
-const scrollToBottom = () => {
-  if (logContainer.value) {
-    logContainer.value.scrollTop = logContainer.value.scrollHeight;
-  }
-};
-
-const copyLogs = async () => {
-  try {
-    await navigator.clipboard.writeText(logContent.value);
-  } catch {
-    // fallback
-    const ta = document.createElement('textarea');
-    ta.value = logContent.value;
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    document.body.removeChild(ta);
-  }
-};
-
-onMounted(async () => {
-  logDir.value = await getLogDir();
-  await loadLogs();
-  // 降低刷新频率，避免长日志文本高频重排
-  refreshTimer = setInterval(loadLogs, 2500);
-});
-
-onUnmounted(() => {
-  if (refreshTimer) clearInterval(refreshTimer);
-});
 </script>
 
 <template>
@@ -78,7 +32,7 @@ onUnmounted(() => {
         <button class="log-btn" @click="copyLogs">{{ t('logviewer.copyAll') }}</button>
       </div>
     </div>
-    <div class="log-content" ref="logContainer">
+    <div class="log-content" :ref="setLogContainer">
       <pre>{{ logContent || t('logviewer.empty') }}</pre>
     </div>
   </div>

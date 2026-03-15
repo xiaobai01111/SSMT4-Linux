@@ -188,6 +188,10 @@
     "opacity": "不透明度 (Opacity)",
     "blur": "模糊度 (Blur)",
     "page_display": "页面显示设置",
+    "sidebar": {
+      "systemMaintenance": "系统维护",
+      "runtimeManagement": "核心环境管理"
+    },
     "websitepage": "常用网址页面",
     "docpage": "使用文档页面",
     "selectdatadir": "选择 SSMT4 数据目录",
@@ -386,14 +390,21 @@
       "xxmiFetching": "获取中...",
       "xxmiRefresh": "刷新版本",
       "xxmiLocalTitle": "本地已下载",
+      "xxmiLocalEmpty": "暂无本地下载",
       "xxmiDeploy": "部署",
       "xxmiDelete": "删除",
       "xxmiRemoteTitle": "可下载版本",
+      "xxmiColumnVersion": "版本",
+      "xxmiColumnSize": "大小",
+      "xxmiColumnPublishedAt": "发布日期",
+      "xxmiColumnActions": "操作",
+      "xxmiInstalledReady": "已就绪",
       "xxmiInstalled": "已下载",
       "xxmiDownloading": "下载中...",
       "xxmiDownload": "下载",
       "xxmiEmpty": "点击「刷新版本」获取可用的 XXMI 资源包版本。",
-      "xxmiDeployNoTarget": "请先配置 3DMigoto 数据路径"
+      "xxmiDeployNoTarget": "请先配置 3DMigoto 数据路径",
+      "lockedTag": "配置锁定中"
     },
     "language_select_placeholder": "选择语言",
     "language_options": {

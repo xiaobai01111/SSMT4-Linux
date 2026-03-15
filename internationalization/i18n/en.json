@@ -188,6 +188,10 @@
     "opacity": "Opacity",
     "blur": "Blur",
     "page_display": "Page Display Settings",
+    "sidebar": {
+      "systemMaintenance": "System Maintenance",
+      "runtimeManagement": "Core Runtime Management"
+    },
     "modpage": "Mod Manager Page",
     "websitepage": "Bookmarks Page",
     "docpage": "Documentation Page",
@@ -387,14 +391,21 @@
       "xxmiFetching": "Fetching...",
       "xxmiRefresh": "Refresh Versions",
       "xxmiLocalTitle": "Downloaded Locally",
+      "xxmiLocalEmpty": "No local downloads yet",
       "xxmiDeploy": "Deploy",
       "xxmiDelete": "Delete",
       "xxmiRemoteTitle": "Available Versions",
+      "xxmiColumnVersion": "Version",
+      "xxmiColumnSize": "Size",
+      "xxmiColumnPublishedAt": "Published",
+      "xxmiColumnActions": "Actions",
+      "xxmiInstalledReady": "Ready",
       "xxmiInstalled": "Downloaded",
       "xxmiDownloading": "Downloading...",
       "xxmiDownload": "Download",
       "xxmiEmpty": "Click \"Refresh Versions\" to fetch available XXMI resource package versions.",
-      "xxmiDeployNoTarget": "Please configure the 3DMigoto data path first"
+      "xxmiDeployNoTarget": "Please configure the 3DMigoto data path first",
+      "lockedTag": "Configuration Locked"
     },
     "language_select_placeholder": "Select language",
     "language_options": {

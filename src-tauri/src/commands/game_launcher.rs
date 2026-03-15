@@ -231,7 +231,6 @@ async fn start_game_internal(
 }
 
 fn log_launch_request(request: &LaunchRequest) {
-    crate::commands::game_log::ensure_game_log_session(&request.game_name);
     append_game_log(
         &request.game_name,
         "INFO",

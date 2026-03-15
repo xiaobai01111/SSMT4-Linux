@@ -574,8 +574,13 @@ const loadMigotoConfig = () => {
 };
 
 const saveMigotoEnabled = async () => {
+  const gameName = normalizeGameName(props.gameName);
+  if (!isEditableGameName(gameName)) return;
+
   if (!config.other) config.other = {};
-  if (!config.other.migoto) config.other.migoto = {};
+  if (!config.other.migoto || !isRecord(config.other.migoto)) {
+    config.other.migoto = {};
+  }
   if (!currentGameMigotoSupported.value) {
     config.other.migoto.enabled = false;
     migotoEnabled.value = false;
@@ -588,9 +593,24 @@ const saveMigotoEnabled = async () => {
     );
     return;
   }
-  config.other.migoto.enabled = migotoEnabled.value;
+
   try {
-    await persistLegacyConfig();
+    const latestRaw = await apiLoadGameConfig(gameName);
+    const latestConfig = normalizeLoadedConfig(latestRaw);
+    if (!latestConfig.other) latestConfig.other = {};
+    const latestMigoto = isRecord(latestConfig.other.migoto)
+      ? latestConfig.other.migoto
+      : {};
+    latestConfig.other.migoto = {
+      ...latestMigoto,
+      enabled: migotoEnabled.value,
+    };
+    await apiSaveGameConfig(gameName, latestConfig);
+
+    config.other.migoto = {
+      ...(isRecord(config.other.migoto) ? config.other.migoto : {}),
+      ...(latestConfig.other.migoto as Record<string, unknown>),
+    };
     notify?.success(t('gamesettingsmodal.migoto.saved'), '');
   } catch (e) {
     notify?.error(t('gamesettingsmodal.migoto.saveFailed'), `${e}`);
@@ -693,6 +713,28 @@ const syncInfoConfigToLegacyState = () => {
   config.other.displayName = infoConfig.value.meta.displayName;
 };
 
+const saveLegacyConfigPreservingMigoto = async (
+  gameName: string,
+  nextConfig: GameConfig,
+) => {
+  const latestRaw = await apiLoadGameConfig(gameName);
+  const latestConfig = normalizeLoadedConfig(latestRaw);
+  const latestMigoto =
+    isRecord(latestConfig.other?.migoto) ? latestConfig.other.migoto : undefined;
+
+  const merged: GameConfig = {
+    ...nextConfig,
+    basic: { ...nextConfig.basic },
+    other: { ...(nextConfig.other || {}) },
+  };
+
+  if (latestMigoto) {
+    merged.other.migoto = { ...latestMigoto };
+  }
+
+  await apiSaveGameConfig(gameName, merged);
+};
+
 const loadInfoConfig = async (gameName: string, sessionId: number) => {
   if (!isEditableGameName(gameName)) return;
   try {
@@ -738,7 +780,6 @@ const saveInfoMetaSection = async () => {
 };
 
 const {
-  persistLegacyConfig,
   persistManagedState,
   persistRuntimeSection,
   persistSystemSection,
@@ -752,7 +793,7 @@ const {
   selectedWineVersionId: () => selectedWineVersionId.value,
   syncSystemOptionsIntoConfig,
   syncInfoConfigToLegacyState,
-  saveGameConfig: apiSaveGameConfig,
+  saveGameConfig: saveLegacyConfigPreservingMigoto,
   saveWineConfig: setGameWineConfig,
   saveInfoRuntime: saveInfoRuntimeRaw,
 });

@@ -47,6 +47,9 @@ interface UseSettingsMigotoConfigOptions {
 
 export type MigotoGameConfig = BridgeMigotoFormModel;
 
+const LOCKED_IMPORTER_REVISION_KEY = '__ssmt4_locked_defaults_revision';
+const LOCKED_IMPORTER_REVISION = 1;
+
 export type MigotoPathOverrideField =
   | 'importer_folder'
   | 'mod_folder'
@@ -167,7 +170,7 @@ export function useSettingsMigotoConfig({
   };
 
   const normalizeMigotoConfig = (
-    config: Partial<MigotoGameConfig>,
+    config: Partial<MigotoGameConfig> & Record<string, unknown>,
     gameName = migotoSelectedGame.value,
   ): MigotoGameConfig => {
     const normalized: MigotoGameConfig = { ...defaultMigotoConfig, ...config };
@@ -200,10 +203,16 @@ export function useSettingsMigotoConfig({
       normalized.use_hook = importerBehavior.defaultUseHook;
     }
 
+    const lockedImporterRevision =
+      typeof config[LOCKED_IMPORTER_REVISION_KEY] === 'number'
+        ? Number(config[LOCKED_IMPORTER_REVISION_KEY])
+        : 0;
+
     const shouldHealLockedImporterDefaults = Boolean(
       requiredImporter &&
         normalized.importer === requiredImporter &&
-        importerBehavior.injectionLocked,
+        importerBehavior.injectionLocked &&
+        lockedImporterRevision < LOCKED_IMPORTER_REVISION,
     );
 
     if (
@@ -393,56 +402,6 @@ export function useSettingsMigotoConfig({
     };
   };
 
-  const collapseMigotoAutoOverrides = (
-    config: Partial<MigotoGameConfig>,
-    autoImporterFolder = getDetectedMigotoImporterFolder(config),
-  ) => {
-    const normalized = normalizeMigotoConfig(config);
-    const resolvedAutoImporterFolder =
-      trimMigotoPathValue(autoImporterFolder) || normalized.migoto_path;
-
-    if (
-      normalized.importer_folder &&
-      resolvedAutoImporterFolder &&
-      normalized.importer_folder === resolvedAutoImporterFolder
-    ) {
-      normalized.importer_folder = '';
-    }
-
-    const effectiveImporterFolder =
-      normalized.importer_folder || resolvedAutoImporterFolder;
-    const autoModFolder = effectiveImporterFolder
-      ? joinMigotoPath(effectiveImporterFolder, 'Mods')
-      : '';
-    if (normalized.mod_folder && autoModFolder && normalized.mod_folder === autoModFolder) {
-      normalized.mod_folder = '';
-    }
-
-    const autoShaderFixesFolder = effectiveImporterFolder
-      ? joinMigotoPath(effectiveImporterFolder, 'ShaderFixes')
-      : '';
-    if (
-      normalized.shader_fixes_folder &&
-      autoShaderFixesFolder &&
-      normalized.shader_fixes_folder === autoShaderFixesFolder
-    ) {
-      normalized.shader_fixes_folder = '';
-    }
-
-    const autoD3dxIniPath = effectiveImporterFolder
-      ? joinMigotoPath(effectiveImporterFolder, 'd3dx.ini')
-      : '';
-    if (
-      normalized.d3dx_ini_path &&
-      autoD3dxIniPath &&
-      normalized.d3dx_ini_path === autoD3dxIniPath
-    ) {
-      normalized.d3dx_ini_path = '';
-    }
-
-    return normalized;
-  };
-
   const refreshMigotoAutoPathDetection = async (
     config: Partial<MigotoGameConfig> = migotoConfig,
   ) => {
@@ -515,13 +474,12 @@ export function useSettingsMigotoConfig({
       const data = await loadGameConfig(gameName);
       const saved = data?.other?.migoto;
       if (saved && typeof saved === 'object') {
-        const normalized = normalizeMigotoConfig(saved, gameName);
-        Object.assign(migotoConfig, normalized);
-        const autoImporterFolder = await refreshMigotoAutoPathDetection(normalized);
-        Object.assign(
-          migotoConfig,
-          collapseMigotoAutoOverrides(normalized, autoImporterFolder),
+        const normalized = normalizeMigotoConfig(
+          saved as Partial<MigotoGameConfig> & Record<string, unknown>,
+          gameName,
         );
+        await refreshMigotoAutoPathDetection(normalized);
+        Object.assign(migotoConfig, normalized);
         return true;
       }
 
@@ -544,14 +502,27 @@ export function useSettingsMigotoConfig({
       isMigotoSaving.value = true;
       const data = await loadGameConfig(gameName);
       data.other = data.other || {};
-      const normalized = normalizeMigotoConfig({ ...migotoConfig }, gameName);
-      const autoImporterFolder = await refreshMigotoAutoPathDetection(normalized);
-      const collapsed = collapseMigotoAutoOverrides(
-        normalized,
-        autoImporterFolder,
+      const normalized = normalizeMigotoConfig(
+        {
+          ...(migotoConfig as Record<string, unknown>),
+          [LOCKED_IMPORTER_REVISION_KEY]: LOCKED_IMPORTER_REVISION,
+        },
+        gameName,
       );
-      Object.assign(migotoConfig, collapsed);
-      data.other.migoto = { ...collapsed };
+      await refreshMigotoAutoPathDetection(normalized);
+      Object.assign(migotoConfig, normalized);
+
+      const existingMigoto =
+        data.other.migoto &&
+        typeof data.other.migoto === 'object' &&
+        !Array.isArray(data.other.migoto)
+          ? (data.other.migoto as Record<string, unknown>)
+          : {};
+      data.other.migoto = {
+        ...existingMigoto,
+        ...normalized,
+        [LOCKED_IMPORTER_REVISION_KEY]: LOCKED_IMPORTER_REVISION,
+      };
       await saveGameConfig(gameName, data);
       await toast(
         'success',

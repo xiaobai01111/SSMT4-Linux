@@ -10,6 +10,7 @@ import "element-plus/es/components/message/style/css";
 import "element-plus/es/components/notification/style/css";
 import { dismissTask, taskNotifications } from "./taskNotifications";
 import { NOTIFY_KEY, type NotifyApi } from "./types/notify";
+import { preloadRouteView } from "./router";
 
 
 
@@ -27,6 +28,28 @@ const effectiveContentBlur = computed(() => {
   if (!isBlurRoute.value) return 0;
   return Math.min(Math.max(appSettings.contentBlur || 0, 0), 3);
 });
+
+let settingsPreloadTimer: ReturnType<typeof setTimeout> | null = null;
+
+const scheduleSettingsPreload = () => {
+  const run = () => {
+    preloadRouteView("Settings");
+  };
+
+  if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+    (
+      window as Window & {
+        requestIdleCallback?: (
+          callback: IdleRequestCallback,
+          options?: IdleRequestOptions,
+        ) => number;
+      }
+    ).requestIdleCallback?.(() => run(), { timeout: 1800 });
+    return;
+  }
+
+  settingsPreloadTimer = setTimeout(run, 900);
+};
 
 /**
  * =========================================================================
@@ -106,6 +129,7 @@ const preventContextMenu = (event: Event) => {
 
 onMounted(() => {
   document.addEventListener('contextmenu', preventContextMenu);
+  scheduleSettingsPreload();
 
   try {
     const label = getCurrentWindow().label;
@@ -122,6 +146,10 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('contextmenu', preventContextMenu);
+  if (settingsPreloadTimer) {
+    clearTimeout(settingsPreloadTimer);
+    settingsPreloadTimer = null;
+  }
 });
 
 /* bgStyle removed, handled in template */
@@ -162,7 +190,20 @@ onUnmounted(() => {
           '--content-blur': `${effectiveContentBlur}px`
         }" :class="{ 'enable-content-blur': effectiveContentBlur > 0.1 }">
           <div class="content-scroll-wrapper" :class="{ 'no-scroll': route.path === '/' }">
-            <router-view />
+            <router-view v-slot="{ Component, route: currentRoute }">
+              <keep-alive>
+                <component
+                  :is="Component"
+                  v-if="currentRoute.meta.keepAlive"
+                  :key="String(currentRoute.name || currentRoute.path)"
+                />
+              </keep-alive>
+              <component
+                :is="Component"
+                v-if="!currentRoute.meta.keepAlive"
+                :key="currentRoute.fullPath"
+              />
+            </router-view>
           </div>
         </main>
       </div>

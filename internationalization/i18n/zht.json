@@ -188,6 +188,10 @@
     "opacity": "不透明度 (Opacity)",
     "blur": "模糊度 (Blur)",
     "page_display": "頁面顯示設定",
+    "sidebar": {
+      "systemMaintenance": "系統維護",
+      "runtimeManagement": "核心環境管理"
+    },
     "websitepage": "常用網址頁面",
     "docpage": "使用文檔頁面",
     "selectdatadir": "選擇 SSMT4 資料目錄",
@@ -386,14 +390,21 @@
       "xxmiFetching": "獲取中...",
       "xxmiRefresh": "刷新版本",
       "xxmiLocalTitle": "本機已下載",
+      "xxmiLocalEmpty": "暫無本機下載",
       "xxmiDeploy": "部署",
       "xxmiDelete": "刪除",
       "xxmiRemoteTitle": "可下載版本",
+      "xxmiColumnVersion": "版本",
+      "xxmiColumnSize": "大小",
+      "xxmiColumnPublishedAt": "發布日期",
+      "xxmiColumnActions": "操作",
+      "xxmiInstalledReady": "已就緒",
       "xxmiInstalled": "已下載",
       "xxmiDownloading": "下載中...",
       "xxmiDownload": "下載",
       "xxmiEmpty": "點擊「刷新版本」獲取可用的 XXMI 資源包版本。",
-      "xxmiDeployNoTarget": "請先配置 3DMigoto 資料路徑"
+      "xxmiDeployNoTarget": "請先配置 3DMigoto 資料路徑",
+      "lockedTag": "配置鎖定中"
     },
     "language_select_placeholder": "選擇語言",
     "language_options": {

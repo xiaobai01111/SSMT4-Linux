@@ -19,6 +19,8 @@ mod runtime;
 pub(crate) type BridgeLaunchContext<'a> = runtime::BridgeLaunchContext<'a>;
 
 pub const BRIDGE_CONFIG_SCHEMA_VERSION: u32 = 1;
+const LOCKED_IMPORTER_REVISION_KEY: &str = "__ssmt4_locked_defaults_revision";
+const LOCKED_IMPORTER_REVISION: u32 = 1;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
@@ -171,6 +173,7 @@ struct BridgeSourceConfig {
     shader_fixes_folder: Option<String>,
     d3dx_ini_path: Option<String>,
     enabled: Option<bool>,
+    locked_importer_revision: Option<u32>,
 }
 
 impl Default for BridgeSourceConfig {
@@ -212,6 +215,7 @@ impl Default for BridgeSourceConfig {
             shader_fixes_folder: None,
             d3dx_ini_path: None,
             enabled: None,
+            locked_importer_revision: None,
         }
     }
 }
@@ -322,6 +326,7 @@ impl BridgeSourceConfig {
             ),
             d3dx_ini_path: bridge_string_field(root, bridge_contract::migoto_form::D3DX_INI_PATH),
             enabled: bridge_typed_field(root, bridge_contract::migoto_form::ENABLED),
+            locked_importer_revision: bridge_typed_field(root, LOCKED_IMPORTER_REVISION_KEY),
         }
     }
 
@@ -640,12 +645,14 @@ fn insert_string_override(map: &mut Map<String, Value>, key: &str, value: Option
     }
 }
 
-fn importer_default_d3dx_ini(importer_name: &str) -> BridgeJsonObject {
-    let (texture_hash, track_texture_updates) =
-        match normalize_importer_name(importer_name).as_str() {
-            "WWMI" => (1, 1),
-            _ => (0, 0),
-        };
+fn importer_default_d3dx_ini(importer_name: &str, enforce_rendering: bool) -> BridgeJsonObject {
+    let (texture_hash, track_texture_updates) = match (
+        normalize_importer_name(importer_name).as_str(),
+        enforce_rendering,
+    ) {
+        ("WWMI", true) | ("EFMI", true) => (1, 1),
+        _ => (0, 0),
+    };
 
     BridgeJsonObject::from_value(
         Some(&json!({
@@ -764,6 +771,27 @@ pub fn build_bridge_config(
     let mut start_args = gs.start_args_vec();
     ensure_required_start_args(&mut start_args, &importer_name);
 
+    let should_heal_locked_importer_defaults = importer_behavior.injection_locked
+        && gs.locked_importer_revision.unwrap_or_default() < LOCKED_IMPORTER_REVISION;
+    let resolved_process_timeout = heal_locked_importer_legacy_u32(
+        should_heal_locked_importer_defaults,
+        gs.process_timeout.map(u64::from),
+        importer_behavior.default_process_timeout,
+        locked_defaults.process_timeout,
+    );
+    let resolved_enforce_rendering = heal_locked_importer_legacy_bool(
+        should_heal_locked_importer_defaults,
+        gs.enforce_rendering,
+        importer_behavior.default_enforce_rendering,
+        locked_defaults.enforce_rendering,
+    );
+    let resolved_xxmi_dll_init_delay = heal_locked_importer_legacy_u32(
+        should_heal_locked_importer_defaults,
+        gs.xxmi_dll_init_delay.map(u64::from),
+        importer_behavior.default_xxmi_dll_init_delay,
+        locked_defaults.xxmi_dll_init_delay,
+    );
+
     let game_specific_section = BridgeJsonObject::from_value(
         game_config_json.and_then(|c| c.get(importer_name.to_ascii_lowercase().as_str())),
         "game_specific",
@@ -815,12 +843,7 @@ pub fn build_bridge_config(
                 .process_priority
                 .clone()
                 .unwrap_or_else(|| shared_defaults.game.process_priority.clone()),
-            process_timeout: heal_locked_importer_legacy_u32(
-                importer_behavior.injection_locked,
-                gs.process_timeout.map(u64::from),
-                importer_behavior.default_process_timeout,
-                locked_defaults.process_timeout,
-            ),
+            process_timeout: resolved_process_timeout,
         },
         migoto: BridgeMigotoConfig {
             use_hook: if importer_behavior.injection_locked {
@@ -829,12 +852,7 @@ pub fn build_bridge_config(
                 gs.use_hook.unwrap_or(importer_behavior.default_use_hook)
             },
             use_dll_drop: gs.use_dll_drop,
-            enforce_rendering: heal_locked_importer_legacy_bool(
-                importer_behavior.injection_locked,
-                gs.enforce_rendering,
-                importer_behavior.default_enforce_rendering,
-                locked_defaults.enforce_rendering,
-            ),
+            enforce_rendering: resolved_enforce_rendering,
             enable_hunting: gs.enable_hunting,
             dump_shaders: gs.dump_shaders,
             mute_warnings: gs
@@ -843,18 +861,12 @@ pub fn build_bridge_config(
             calls_logging: gs.calls_logging,
             debug_logging: gs.debug_logging,
             unsafe_mode: gs.unsafe_mode,
-            xxmi_dll_init_delay: heal_locked_importer_legacy_u32(
-                importer_behavior.injection_locked,
-                gs.xxmi_dll_init_delay.map(u64::from),
-                importer_behavior.default_xxmi_dll_init_delay,
-                locked_defaults.xxmi_dll_init_delay,
-            ),
+            xxmi_dll_init_delay: resolved_xxmi_dll_init_delay,
         },
         game_specific: game_specific_map,
-        d3dx_ini: gs
-            .d3dx_ini
-            .clone()
-            .unwrap_or_else(|| importer_default_d3dx_ini(&importer_name)),
+        d3dx_ini: gs.d3dx_ini.clone().unwrap_or_else(|| {
+            importer_default_d3dx_ini(&importer_name, resolved_enforce_rendering)
+        }),
         signatures: BridgeSignatures {
             xxmi_public_key: gs.xxmi_public_key.clone().unwrap_or_default(),
             deployed_migoto_signatures: HashMap::new(),
@@ -1036,6 +1048,35 @@ mod tests {
         assert_eq!(config.game.process_timeout, 75);
         assert_eq!(config.migoto.enforce_rendering, false);
         assert_eq!(config.migoto.xxmi_dll_init_delay, 250);
+    }
+
+    #[test]
+    fn efmi_keeps_explicit_enforce_rendering_when_revision_marker_exists() {
+        let config = build_test_bridge_config(
+            "EFMI",
+            Some(json!({
+                "__ssmt4_locked_defaults_revision": 1,
+                "enforce_rendering": true
+            })),
+        );
+
+        assert_eq!(config.migoto.enforce_rendering, true);
+        assert_eq!(
+            config
+                .d3dx_ini
+                .as_value()
+                .pointer("/enforce_rendering/Rendering/texture_hash")
+                .and_then(|value| value.as_i64()),
+            Some(1)
+        );
+        assert_eq!(
+            config
+                .d3dx_ini
+                .as_value()
+                .pointer("/enforce_rendering/Rendering/track_texture_updates")
+                .and_then(|value| value.as_i64()),
+            Some(1)
+        );
     }
 
     #[test]

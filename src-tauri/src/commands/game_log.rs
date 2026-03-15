@@ -190,6 +190,21 @@ mod tests {
     }
 
     #[test]
+    fn append_without_open_session_keeps_snapshot_inactive() {
+        let _guard = TEST_GUARD.lock().unwrap();
+        clear_game_log_session();
+
+        let game = unique_game_name("NoSession");
+        append_game_log_line(&game, "INFO", "launcher", "should-be-ignored");
+
+        let snapshot = read_game_log_snapshot(Some(10));
+        assert!(!snapshot.active);
+        assert_eq!(snapshot.line_count, 0);
+        assert!(snapshot.content.contains("日志会话未开启"));
+        assert!(!snapshot.content.contains("should-be-ignored"));
+    }
+
+    #[test]
     fn game_log_session_appends_only_matching_game_lines() {
         let _guard = TEST_GUARD.lock().unwrap();
         clear_game_log_session();

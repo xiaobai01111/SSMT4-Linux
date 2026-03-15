@@ -150,12 +150,10 @@ fn configure_endfield_bridge_chain(
         .and_then(|name| name.to_str())
         .unwrap_or("Endfield.exe")
         .to_string();
-    let endfield_root = chain.endfield_exe.parent().ok_or_else(|| {
-        format!(
-            "无法推断终末地主程序目录: {}",
-            chain.endfield_exe.display()
-        )
-    })?;
+    let endfield_root = chain
+        .endfield_exe
+        .parent()
+        .ok_or_else(|| format!("无法推断终末地主程序目录: {}", chain.endfield_exe.display()))?;
 
     // d3dx.ini [Loader] target should always be the real game process.
     bridge_config.paths.game_exe = endfield_exe_name.clone();
@@ -544,7 +542,8 @@ pub(super) fn resolve_run_target(
     }
 
     let (run_exe, extra_args) = if migoto_runtime_required {
-        if migoto_importer.eq_ignore_ascii_case("EFMI") && should_apply_efmi_legacy_rabbitfx_compat()
+        if migoto_importer.eq_ignore_ascii_case("EFMI")
+            && should_apply_efmi_legacy_rabbitfx_compat()
         {
             let path_state = crate::utils::migoto_layout::resolve_migoto_path_state_for_game(
                 &target.game_preset,
@@ -1623,7 +1622,9 @@ endif
 
     #[test]
     fn bridge_config_args_keep_positional_and_flag_forms() {
-        let args = build_bridge_config_args("Z:\\\\home\\\\xiaobai\\\\Cache\\\\bridge\\\\bridge-config.json");
+        let args = build_bridge_config_args(
+            "Z:\\\\home\\\\xiaobai\\\\Cache\\\\bridge\\\\bridge-config.json",
+        );
         assert_eq!(
             args,
             vec![
@@ -1663,12 +1664,10 @@ endif
         assert_eq!(bridge_config.game.start_exe, "Endfield.exe");
         assert_eq!(bridge_config.game.process_name, "Endfield.exe");
         assert_eq!(bridge_config.paths.game_exe, "Endfield.exe");
-        assert!(
-            bridge_config
-                .game
-                .work_dir
-                .contains("Hypergryph Launcher\\games\\EndField Game")
-        );
+        assert!(bridge_config
+            .game
+            .work_dir
+            .contains("Hypergryph Launcher\\games\\EndField Game"));
         assert_eq!(
             bridge_config.game.start_args,
             vec!["-force-d3d11".to_string()]

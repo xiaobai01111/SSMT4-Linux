@@ -6,12 +6,14 @@ import {
   scanGames as apiScanGames,
   getGameLauncherApi,
   getGameState as apiGetGameState,
+  getLauncherInstallerState,
   getDefaultGameFolder,
   loadGameConfig,
   convertFileSrc,
   showMessage,
 } from './api'
 import type { AppSettings, GameConfig, GameInfo } from './types/ipc'
+import type { Locale } from './types/ipc'
 import {
   resolveGameUpdateFolder,
   resolveGameUpdateSource,
@@ -219,6 +221,8 @@ interface ResolvedGameUpdateContext {
   launcherApi: string;
   gameFolder: string;
   bizPrefix?: string;
+  downloadMode: 'full_game' | 'launcher_installer';
+  gamePreset: string;
 }
 
 const resolveConfiguredGamePreset = (gameName: string, config: GameConfig): string => {
@@ -294,6 +298,8 @@ async function resolveGameUpdateContext(gameName: string): Promise<ResolvedGameU
     launcherApi: resolvedSource.launcherApi,
     gameFolder,
     bizPrefix: resolvedSource.bizPrefix,
+    downloadMode: launcherInfo.downloadMode || 'full_game',
+    gamePreset,
   };
 }
 
@@ -315,11 +321,18 @@ export async function refreshGameUpdateState(gameName: string): Promise<void> {
       return;
     }
 
-    const state = await apiGetGameState(
-      context.launcherApi,
-      context.gameFolder,
-      context.bizPrefix,
-    );
+    const state =
+      context.downloadMode === 'launcher_installer'
+        ? await getLauncherInstallerState(
+            context.launcherApi,
+            context.gameFolder,
+            context.gamePreset,
+          )
+        : await apiGetGameState(
+            context.launcherApi,
+            context.gameFolder,
+            context.bizPrefix,
+          );
     if (!shouldApplyGameUpdateResult(entry, requestId)) return;
 
     Object.assign(entry, buildReadyGameUpdateCheckPatch(state, nowTs()));
@@ -498,6 +511,37 @@ const scheduleSettingsSave = async () => {
     saveSettingsTimer = null;
     void saveSettingsNow();
   }, debounceMs);
+};
+
+const waitForSettingsSaveIdle = async () => {
+  while (isSavingSettings) {
+    await new Promise((resolve) => setTimeout(resolve, 40));
+  }
+};
+
+export const flushSettingsSave = async () => {
+  if (saveSettingsTimer) {
+    clearTimeout(saveSettingsTimer);
+    saveSettingsTimer = null;
+  }
+
+  hasPendingSave = true;
+  await waitForSettingsSaveIdle();
+  await saveSettingsNow();
+};
+
+export const updateLocaleAndReload = async (locale: Locale) => {
+  if (!locale || appSettings.locale === locale) return;
+
+  withAutoSaveSuspended(() => {
+    appSettings.locale = locale;
+  });
+
+  await flushSettingsSave();
+
+  if (typeof window !== 'undefined') {
+    window.location.reload();
+  }
 };
 
 let storeWatchersReady = false;

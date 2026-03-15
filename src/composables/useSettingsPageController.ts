@@ -1,4 +1,4 @@
-import { onScopeDispose, ref, watch } from 'vue';
+import { onMounted, onScopeDispose, ref, watch } from 'vue';
 import type { RouteLocationNormalizedLoaded } from 'vue-router';
 import type { VersionCheckInfo } from '../api';
 import { resolveSettingsRouteMenuState } from '../utils/settingsMenuRoute';
@@ -32,6 +32,8 @@ export function useSettingsPageController(
   const activeMenu = ref('basic');
   const guideMenu = ref('');
   let guideMenuTimer: ReturnType<typeof setTimeout> | null = null;
+  const idleCallbackIds: number[] = [];
+  const idleTimeoutIds: ReturnType<typeof setTimeout>[] = [];
 
   const versionInfo = ref<VersionCheckInfo | null>(null);
   const isVersionChecking = ref(false);
@@ -44,6 +46,43 @@ export function useSettingsPageController(
   const protonLoaded = ref(false);
   const dxvkLoaded = ref(false);
   const vkd3dLoaded = ref(false);
+  const migotoLoaded = ref(false);
+
+  let versionLoadPromise: Promise<void> | null = null;
+  let resourceLoadPromise: Promise<void> | null = null;
+  let protonLoadPromise: Promise<void> | null = null;
+  let dxvkLoadPromise: Promise<void> | null = null;
+  let vkd3dLoadPromise: Promise<void> | null = null;
+  let migotoLoadPromise: Promise<void> | null = null;
+
+  const waitNextFrame = () =>
+    new Promise<void>((resolve) => {
+      if (
+        typeof window !== 'undefined' &&
+        typeof window.requestAnimationFrame === 'function'
+      ) {
+        window.requestAnimationFrame(() => resolve());
+        return;
+      }
+      setTimeout(resolve, 0);
+    });
+
+  const scheduleIdleTask = (task: () => Promise<void> | void) => {
+    if (
+      typeof window !== 'undefined' &&
+      typeof window.requestIdleCallback === 'function'
+    ) {
+      const id = window.requestIdleCallback(() => {
+        void task();
+      }, { timeout: 1600 });
+      idleCallbackIds.push(id);
+      return;
+    }
+    const id = setTimeout(() => {
+      void task();
+    }, 700);
+    idleTimeoutIds.push(id);
+  };
 
   const applyMenuFromRoute = () => {
     const routeState = resolveSettingsRouteMenuState(
@@ -133,6 +172,102 @@ export function useSettingsPageController(
     options.reenterOnboarding();
   };
 
+  const ensureVersionLoaded = async () => {
+    if (versionCheckLoaded.value) return;
+    if (!versionLoadPromise) {
+      versionLoadPromise = checkVersionInfo().finally(() => {
+        versionLoadPromise = null;
+      });
+    }
+    await versionLoadPromise;
+  };
+
+  const ensureResourceLoaded = async () => {
+    if (resourceCheckLoaded.value) return;
+    if (!resourceLoadPromise) {
+      resourceLoadPromise = checkResourceInfo().finally(() => {
+        resourceLoadPromise = null;
+      });
+    }
+    await resourceLoadPromise;
+  };
+
+  const ensureProtonLoaded = async () => {
+    if (protonLoaded.value) return;
+    if (!protonLoadPromise) {
+      protonLoadPromise = options.loadProton().then(() => {
+        protonLoaded.value = true;
+      }).finally(() => {
+        protonLoadPromise = null;
+      });
+    }
+    await protonLoadPromise;
+  };
+
+  const ensureDxvkLoaded = async () => {
+    if (dxvkLoaded.value) return;
+    if (!dxvkLoadPromise) {
+      dxvkLoadPromise = options.loadDxvk().then(() => {
+        dxvkLoaded.value = true;
+      }).finally(() => {
+        dxvkLoadPromise = null;
+      });
+    }
+    await dxvkLoadPromise;
+  };
+
+  const ensureVkd3dLoaded = async () => {
+    if (vkd3dLoaded.value) return;
+    if (!vkd3dLoadPromise) {
+      vkd3dLoadPromise = options.loadVkd3d().then(() => {
+        vkd3dLoaded.value = true;
+      }).finally(() => {
+        vkd3dLoadPromise = null;
+      });
+    }
+    await vkd3dLoadPromise;
+  };
+
+  const ensureMigotoLoaded = async () => {
+    if (migotoLoaded.value) return;
+    if (!migotoLoadPromise) {
+      migotoLoadPromise = options.loadMigoto().then(() => {
+        migotoLoaded.value = true;
+      }).finally(() => {
+        migotoLoadPromise = null;
+      });
+    }
+    await migotoLoadPromise;
+  };
+
+  const warmMenuData = async (menu: string, migotoEnabled: boolean) => {
+    await waitNextFrame();
+
+    if (menu === 'version') {
+      await ensureVersionLoaded();
+      return;
+    }
+    if (menu === 'resource') {
+      await ensureResourceLoaded();
+      return;
+    }
+    if (menu === 'proton') {
+      await ensureProtonLoaded();
+      return;
+    }
+    if (menu === 'dxvk') {
+      await ensureDxvkLoaded();
+      return;
+    }
+    if (menu === 'vkd3d') {
+      await ensureVkd3dLoaded();
+      return;
+    }
+    if (menu === 'migoto' && migotoEnabled) {
+      await ensureMigotoLoaded();
+    }
+  };
+
   watch(
     () => [options.route.query.menu, options.route.query.guide, options.route.query.t],
     () => applyMenuFromRoute(),
@@ -141,40 +276,50 @@ export function useSettingsPageController(
 
   watch(
     () => [activeMenu.value, options.globalMigotoEnabled()] as const,
-    async ([menu, migotoEnabled]) => {
-      if (menu === 'version' && !versionCheckLoaded.value) {
-        await checkVersionInfo();
-      }
-      if (menu === 'resource' && !resourceCheckLoaded.value) {
-        await checkResourceInfo();
-      }
-      if (menu === 'proton' && !protonLoaded.value) {
-        await options.loadProton();
-        protonLoaded.value = true;
-      }
+    ([menu, migotoEnabled]) => {
       if (menu === 'proton') {
         options.setProtonEditorCollapsed();
       }
-      if (menu === 'dxvk' && !dxvkLoaded.value) {
-        await options.loadDxvk();
-        dxvkLoaded.value = true;
-      }
-      if (menu === 'vkd3d' && !vkd3dLoaded.value) {
-        await options.loadVkd3d();
-        vkd3dLoaded.value = true;
-      }
-      if (menu === 'migoto' && migotoEnabled) {
-        await options.loadMigoto();
-      }
+      void warmMenuData(menu, migotoEnabled);
     },
     { immediate: true },
   );
+
+  onMounted(() => {
+    const backgroundTasks = [
+      () => ensureProtonLoaded(),
+      () => ensureDxvkLoaded(),
+      () => ensureVkd3dLoaded(),
+      () =>
+        options.globalMigotoEnabled() ? ensureMigotoLoaded() : Promise.resolve(),
+    ];
+
+    let taskIndex = 0;
+    const runNext = () => {
+      if (taskIndex >= backgroundTasks.length) return;
+      scheduleIdleTask(async () => {
+        const currentTask = backgroundTasks[taskIndex];
+        taskIndex += 1;
+        await currentTask();
+        runNext();
+      });
+    };
+
+    runNext();
+  });
 
   onScopeDispose(() => {
     if (guideMenuTimer) {
       clearTimeout(guideMenuTimer);
       guideMenuTimer = null;
     }
+    if (
+      typeof window !== 'undefined' &&
+      typeof window.cancelIdleCallback === 'function'
+    ) {
+      idleCallbackIds.forEach((id) => window.cancelIdleCallback(id));
+    }
+    idleTimeoutIds.forEach((id) => clearTimeout(id));
   });
 
   return {
@@ -190,6 +335,7 @@ export function useSettingsPageController(
     protonLoaded,
     dxvkLoaded,
     vkd3dLoaded,
+    migotoLoaded,
     applyMenuFromRoute,
     checkVersionInfo,
     checkResourceInfo,

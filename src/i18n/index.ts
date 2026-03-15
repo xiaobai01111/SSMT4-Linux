@@ -23,8 +23,8 @@ const getByPath = (obj: Record<string, unknown>, key: string): string | undefine
 
 export const i18n = createI18n({
     legacy: false,
-    locale: 'en',
-    fallbackLocale: ['zhs', 'en'],
+    locale: 'zhs',
+    fallbackLocale: ['zhs', 'en', 'zht'],
     messages,
     missing: (locale, key) => {
         const dedupeKey = `${locale}:${key}`

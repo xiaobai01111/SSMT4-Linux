@@ -13,15 +13,15 @@ type PreloadableRouteName =
   | 'GameLogViewer'
 
 // 懒加载工厂
-const lazyHome = () => import('../views/Home.vue')
-const lazySetup = () => import('../views/Setup.vue')
-const lazyGameLibrary = () => import('../views/GameLibrary.vue')
-const lazyMods = () => import('../views/Mods.vue')
-const lazyWebsites = () => import('../views/Websites.vue')
-const lazySettings = () => import('../views/Settings.vue')
-const lazyDocuments = () => import('../views/Documents.vue')
-const lazyLogViewer = () => import('../views/LogViewer.vue')
-const lazyGameLogViewer = () => import('../views/GameLogViewer.vue')
+const lazyHome = () => import('../views/home/index.vue')
+const lazySetup = () => import('../views/setup/index.vue')
+const lazyGameLibrary = () => import('../views/game-library/index.vue')
+const lazyMods = () => import('../views/mods/index.vue')
+const lazyWebsites = () => import('../views/websites/index.vue')
+const lazySettings = () => import('../views/settings/index.vue')
+const lazyDocuments = () => import('../views/documents/index.vue')
+const lazyLogViewer = () => import('../views/log-viewer/index.vue')
+const lazyGameLogViewer = () => import('../views/game-log-viewer/index.vue')
 
 const routeComponentLoaders: Record<PreloadableRouteName, () => Promise<unknown>> = {
   Home: lazyHome,
@@ -52,7 +52,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/games', name: 'GameLibrary', component: lazyGameLibrary },
   { path: '/mods', name: 'Mods', component: lazyMods },
   { path: '/websites', name: 'Websites', component: lazyWebsites },
-  { path: '/settings', name: 'Settings', component: lazySettings },
+  { path: '/settings', name: 'Settings', component: lazySettings, meta: { keepAlive: true } },
   { path: '/documents', name: 'Documents', component: lazyDocuments },
   { path: '/log-viewer', name: 'LogViewer', component: lazyLogViewer },
   { path: '/game-log-viewer', name: 'GameLogViewer', component: lazyGameLogViewer },
