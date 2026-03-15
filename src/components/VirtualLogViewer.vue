@@ -62,13 +62,17 @@ const offsetY = computed(() => {
   return visibleRange.value.startIndex * props.estimateLineHeight;
 });
 
+let scrollRafId: number | null = null;
 const handleScroll = (e: Event) => {
   const target = e.target as HTMLElement;
-  scrollTop.value = target.scrollTop;
-  
-  // 检测是否在底部
-  const isBottom = target.scrollHeight - target.scrollTop - target.clientHeight < 10;
-  isAtBottom.value = isBottom;
+  const newScrollTop = target.scrollTop;
+  const isBottom = target.scrollHeight - newScrollTop - target.clientHeight < 10;
+  if (scrollRafId !== null) return;
+  scrollRafId = requestAnimationFrame(() => {
+    scrollTop.value = newScrollTop;
+    isAtBottom.value = isBottom;
+    scrollRafId = null;
+  });
 };
 
 const scrollToBottom = () => {
@@ -108,6 +112,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('resize', updateContainerHeight);
   if (contentChangeTimeout) clearTimeout(contentChangeTimeout);
+  if (scrollRafId !== null) cancelAnimationFrame(scrollRafId);
 });
 
 // 监听内容变化

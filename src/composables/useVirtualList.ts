@@ -5,7 +5,7 @@
  * 支持动态行高、滚动监听等功能
  */
 
-import { ref, computed, onMounted, watch, type Ref } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch, type Ref } from 'vue';
 
 export interface VirtualListOptions {
   /** 每一行的高度（单位：px），如果列表项高度不一致，建议使用 estimateItemHeight + overscan */
@@ -103,16 +103,22 @@ export function useVirtualList<T>(
     return state.value.startIndex * estimateItemHeight;
   });
 
-  // 处理滚动事件
+  // 处理滚动事件（rAF 节流：每帧最多更新一次，避免高频滚动触发密集响应式更新）
+  let rafId: number | null = null;
   const handleScroll = (e: Event) => {
     const target = e.target as HTMLElement;
-    scrollTop.value = target.scrollTop;
+    const newScrollTop = target.scrollTop;
+    if (rafId !== null) return;
+    rafId = requestAnimationFrame(() => {
+      scrollTop.value = newScrollTop;
+      rafId = null;
+    });
   };
 
   // 自动获取容器高度
   const updateContainerHeight = () => {
     if (!containerRef.value) return;
-    
+
     // 如果未设置 containerHeight，从 DOM 获取
     if (!initialContainerHeight) {
       containerHeight.value = containerRef.value.clientHeight;
@@ -136,6 +142,10 @@ export function useVirtualList<T>(
   onMounted(() => {
     updateContainerHeight();
     window.addEventListener('resize', updateContainerHeight);
+  });
+
+  onUnmounted(() => {
+    window.removeEventListener('resize', updateContainerHeight);
   });
 
   // 监听列表变化时重置滚动位置
@@ -259,9 +269,15 @@ export function useDynamicVirtualList<T>(
     return getCumulativeHeight(state.value.startIndex);
   });
 
+  let rafId: number | null = null;
   const handleScroll = (e: Event) => {
     const target = e.target as HTMLElement;
-    scrollTop.value = target.scrollTop;
+    const newScrollTop = target.scrollTop;
+    if (rafId !== null) return;
+    rafId = requestAnimationFrame(() => {
+      scrollTop.value = newScrollTop;
+      rafId = null;
+    });
   };
 
   const updateItemHeight = (index: number, height: number) => {
@@ -290,6 +306,10 @@ export function useDynamicVirtualList<T>(
   onMounted(() => {
     updateContainerHeight();
     window.addEventListener('resize', updateContainerHeight);
+  });
+
+  onUnmounted(() => {
+    window.removeEventListener('resize', updateContainerHeight);
   });
 
   watch(

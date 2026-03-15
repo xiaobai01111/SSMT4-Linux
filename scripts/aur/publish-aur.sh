@@ -4,8 +4,6 @@
 # Usage: bash scripts/aur/publish-aur.sh
 # Env:   AUR_REPO_DIR  – override local AUR repo path
 #        SKIP_PUSH=1   – commit but do not push
-#        SSMT4_AUR_SOURCE_MIRROR=auto|github|gitee
-#        SSMT4_AUR_SOURCE_REPO=... (override git source URL directly)
 
 set -euo pipefail
 
@@ -59,11 +57,7 @@ echo "==> 版本信息"
 echo "    version : $VERSION_RAW"
 echo "    pkgver  : $PKGVER"
 echo "    pkgrel  : $PKGREL"
-if [[ -n "${SSMT4_AUR_SOURCE_REPO:-}" ]]; then
-  echo "    source  : $SSMT4_AUR_SOURCE_REPO"
-else
-  echo "    mirror  : ${SSMT4_AUR_SOURCE_MIRROR:-auto}"
-fi
+echo "    source  : https://github.com/peachycommit/ssmt4-linux.git"
 
 # ── 1. 更新 PKGBUILD pkgver ──────────────────────────
 

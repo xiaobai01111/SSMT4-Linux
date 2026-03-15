@@ -173,6 +173,49 @@ export function useSettingsProtonManager({
     }
   };
 
+  const clearRemoteSelections = () => {
+    for (const familyKey of Object.keys(selectedRemoteByFamily)) {
+      delete selectedRemoteByFamily[familyKey];
+    }
+  };
+
+  const syncRemoteInstalledState = (
+    groups: ProtonFamilyRemoteGroup[],
+  ): ProtonFamilyRemoteGroup[] => {
+    const localMap = new Map(
+      localGroups.value.map((group) => [group.family_key, group.items]),
+    );
+
+    return groups.map((group) => {
+      const localItems = localMap.get(group.family_key) ?? [];
+      const localVersions = new Set(
+        localItems
+          .map((item) => item.version.trim().toLowerCase())
+          .filter((item) => item.length > 0),
+      );
+      const localNames = localItems
+        .map((item) => item.name.trim().toLowerCase())
+        .filter((item) => item.length > 0);
+
+      return {
+        ...group,
+        items: group.items.map((item) => {
+          const tag = item.tag.trim().toLowerCase();
+          const version = item.version.trim().toLowerCase();
+          const installed =
+            localVersions.has(version) ||
+            localVersions.has(tag) ||
+            localNames.some((name) => name === tag || name.includes(tag));
+
+          return {
+            ...item,
+            installed,
+          };
+        }),
+      };
+    });
+  };
+
   const toEditableFamily = (family: ProtonFamily): EditableProtonFamily => ({
     ...family,
     detect_patterns_text: family.detect_patterns.join('\n'),
@@ -214,6 +257,8 @@ export function useSettingsProtonManager({
       isLocalLoading.value = true;
       localGroups.value = await scanLocalProtonGrouped();
       ensureLocalSelections();
+      remoteGroups.value = syncRemoteInstalledState(remoteGroups.value);
+      ensureRemoteSelections();
     } catch (e) {
       await toast(
         'error',
@@ -229,7 +274,9 @@ export function useSettingsProtonManager({
     if (isRemoteLoading.value) return;
     try {
       isRemoteLoading.value = true;
-      remoteGroups.value = await fetchRemoteProtonGrouped();
+      remoteGroups.value = syncRemoteInstalledState(
+        await fetchRemoteProtonGrouped(),
+      );
       ensureRemoteSelections();
     } catch (e) {
       await toast(
@@ -243,7 +290,7 @@ export function useSettingsProtonManager({
   };
 
   const refreshProtonState = async () => {
-    await Promise.all([refreshLocalGrouped(), refreshRemoteGrouped()]);
+    await refreshLocalGrouped();
   };
 
   const buildCatalogPayload = (): ProtonCatalog | null => {
@@ -381,7 +428,9 @@ export function useSettingsProtonManager({
       isCatalogSaving.value = true;
       await saveProtonCatalog(payload);
       await loadCatalog();
-      await Promise.all([refreshLocalGrouped(), refreshRemoteGrouped()]);
+      remoteGroups.value = [];
+      clearRemoteSelections();
+      await refreshLocalGrouped();
       await toast(
         'success',
         tr('settings.messages.title.success', '成功'),

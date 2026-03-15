@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import GameDownloadModal from '../../components/GameDownloadModal.vue';
 import GameSettingsModal from '../../components/GameSettingsModal.vue';
+import HomeActionBar from './components/HomeActionBar.vue';
+import HomeContextMenu from './components/HomeContextMenu.vue';
+import HomeGamesDock from './components/HomeGamesDock.vue';
+import HomeNotifications from './components/HomeNotifications.vue';
 import { useHomeView } from './useHomeView';
 
 const {
-  t,
   router,
   appSettings,
+  targetGame,
   gamesLoading,
   sidebarGames,
   hasCurrentGame,
-  targetGame,
   showMenu,
   menuX,
   menuY,
@@ -41,176 +44,75 @@ type HomeSettingsModalRef = NonNullable<(typeof settingsModalRef)['value']>;
 const setSettingsModalRef = (value: unknown) => {
   settingsModalRef.value = value as HomeSettingsModalRef | null;
 };
+
+const handleAddGame = () => {
+  void router.push('/games');
+};
+
+const handleOpenGameSettings = () => {
+  void openGameSettingsTab('info');
+};
+
+const handleOpenDownload = () => {
+  showDownload.value = true;
+};
 </script>
 
 <template>
   <div class="home-container">
-    
-    <!-- Bright Tech Sci-Fi Background Layer -->
     <div class="hero-layer">
-      <!-- Clean background image with lighter blur to let global bg peek through when no image -->
-      <div 
-        class="hero-image" 
+      <div
+        class="hero-image"
         :style="{ backgroundImage: (targetGame && targetGame.iconPath) ? `url(${targetGame.iconPath})` : 'none' }"
         :class="{ 'has-image': targetGame && targetGame.iconPath }"
       ></div>
-      
-      <!-- Tech Grid Overlay (Subtle) -->
       <div class="tech-grid-overlay"></div>
-      
-      <!-- Light Vignette -->
       <div class="hero-overlay"></div>
     </div>
 
-    <!-- Main Content Area centered -->
     <div class="content-area">
-
-      <!-- Action & Sidebar Area - Now a floating bottom/center dashboard -->
       <div class="dashboard-panel">
-        
-        <!-- Game Selection (Dock) -->
-        <div class="games-dock" data-onboarding="home-games-dock">
-          <div v-if="sidebarGames.length === 0 && gamesLoading" class="dock-loading">
-            <div class="dock-loading-spinner"></div>
-            <div class="dock-loading-text">Scanning library...</div>
-          </div>
-
-          <!-- Empty state: guide to Game Library -->
-          <el-tooltip v-else-if="sidebarGames.length === 0" :content="t('home.tooltips.addToSidebar')" placement="top" effect="dark" popper-class="game-tooltip">
-            <div class="dock-icon add-game-btn" @click="router.push('/games')">
-              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="12" y1="5" x2="12" y2="19"></line>
-                <line x1="5" y1="12" x2="19" y2="12"></line>
-              </svg>
-            </div>
-          </el-tooltip>
-
-          <!-- Games Loop -->
-          <el-tooltip v-for="game in sidebarGames" :key="game.name" :content="getGameName(game)" placement="top" effect="dark" popper-class="game-tooltip">
-            <div class="dock-icon" :class="{ active: isGameActive(game.name) }" @click.stop="handleGameClick(game)"
-              @contextmenu.prevent="handleContextMenu($event, game)">
-              <div class="icon-glow" v-if="isGameActive(game.name)"></div>
-              <img :src="game.iconPath" :alt="game.name" loading="lazy"
-                @load="(e) => (e.target as HTMLImageElement).style.opacity = '1'"
-                @error="(e) => (e.target as HTMLImageElement).style.opacity = '0'" />
-            </div>
-          </el-tooltip>
-        </div>
+        <HomeGamesDock
+          :games-loading="gamesLoading"
+          :sidebar-games="sidebarGames"
+          :get-game-name="getGameName"
+          :is-game-active="isGameActive"
+          @add-game="handleAddGame"
+          @select-game="handleGameClick"
+          @open-context-menu="handleContextMenu"
+        />
 
         <div class="divider"></div>
 
-        <!-- Start Game Button & Settings -->
-        <div class="action-bar">
-          <div class="start-game-wrapper">
-             <div
-               class="start-game-btn"
-               data-onboarding="home-start-button"
-               @click="handlePrimaryAction"
-               :class="{ 'disabled': isLaunching, 'running': isGameRunning }"
-             >
-               <div class="btn-background-fx"></div>
-               <div class="icon-wrapper">
-                 <svg
-                   v-if="currentGameNeedsUpdate && !isGameRunning"
-                   xmlns="http://www.w3.org/2000/svg"
-                   width="20"
-                   height="20"
-                   viewBox="0 0 24 24"
-                   fill="none"
-                   stroke="currentColor"
-                   stroke-width="2.5"
-                   stroke-linecap="round"
-                   stroke-linejoin="round"
-                 >
-                   <path d="M12 3v12"></path>
-                   <path d="m7 10 5 5 5-5"></path>
-                   <path d="M5 21h14"></path>
-                 </svg>
-                 <div class="play-triangle" v-else-if="gameHasExe && !isGameRunning"></div>
-                 <div v-else-if="isGameRunning" class="running-indicator"></div>
-                 <svg v-else xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-               </div>
-               <span class="btn-text">{{ startButtonLabel }}</span>
-             </div>
-          </div>
-
-          <!-- Settings Menu Button -->
-          <el-dropdown trigger="hover" placement="top-end" popper-class="settings-dropdown">
-            <div class="settings-btn" data-onboarding="home-settings-button">
-              <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-settings-2"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="7" r="3"/><circle cx="8" cy="17" r="3"/></svg>
-            </div>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item @click="openGameSettingsTab('info')" :disabled="!hasCurrentGame">
-                  <span style="display: flex; align-items: center; gap: 8px;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-                    {{ t('home.dropdown.gamesettings') }}
-                  </span>
-                </el-dropdown-item>
-                <el-dropdown-item divided @click="showDownload = true" :disabled="!hasCurrentGame">
-                  <span style="display: flex; align-items: center; gap: 8px;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17V3"></path><path d="m6 11 6 6 6-6"></path><path d="M19 21H5"></path></svg>
-                    {{ t('home.dropdown.downloadProtection') }}
-                  </span>
-                </el-dropdown-item>
-                <el-dropdown-item divided @click="openCurrentGameLog" :disabled="!hasCurrentGame">
-                  <span style="display: flex; align-items: center; gap: 8px;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20v-6"></path><path d="M9 20h6"></path><path d="M5 8a7 7 0 1 1 14 0v6a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z"></path></svg>
-                    {{ t('home.dropdown.openGameLog') }}
-                  </span>
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-        </div>
-
+        <HomeActionBar
+          :current-game-needs-update="currentGameNeedsUpdate"
+          :is-game-running="isGameRunning"
+          :game-has-exe="gameHasExe"
+          :is-launching="isLaunching"
+          :has-current-game="hasCurrentGame"
+          :start-button-label="startButtonLabel"
+          @primary-action="handlePrimaryAction"
+          @open-game-settings="handleOpenGameSettings"
+          @open-download="handleOpenDownload"
+          @open-game-log="openCurrentGameLog"
+        />
       </div>
 
-      <!-- Mini download progress -->
-      <div class="notifications-area">
-        <div v-if="activeDownloadTask && !showDownload" class="mini-dl-bar glass-panel" @click="showDownload = true">
-          <div class="mini-dl-info">
-            <span class="mini-dl-name">{{ activeDownloadTask.displayName || activeDownloadTask.gameName }}</span>
-            <span class="mini-dl-phase">{{ activeDownloadTask.phase === 'verifying' ? t('home.downloadPhase.verifying') : (activeDownloadTask.progress?.phase === 'install' ? t('home.downloadPhase.installing') : t('home.downloadPhase.downloading')) }}</span>
-            <span class="mini-dl-pct" v-if="activeDownloadTask.progress && activeDownloadTask.progress.total_size > 0">
-              {{ Math.round((activeDownloadTask.progress.finished_size / activeDownloadTask.progress.total_size) * 100) }}%
-            </span>
-          </div>
-          <div class="mini-dl-track">
-            <div class="mini-dl-fill"
-              :class="{ 'mini-dl-verify': activeDownloadTask.phase === 'verifying' || activeDownloadTask.progress?.phase === 'verify' }"
-              :style="{ width: (activeDownloadTask.progress && activeDownloadTask.progress.total_size > 0 ? Math.round((activeDownloadTask.progress.finished_size / activeDownloadTask.progress.total_size) * 100) : 0) + '%' }"></div>
-          </div>
-        </div>
-
-        <!-- Proton/DXVK 组件下载进度 toast -->
-        <div v-if="componentDlProgress" class="mini-dl-bar glass-panel component-dl">
-          <div class="mini-dl-info">
-            <span class="mini-dl-name">{{ componentDlProgress.componentName || componentDlProgress.componentId }}</span>
-            <span class="mini-dl-phase">{{ componentDlProgress.phase === 'downloading' ? t('home.componentPhase.downloading') : componentDlProgress.phase === 'extracting' ? t('home.componentPhase.extracting') : componentDlProgress.phase }}</span>
-            <span class="mini-dl-pct" v-if="componentDlProgress.total > 0 && componentDlProgress.phase === 'downloading'">
-              {{ Math.round(componentDlProgress.downloaded / componentDlProgress.total * 100) }}%
-            </span>
-          </div>
-          <div class="mini-dl-track">
-            <div class="mini-dl-fill"
-              :class="{ 'mini-dl-verify': componentDlProgress.phase === 'extracting' }"
-              :style="{ width: componentDlProgress.total > 0 ? Math.round(componentDlProgress.downloaded / componentDlProgress.total * 100) + '%' : '100%' }"></div>
-          </div>
-        </div>
-      </div>
-
+      <HomeNotifications
+        :active-download-task="activeDownloadTask"
+        :component-dl-progress="componentDlProgress"
+        :show-download="showDownload"
+        @open-download="handleOpenDownload"
+      />
     </div>
 
-    <!-- Custom Context Menu -->
-    <div v-if="showMenu" class="context-menu glass-panel" :style="{ top: menuY + 'px', left: menuX + 'px' }" @click.stop>
-      <div class="menu-item" @click="hideGame">
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><path d="m2 2 20 20"/><path d="M6.71 6.71A10.61 10.61 0 0 0 2 12a10.54 10.54 0 0 0 11.29 9 10.46 10.46 0 0 0 5-1.71"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a10.16 10.16 0 0 1-2.39 3.46"/><path d="M8 12a4 4 0 0 0 4 4"/><path d="M12 8a4 4 0 0 0-4 4"/></svg>
-        {{ t('home.contextmenu.hidegame') }}
-      </div>
-    </div>
+    <HomeContextMenu
+      :show-menu="showMenu"
+      :menu-x="menuX"
+      :menu-y="menuY"
+      @hide-game="hideGame"
+    />
 
-    <!-- Modals -->
     <GameSettingsModal
       :ref="setSettingsModalRef"
       v-model="showSettings"
@@ -223,12 +125,10 @@ const setSettingsModalRef = (value: unknown) => {
       :display-name="currentDisplayName"
       @game-configured="checkGameExe(true)"
     />
-
   </div>
 </template>
 
 <style scoped>
-/* Base Container */
 .home-container {
   width: 100%;
   height: 100%;
@@ -239,18 +139,13 @@ const setSettingsModalRef = (value: unknown) => {
   color: #fff;
 }
 
-/* Background/Hero Area (Bright Tech Sci-Fi) */
 .hero-layer {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
+  inset: 0;
   z-index: 0;
   pointer-events: none;
   overflow: hidden;
-  /* Removed solid #050510 to allow global App.vue bg to show through */
-  background-color: transparent; 
+  background-color: transparent;
 }
 
 .hero-image {
@@ -259,34 +154,28 @@ const setSettingsModalRef = (value: unknown) => {
   background-size: cover;
   background-position: center;
   transition: opacity 0.35s ease-in-out;
-  opacity: 0; /* Hidden by default if no image to let global BG show */
+  opacity: 0;
 }
 
 .hero-image.has-image {
-  opacity: 0.92;
-  filter: none;
+  opacity: 0.95;
 }
 
 .tech-grid-overlay {
   position: absolute;
-  top: 0; left: 0; width: 100%; height: 100%;
-  background-image: 
-    linear-gradient(rgba(0, 240, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 240, 255, 0.03) 1px, transparent 1px);
-  background-size: 40px 40px;
+  inset: 0;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 24px 24px;
   z-index: 1;
-  opacity: 0.5;
 }
 
 .hero-overlay {
   position: absolute;
-  top: 0; left: 0; width: 100%; height: 100%;
-  /* Light vignette, not pitch black */
-  background: radial-gradient(circle at center 60%, transparent 20%, rgba(0, 15, 25, 0.4) 100%);
+  inset: 0;
+  background: radial-gradient(circle at center 40%, transparent 10%, rgba(10, 12, 16, 0.8) 100%);
   z-index: 2;
 }
 
-/* Main Content Area */
 .content-area {
   flex: 1;
   display: flex;
@@ -298,498 +187,22 @@ const setSettingsModalRef = (value: unknown) => {
   z-index: 10;
 }
 
-/* 
-  Bright Tech Dashboard Panel 
-*/
 .dashboard-panel {
   display: flex;
   align-items: center;
   gap: 24px;
-  background: rgba(20, 25, 30, 0.85); /* Light translucent base */
-  border: 1px solid rgba(0, 240, 255, 0.4); /* Bright cyan border */
-  border-radius: 12px; /* Sharper corners for tech feel */
-  padding: 8px 24px;
-  position: relative;
-  animation: none;
-  will-change: transform;
-  contain: layout style;
+  border-radius: 20px;
+  padding: 12px 28px;
+  background-color: rgba(20, 25, 30, 0.45);
+  backdrop-filter: blur(24px) saturate(120%);
+  -webkit-backdrop-filter: blur(24px) saturate(120%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
 }
 
-/* Tech Brackets (HUD Corners) */
-.dashboard-panel::before,
-.dashboard-panel::after {
-  content: '';
-  position: absolute;
-  width: 20px;
-  height: 20px;
-  border: 2px solid #00f0ff;
-  border-radius: 4px;
-  z-index: 5;
-  pointer-events: none;
-}
-
-.dashboard-panel::before {
-  top: -2px; left: -2px;
-  border-right: none; border-bottom: none;
-}
-
-.dashboard-panel::after {
-  bottom: -2px; right: -2px;
-  border-left: none; border-top: none;
-  box-shadow: none;
-}
-
-@keyframes slideUpFade {
-  0% { opacity: 0; transform: translateY(30px); }
-  100% { opacity: 1; transform: translateY(0); }
-}
-
-/* Divider inside Dashboard */
 .divider {
-  width: 2px;
-  height: 40px;
-  background: linear-gradient(to bottom, transparent, rgba(255, 255, 255, 0.4), transparent);
-}
-
-/* Games Dock */
-.games-dock {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 24px 8px;
-  max-width: 60vw;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scroll-behavior: smooth;
-}
-
-.games-dock::-webkit-scrollbar { height: 4px; }
-.games-dock::-webkit-scrollbar-track { background: transparent; }
-.games-dock::-webkit-scrollbar-thumb { background: rgba(0, 240, 255, 0.5); border-radius: 2px; }
-.games-dock::-webkit-scrollbar-thumb:hover { background: #00f0ff; }
-
-.dock-loading {
-  min-width: 160px;
-  height: 64px;
-  padding: 0 18px;
-  border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.05);
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  color: rgba(255, 255, 255, 0.78);
-}
-
-.dock-loading-spinner {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.18);
-  border-top-color: #00f0ff;
-  animation: dockSpin 0.8s linear infinite;
-}
-
-.dock-loading-text {
-  font-size: 13px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-@keyframes dockSpin {
-  to { transform: rotate(360deg); }
-}
-
-/* Sci-Fi Crisp Hover Dock Icons */
-.dock-icon {
-  flex-shrink: 0;
-  width: 64px;
-  height: 64px;
-  border-radius: 12px; /* Sharper */
-  position: relative;
-  cursor: pointer;
-  background-color: rgba(255,255,255,0.05);
-  transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1); 
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.dock-icon img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: 11px;
-  position: relative;
-  z-index: 3;
-  transition: opacity 0.2s ease;
-}
-
-/* Crisp Pop Hover */
-.dock-icon:hover {
-  transform: translateY(-6px) scale(1.1);
-  border-color: #00f0ff;
-}
-
-/* Active Game State */
-.dock-icon.active {
-  transform: translateY(-4px) scale(1.15);
-  border-color: #fff;
-  z-index: 10;
-}
-
-/* Mechanical Scanning Line for Active Game */
-.dock-icon.active::after {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  border-radius: 11px;
-  z-index: 4;
-  pointer-events: none;
-  background: linear-gradient(to bottom, transparent 40%, rgba(255, 255, 255, 0.4) 50%, transparent 60%);
-  background-size: 100% 100%;
-  animation: none;
-}
-
-@keyframes techScan {
-  0% { background-position: 0% -100%; }
-  100% { background-position: 0% 200%; }
-}
-
-/* Remove pulseGlow */
-.icon-glow {
-  display: none;
-}
-
-/* Add Game Button */
-.dock-icon.add-game-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 2px dashed rgba(255, 255, 255, 0.3);
-  color: #fff;
-}
-
-.dock-icon.add-game-btn:hover {
-  border-color: #00f0ff;
-  color: #00f0ff;
-  background-color: rgba(0, 240, 255, 0.1);
-}
-
-/* Add Game Button */
-.dock-icon.add-game-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 2px dashed rgba(255, 255, 255, 0.2);
-  background-color: rgba(255, 255, 255, 0.05);
-  color: rgba(255, 255, 255, 0.5);
-}
-
-.dock-icon.add-game-btn:hover {
-  border-color: rgba(255, 255, 255, 0.6);
-  color: #fff;
-  background-color: rgba(255, 255, 255, 0.1);
-}
-
-/* 
-  Action Bar
-*/
-.action-bar {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.start-game-wrapper {
-  position: relative;
-}
-
-/* Bright Sci-Fi Start Game Button */
-.start-game-btn {
-  position: relative;
-  background: #00f0ff; /* Solid bright cyan */
-  color: #000;
-  display: flex;
-  align-items: center;
-  padding: 0 32px 0 8px;
-  min-width: 220px;
-  height: 60px;
-  border-radius: 8px; /* Mechanical corners */
-  cursor: pointer;
-  overflow: hidden;
-  transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
-  transform: skewX(-10deg); /* Tech slant */
-}
-
-/* Ensure content isn't skewed */
-.start-game-btn > * {
-  transform: skewX(10deg);
-}
-
-.btn-background-fx {
-  position: absolute;
-  top: 0; left: -35%;
-  width: 50%; height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.8), transparent);
-  transform: skewX(-20deg);
-  opacity: 0.35;
-  transition: none;
-  animation: none;
-}
-
-@keyframes pulseSweep {
-  0% { left: -100%; }
-  20% { left: 200%; }
-  100% { left: 200%; }
-}
-
-.start-game-btn:hover {
-  background: #fff; /* Flashes white on hover */
-  transform: translateY(-2px) skewX(-10deg);
-}
-
-.start-game-btn:active {
-  transform: translateY(2px) skewX(-10deg);
-}
-
-.icon-wrapper {
-  width: 44px;
-  height: 44px;
-  background-color: #000;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #00f0ff;
-  z-index: 2;
-}
-
-.start-game-btn:hover .icon-wrapper {
-  background-color: #00f0ff;
-  color: #fff;
-}
-
-.play-triangle {
-  width: 0; height: 0;
-  border-style: solid;
-  border-width: 8px 0 8px 12px;
-  border-color: transparent transparent transparent currentColor;
-  margin-left: 4px;
-}
-
-.btn-text {
-  font-size: 18px;
-  font-weight: 800;
-  margin-left: 20px;
-  letter-spacing: 2px;
-  z-index: 2;
-  font-family: 'Segoe UI', sans-serif;
-  text-transform: uppercase;
-}
-
-/* Button States */
-.start-game-btn.disabled {
-  pointer-events: none;
-  filter: grayscale(1) opacity(0.6);
-  box-shadow: none;
-}
-
-.start-game-btn.running {
-  pointer-events: none;
-  background: linear-gradient(135deg, #2E7D32 0%, #1B5E20 100%);
-  color: #A5D6A7;
-}
-
-.start-game-btn.running .icon-wrapper {
-  background-color: #0A2B0C;
-  color: #4CAF50;
-}
-
-.running-indicator {
-  width: 14px;
-  height: 14px;
-  background: #4CAF50;
-  border-radius: 50%;
-  animation: none;
-}
-
-@keyframes pulse-green {
-  0% { transform: scale(0.8); opacity: 0.7; }
-  70% { transform: scale(1); opacity: 1; }
-  100% { transform: scale(0.8); opacity: 0.7; }
-}
-
-/* Settings Button */
-.settings-btn {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.1);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #ddd;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.settings-btn:hover {
-  background: rgba(255,255,255,0.1);
-  color: #fff;
-  transform: rotate(30deg);
-}
-
-/* 
-  Notifications & Toasts 
-*/
-.notifications-area {
-  position: absolute;
-  top: 32px;
-  right: 32px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  z-index: 100;
-}
-
-.glass-panel {
-  background: rgba(20, 20, 22, 0.92);
-  will-change: transform;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-}
-
-.mini-dl-bar {
-  width: 300px;
-  padding: 12px 16px;
-  cursor: pointer;
-  transition: all 0.25s;
-  animation: toastSlideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.mini-dl-bar:hover {
-  background: rgba(30, 30, 35, 0.8);
-  border-color: rgba(247, 206, 70, 0.4);
-  transform: translateY(-2px);
-}
-
-.mini-dl-info {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-
-.mini-dl-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: #F7CE46;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 150px;
-}
-
-.mini-dl-phase {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.6);
-  padding: 2px 8px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
-}
-
-.mini-dl-pct {
-  font-size: 13px;
-  font-weight: 700;
-  margin-left: auto;
-}
-
-.mini-dl-track {
-  width: 100%;
-  height: 4px;
-  background: rgba(0,0,0,0.5);
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.mini-dl-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #F5A623, #F7CE46);
-  border-radius: 2px;
-  transition: width 0.3s ease;
-}
-
-.mini-dl-fill.mini-dl-verify {
-  background: linear-gradient(90deg, #4CAF50, #8bc34a);
-}
-
-@keyframes toastSlideIn {
-  from { opacity: 0; transform: translateX(50px) scale(0.95); }
-  to   { opacity: 1; transform: translateX(0) scale(1); }
-}
-
-/* Context Menu Overrides */
-.context-menu {
-  position: fixed;
-  z-index: 10000;
-  padding: 6px;
-  min-width: 140px;
-}
-
-.menu-item {
-  display: flex;
-  align-items: center;
-  padding: 10px 14px;
-  cursor: pointer;
-  color: #ddd;
-  font-size: 13px;
-  border-radius: 6px;
-  transition: all 0.2s;
-}
-
-.menu-item:hover {
-  background: rgba(255, 60, 60, 0.2);
-  color: #ff6b6b;
-}
-
-</style>
-
-<style>
-/* Global Settings Dropdown Overrides */
-.settings-dropdown.el-popper {
-  background: rgba(20, 20, 22, 0.95) !important;
-  border: 1px solid rgba(255, 255, 255, 0.1) !important;
-  border-radius: 16px !important;
-}
-
-.settings-dropdown .el-popper__arrow::before {
-  background: rgba(20, 20, 22, 0.85) !important;
-  border: 1px solid rgba(255, 255, 255, 0.1) !important;
-}
-
-.settings-dropdown .el-dropdown-menu {
-  background: transparent !important;
-  border: none !important;
-  padding: 8px !important;
-}
-
-.settings-dropdown .el-dropdown-menu__item {
-  border-radius: 8px !important;
-  color: #eee !important;
-  padding: 10px 16px !important;
-  font-size: 14px !important;
-  transition: all 0.2s !important;
-}
-
-.settings-dropdown .el-dropdown-menu__item:hover,
-.settings-dropdown .el-dropdown-menu__item:focus {
-  background: rgba(255, 255, 255, 0.1) !important;
-  color: #fff !important;
-  transform: translateX(4px);
-}
-
-.settings-dropdown .el-dropdown-menu__item--divided {
-  border-top: 1px solid rgba(255, 255, 255, 0.1) !important;
-  margin-top: 6px !important;
+  width: 1px;
+  height: 48px;
+  background: linear-gradient(to bottom, transparent, rgba(255, 255, 255, 0.2), transparent);
 }
 </style>

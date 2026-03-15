@@ -1,4 +1,4 @@
-import { onMounted, onScopeDispose, ref, watch } from 'vue';
+import { onScopeDispose, ref, watch } from 'vue';
 import type { RouteLocationNormalizedLoaded } from 'vue-router';
 import type { VersionCheckInfo } from '../api';
 import { resolveSettingsRouteMenuState } from '../utils/settingsMenuRoute';
@@ -32,8 +32,6 @@ export function useSettingsPageController(
   const activeMenu = ref('basic');
   const guideMenu = ref('');
   let guideMenuTimer: ReturnType<typeof setTimeout> | null = null;
-  const idleCallbackIds: number[] = [];
-  const idleTimeoutIds: ReturnType<typeof setTimeout>[] = [];
 
   const versionInfo = ref<VersionCheckInfo | null>(null);
   const isVersionChecking = ref(false);
@@ -48,8 +46,6 @@ export function useSettingsPageController(
   const vkd3dLoaded = ref(false);
   const migotoLoaded = ref(false);
 
-  let versionLoadPromise: Promise<void> | null = null;
-  let resourceLoadPromise: Promise<void> | null = null;
   let protonLoadPromise: Promise<void> | null = null;
   let dxvkLoadPromise: Promise<void> | null = null;
   let vkd3dLoadPromise: Promise<void> | null = null;
@@ -66,23 +62,6 @@ export function useSettingsPageController(
       }
       setTimeout(resolve, 0);
     });
-
-  const scheduleIdleTask = (task: () => Promise<void> | void) => {
-    if (
-      typeof window !== 'undefined' &&
-      typeof window.requestIdleCallback === 'function'
-    ) {
-      const id = window.requestIdleCallback(() => {
-        void task();
-      }, { timeout: 1600 });
-      idleCallbackIds.push(id);
-      return;
-    }
-    const id = setTimeout(() => {
-      void task();
-    }, 700);
-    idleTimeoutIds.push(id);
-  };
 
   const applyMenuFromRoute = () => {
     const routeState = resolveSettingsRouteMenuState(
@@ -172,26 +151,6 @@ export function useSettingsPageController(
     options.reenterOnboarding();
   };
 
-  const ensureVersionLoaded = async () => {
-    if (versionCheckLoaded.value) return;
-    if (!versionLoadPromise) {
-      versionLoadPromise = checkVersionInfo().finally(() => {
-        versionLoadPromise = null;
-      });
-    }
-    await versionLoadPromise;
-  };
-
-  const ensureResourceLoaded = async () => {
-    if (resourceCheckLoaded.value) return;
-    if (!resourceLoadPromise) {
-      resourceLoadPromise = checkResourceInfo().finally(() => {
-        resourceLoadPromise = null;
-      });
-    }
-    await resourceLoadPromise;
-  };
-
   const ensureProtonLoaded = async () => {
     if (protonLoaded.value) return;
     if (!protonLoadPromise) {
@@ -243,14 +202,6 @@ export function useSettingsPageController(
   const warmMenuData = async (menu: string, migotoEnabled: boolean) => {
     await waitNextFrame();
 
-    if (menu === 'version') {
-      await ensureVersionLoaded();
-      return;
-    }
-    if (menu === 'resource') {
-      await ensureResourceLoaded();
-      return;
-    }
     if (menu === 'proton') {
       await ensureProtonLoaded();
       return;
@@ -285,41 +236,11 @@ export function useSettingsPageController(
     { immediate: true },
   );
 
-  onMounted(() => {
-    const backgroundTasks = [
-      () => ensureProtonLoaded(),
-      () => ensureDxvkLoaded(),
-      () => ensureVkd3dLoaded(),
-      () =>
-        options.globalMigotoEnabled() ? ensureMigotoLoaded() : Promise.resolve(),
-    ];
-
-    let taskIndex = 0;
-    const runNext = () => {
-      if (taskIndex >= backgroundTasks.length) return;
-      scheduleIdleTask(async () => {
-        const currentTask = backgroundTasks[taskIndex];
-        taskIndex += 1;
-        await currentTask();
-        runNext();
-      });
-    };
-
-    runNext();
-  });
-
   onScopeDispose(() => {
     if (guideMenuTimer) {
       clearTimeout(guideMenuTimer);
       guideMenuTimer = null;
     }
-    if (
-      typeof window !== 'undefined' &&
-      typeof window.cancelIdleCallback === 'function'
-    ) {
-      idleCallbackIds.forEach((id) => window.cancelIdleCallback(id));
-    }
-    idleTimeoutIds.forEach((id) => clearTimeout(id));
   });
 
   return {

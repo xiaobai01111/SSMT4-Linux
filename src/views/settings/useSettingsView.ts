@@ -111,22 +111,13 @@ export function useSettingsView() {
     globalMigotoEnabled: () => migotoManager.globalMigotoEnabled.value,
     loadProton: async () => {
       await protonManager.loadCatalog();
-      await Promise.all([
-        protonManager.refreshLocalGrouped(),
-        protonManager.refreshRemoteGrouped(),
-      ]);
+      await protonManager.refreshLocalGrouped();
     },
     loadDxvk: async () => {
-      await Promise.all([
-        graphicsManager.refreshDxvkLocal(),
-        graphicsManager.refreshDxvkRemote(),
-      ]);
+      await graphicsManager.refreshDxvkLocal();
     },
     loadVkd3d: async () => {
-      await Promise.all([
-        graphicsManager.refreshVkd3dLocal(),
-        graphicsManager.refreshVkd3dRemote(),
-      ]);
+      await graphicsManager.refreshVkd3dLocal();
     },
     loadMigoto: async () => {
       await Promise.all([

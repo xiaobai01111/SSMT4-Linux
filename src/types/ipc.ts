@@ -46,6 +46,7 @@ export interface GameConfigOther {
   launcherInstallerPath?: string;
   launchArgs?: string;
   workingDir?: string;
+  prefixPath?: string;
   migoto?: Record<string, unknown> & { enabled?: boolean };
   [key: string]: unknown;
 }

@@ -120,6 +120,22 @@ pub fn set_game_wine_config(
 }
 
 #[tauri::command]
+pub fn set_game_prefix_path(
+    game_id: &str,
+    prefix_path: Option<String>,
+    previous_prefix_path: Option<String>,
+) -> Result<String, String> {
+    let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
+    let path = prefix::set_custom_prefix_dir(
+        &game_id,
+        prefix_path.as_deref(),
+        previous_prefix_path.as_deref(),
+    )?;
+    info!("Updated prefix path for game {} -> {}", game_id, path.display());
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 pub fn create_prefix(game_id: &str, template_id: Option<String>) -> Result<String, String> {
     let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
     let path = if let Some(tid) = template_id {

@@ -16,6 +16,7 @@ import {
   scanWineVersions,
   getGameWineConfig,
   setGameWineConfig,
+  setGamePrefixPath,
   checkVulkan,
   getDisplayInfo,
   getPrefixInfo,
@@ -360,10 +361,10 @@ const loadPrefixState = async (gameName: string, sessionId: number) => {
   }
 };
 
-// DXVK 版本管理（本地安装/卸载，无远程下载）
+// DXVK 版本管理
 const dxvkLocalVersions = ref<DxvkLocalVersion[]>([]);
 const dxvkInstalledStatus = ref<DxvkInstalledStatus | null>(null);
-const dxvkSelectedKey = ref('');  // "version|variant" 格式
+const dxvkSelectedKey = ref('');
 const isDxvkBusy = ref(false);
 
 const dxvkVariantLabel = (variant: string) => {
@@ -420,7 +421,6 @@ const loadDxvkState = async (gameName: string, sessionId: number) => {
     dxvkInstalledStatus.value = status;
 
     if (status.installed && status.version) {
-      // 自动匹配已安装版本对应的本地缓存
       const match = local.find(lv => lv.version === status.version);
       dxvkSelectedKey.value = match
         ? `${match.version}|${match.variant}`
@@ -470,7 +470,7 @@ const doUninstallDxvk = async () => {
   }
 };
 
-// VKD3D 版本管理（本地安装/卸载，无远程下载）
+// VKD3D
 const vkd3dLocalVersions = ref<Vkd3dLocalVersion[]>([]);
 const vkd3dInstalledStatus = ref<Vkd3dInstalledStatus | null>(null);
 const vkd3dSelectedVersion = ref('');
@@ -542,7 +542,7 @@ const doUninstallVkd3d = async () => {
   }
 };
 
-// Tabs（参考 Lutris 风格：5个标签页）
+// Tabs
 const activeTab = ref('info');
 const globalMigotoEnabled = computed(() => !!appSettings.migotoEnabled);
 const currentGameMigotoSupported = computed(() => {
@@ -566,7 +566,6 @@ const tabs = computed(() => {
   return baseTabs;
 });
 
-// 3DMigoto 启用状态（详细配置在 Settings > 3DMIGOTO 管理）
 const migotoEnabled = ref(false);
 
 const loadMigotoConfig = () => {
@@ -634,6 +633,7 @@ watch(
   },
   { immediate: true, deep: true },
 );
+
 const runtimeAttention = ref(false);
 const runtimeAttentionMessage = ref('');
 const runtimeFocusTarget = ref<RuntimeFocusTarget>('all');
@@ -816,6 +816,94 @@ const saveSystemOptions = async () => {
   }
 };
 
+const refreshPrefixInfoNow = async (gameName: string) => {
+  try {
+    prefixInfo.value = await getPrefixInfo(gameName);
+  } catch {
+    prefixInfo.value = {
+      game_id: gameName,
+      exists: false,
+      path: '',
+      size_bytes: 0,
+      config: null,
+    };
+  }
+};
+
+const pickPrefixDir = async () => {
+  try {
+    const selected = await openFileDialog({
+      directory: true,
+      multiple: false,
+      title: tr('gamesettingsmodal.gameTab.selectPrefixDirTitle', '选择容器目录'),
+    });
+    if (selected && typeof selected === 'string') {
+      config.other.prefixPath = selected;
+    }
+  } catch (e) {
+    console.error(e);
+  }
+};
+
+const resetPrefixDirToDefault = () => {
+  config.other.prefixPath = '';
+};
+
+const saveGameTabSettings = async () => {
+  const gameName = normalizeGameName(props.gameName);
+  if (!isEditableGameName(gameName)) return;
+
+  try {
+    syncInfoConfigToLegacyState();
+    const prefixPath = asString(config.other?.prefixPath).trim();
+    const previousPrefixPath = prefixInfo.value?.path || null;
+
+    const nextConfig: GameConfig = {
+      basic: { ...config.basic },
+      other: {
+        ...(config.other || {}),
+        gamePath: asString(config.other?.gamePath).trim(),
+        launchArgs: asString(config.other?.launchArgs).trim(),
+        workingDir: asString(config.other?.workingDir).trim(),
+      },
+    };
+    if (prefixPath) {
+      nextConfig.other.prefixPath = prefixPath;
+    } else {
+      delete nextConfig.other.prefixPath;
+    }
+
+    if (prefixPath) {
+      await setGamePrefixPath(gameName, prefixPath, previousPrefixPath);
+    }
+
+    await saveLegacyConfigPreservingMigoto(gameName, nextConfig);
+
+    if (!prefixPath) {
+      await setGamePrefixPath(gameName, null, previousPrefixPath);
+    }
+
+    config.basic = nextConfig.basic;
+    config.other = nextConfig.other;
+
+    await Promise.all([
+      refreshGameVersion(),
+      refreshPrefixInfoNow(gameName),
+      loadGames(),
+    ]);
+
+    notify?.success(
+      tr('gamesettingsmodal.messages.successTitle', '保存成功'),
+      tr('gamesettingsmodal.messages.gameConfigSaved', '游戏选项已保存'),
+    );
+  } catch (e) {
+    notify?.error(
+      tr('gamesettingsmodal.message.error.title', '保存失败'),
+      tr('gamesettingsmodal.messages.gameConfigSaveFailed', `游戏选项保存失败: ${e}`).replace('{error}', String(e)),
+    );
+  }
+};
+
 const onInfoPresetChange = (presetId: string) => {
   setInfoPreset(presetId);
   config.basic.gamePreset = presetId;
@@ -892,7 +980,6 @@ const refreshGameVersion = async () => {
     versionLoading.value = true;
     versionError.value = '';
     localGameVersion.value = '';
-    // 并行探测所有目录，取第一个有效版本
     const results = await Promise.allSettled(
       probeFolders.map(folder => getLocalVersion(folder))
     );
@@ -912,7 +999,6 @@ const refreshGameVersion = async () => {
 
 const isBusy = computed(() => isLoading.value || infoLoading.value);
 
-// Load/Save Logic
 const loadConfig = async (gameName: string, sessionId: number) => {
   if (!isEditableGameName(gameName)) return;
   isLoading.value = true;
@@ -923,13 +1009,11 @@ const loadConfig = async (gameName: string, sessionId: number) => {
     const normalized = normalizeLoadedConfig(data);
     config.basic = normalized.basic;
     config.other = normalized.other || {};
-    // 恢复系统选项
     selectedGpuIndex.value = typeof config.other.gpuIndex === 'number' ? config.other.gpuIndex : -1;
     gameLang.value = typeof config.other.gameLang === 'string' ? config.other.gameLang : '';
     await refreshGameVersion();
     hasLoadedConfig.value = true;
     loadMigotoConfig();
-    // Note: configName is NOT set from file, but from props
   } catch (e) {
     if (!isActiveLoadSession(sessionId)) return;
     console.error(t('gamesettingsmodal.error.failloadconfig'), e);
@@ -951,14 +1035,11 @@ const resetToDefault = async () => {
     isLoading.value = true;
     const gameName = normalizeGameName(props.gameName);
     const sessionId = startLoadSession();
-    // 并行重置图标和背景
     await Promise.all([
       apiResetGameIcon(props.gameName),
       apiResetGameBackground(props.gameName),
     ]);
-    // 重置配置为默认值
     await apiSaveGameConfig(props.gameName, createDefaultGameConfig(props.gameName));
-    // 并行重新加载
     await Promise.all([
       loadConfig(gameName, sessionId),
       loadInfoConfig(gameName, sessionId),
@@ -1030,10 +1111,6 @@ const resetBackgroundToDefault = async () => {
   }
 };
 
-// 自动更新背景暂不可用（资源目录中无默认背景文件）
-// const canAutoUpdate = computed(() => false);
-// const autoUpdateBackground — 功能保留但暂时注释，待资源目录准备好后启用
-
 const pickGameExe = async () => {
   try {
     const selected = await openFileDialog({
@@ -1074,10 +1151,8 @@ const createNewConfig = async () => {
     isLoading.value = true;
     await apiCreateNewConfig(configName.value, config);
 
-    // Refresh games list and close
     await loadGames();
 
-    // Switch to the newly created game
     const newGame = gamesList.find(g => g.name === canonicalPreset(configName.value));
     if (newGame) {
       switchToGame(newGame);
@@ -1106,7 +1181,6 @@ const deleteCurrentConfig = async () => {
     isLoading.value = true;
     await apiDeleteGameConfigFolder(props.gameName);
 
-    // Refresh games list and close
     await loadGames();
     notify?.success(tr('gamesettingsmodal.messages.deleteSuccessTitle', '删除成功'), tr('gamesettingsmodal.messages.configDeleted', `配置 "${props.gameName}" 已删除`).replace('{name}', props.gameName));
     await close();
@@ -1145,10 +1219,9 @@ const persistManagedSections = async (targetGameName = props.gameName) => {
   });
 };
 
-// Open/Close
 watch(() => props.modelValue, async (val) => {
   if (val) {
-    activeTab.value = 'info'; // Reset to first tab
+    activeTab.value = 'info';
     await loadAllSections();
     await nextTick();
     await applyOpenRequest(pendingOpenRequest.value);
@@ -1159,7 +1232,6 @@ watch(() => props.modelValue, async (val) => {
   }
 }, { immediate: true });
 
-// 切换游戏时重新加载配置，确保每个游戏的设置独立
 watch(() => props.gameName, async (newGame, oldGame) => {
   await handleGameNameChange({
     newGame,
@@ -1188,7 +1260,6 @@ const close = async () => {
   });
 };
 
-// Expose methods to parent
 defineExpose({
   prepareOpen,
   switchTab: (tabId: GameSettingsTab) => {
@@ -1205,14 +1276,12 @@ defineExpose({
 <template>
   <transition name="modal-fade">
     <div v-if="modelValue" class="settings-overlay">
-      <div class="settings-window" data-onboarding="game-settings-modal-root">
-        <!-- Loading Overlay -->
+      <div class="settings-window glass-panel" data-onboarding="game-settings-modal-root">
         <div v-if="isBusy" class="loading-overlay">
           <div class="spinner"></div>
           <div class="loading-text">{{ t('gamesettingsmodal.processing') }}</div>
         </div>
 
-        <!-- Sidebar -->
         <div class="settings-sidebar" data-onboarding="game-settings-sidebar">
           <div class="sidebar-title">{{ t('gamesettingsmodal.title') }}</div>
 
@@ -1227,7 +1296,6 @@ defineExpose({
           </div>
         </div>
 
-        <!-- Content Area -->
         <div class="settings-content">
           <div class="content-header">
             <span class="header-title">{{tabs.find(t => t.id === activeTab)?.label}}</span>
@@ -1241,7 +1309,6 @@ defineExpose({
           </div>
 
           <div class="scroll-content">
-            <!-- ==================== Tab 1: 游戏信息 ==================== -->
             <div v-show="activeTab === 'info'" class="tab-pane" data-onboarding="game-settings-info-tab">
               <div v-if="infoConfig.readOnly || infoPageReadOnly" class="info-readonly-banner">
                 <template v-if="infoPageReadOnly">
@@ -1304,7 +1371,6 @@ defineExpose({
               />
             </div>
 
-            <!-- ==================== Tab 2: 游戏选项 ==================== -->
             <div v-show="activeTab === 'game'" class="tab-pane" data-onboarding="game-settings-game-tab">
               <div class="setting-group" data-onboarding="game-settings-game-exe">
                 <div class="setting-label">{{ tr('gamesettingsmodal.gameTab.mainExe', '主程序') }}</div>
@@ -1326,7 +1392,20 @@ defineExpose({
 
               <div class="setting-group">
                 <div class="setting-label">{{ tr('gamesettingsmodal.gameTab.prefixDir', '容器目录（Wine Prefix）') }}</div>
-                <div class="info-text" v-if="prefixInfo">
+                <input
+                  v-model="config.other.prefixPath"
+                  type="text"
+                  class="custom-input"
+                  :placeholder="tr('gamesettingsmodal.gameTab.prefixPathPlaceholder', '留空则自动使用默认容器目录')"
+                />
+                <div class="button-row">
+                  <button class="action-btn" @click="pickPrefixDir">{{ tr('gamesettingsmodal.gameTab.selectFolder', '选择目录') }}</button>
+                  <button class="action-btn" @click="resetPrefixDirToDefault">{{ tr('gamesettingsmodal.gameTab.useDefaultPrefix', '使用默认容器目录') }}</button>
+                </div>
+                <div class="info-sub" style="margin-top: 8px;">
+                  {{ tr('gamesettingsmodal.gameTab.prefixPathHint', '下方显示当前生效的容器目录；留空时将继续使用软件自动推导并创建默认容器。') }}
+                </div>
+                <div class="info-text glass-card" v-if="prefixInfo">
                   <span :class="prefixInfo.exists ? 'text-ok' : 'text-err'">
                     {{ prefixInfo.exists ? tr('gamesettingsmodal.gameTab.prefixCreated', '✓ 已创建') : tr('gamesettingsmodal.gameTab.prefixNotCreated', '✗ 未创建（首次启动时自动创建）') }}
                   </span>
@@ -1338,10 +1417,9 @@ defineExpose({
                 <div v-else class="info-text text-muted">{{ tr('gamesettingsmodal.gameTab.loading', '加载中...') }}</div>
               </div>
 
-              <!-- Jadeite 反作弊补丁（仅 HoYoverse 游戏） -->
               <div v-if="isHoyoverse" class="setting-group">
                 <div class="setting-label">{{ tr('gamesettingsmodal.gameTab.jadeiteTitle', 'Jadeite 反作弊补丁') }}</div>
-                <div class="info-text" v-if="jadeiteStatus">
+                <div class="info-text glass-card" v-if="jadeiteStatus">
                   <span :class="jadeiteStatus.installed ? 'text-ok' : 'text-err'">
                     {{ jadeiteStatus.installed ? tr('gamesettingsmodal.gameTab.jadeiteInstalled', `✓ 已安装 (v${jadeiteStatus.localVersion})`).replace('{version}', jadeiteStatus.localVersion || '') : tr('gamesettingsmodal.gameTab.jadeiteNotInstalled', '✗ 未安装（HoYoverse 游戏必需）') }}
                   </span>
@@ -1356,14 +1434,18 @@ defineExpose({
                   {{ tr('gamesettingsmodal.gameTab.jadeiteHint', 'Jadeite 用于在 Linux 上绕过 HoYoverse 反作弊，启动时自动通过 jadeite.exe 包装游戏。') }}
                 </div>
               </div>
+
+              <div class="button-row">
+                <button class="action-btn highlight" @click="saveGameTabSettings">
+                  {{ tr('gamesettingsmodal.gameTab.save', '保存游戏选项') }}
+                </button>
+              </div>
             </div>
 
-            <!-- ==================== Tab 3: 3DMigoto ==================== -->
             <div v-show="activeTab === 'migoto'" class="tab-pane" data-onboarding="game-settings-migoto-tab">
 
-              <!-- 启用/禁用开关 -->
               <div class="setting-group">
-                <div class="setting-checkbox-row">
+                <div class="setting-checkbox-row glass-card">
                   <label class="checkbox-label" style="font-size: 15px; font-weight: 600;">
                     <input
                       type="checkbox"
@@ -1372,22 +1454,21 @@ defineExpose({
                     />
                     {{ t('gamesettingsmodal.migoto.enabled') }}
                   </label>
-                </div>
-                <div class="info-sub" style="margin-top:6px;">
-                  {{
-                    currentGameMigotoSupported
-                      ? (migotoEnabled
-                        ? t('gamesettingsmodal.migoto.enabledHint')
-                        : t('gamesettingsmodal.migoto.disabledHint'))
-                      : tr(
-                        'gamesettingsmodal.migoto.unsupportedHint',
-                        '当前游戏暂不支持 3DMigoto / Mod 加载，因此无法开启。',
-                      )
-                  }}
+                  <div class="info-sub" style="margin-top:8px;">
+                    {{
+                      currentGameMigotoSupported
+                        ? (migotoEnabled
+                          ? t('gamesettingsmodal.migoto.enabledHint')
+                          : t('gamesettingsmodal.migoto.disabledHint'))
+                        : tr(
+                          'gamesettingsmodal.migoto.unsupportedHint',
+                          '当前游戏暂不支持 3DMigoto / Mod 加载，因此无法开启。',
+                        )
+                    }}
+                  </div>
                 </div>
               </div>
 
-              <!-- 保存 + 引导到 Settings -->
               <div class="setting-group" style="margin-top: 16px;">
                 <div class="button-row">
                   <button
@@ -1404,7 +1485,6 @@ defineExpose({
               </div>
             </div>
 
-            <!-- ==================== Tab 4: 运行环境 ==================== -->
             <div
               v-show="activeTab === 'runtime'"
               class="tab-pane"
@@ -1433,7 +1513,6 @@ defineExpose({
                 </div>
               </div>
 
-              <!-- Wine/Proton 本地已安装版本 -->
               <div
                 ref="runtimeWineVersionRef"
                 class="setting-group"
@@ -1459,7 +1538,7 @@ defineExpose({
                     <el-option v-for="ver in group.items" :key="ver.id" :label="`${ver.name} (${ver.version})`" :value="ver.id" />
                   </el-option-group>
                 </el-select>
-                <div v-if="selectedWineVersion" class="wine-detail">
+                <div v-if="selectedWineVersion" class="wine-detail glass-card">
                   <span class="badge">{{ variantLabel(selectedWineVersion.variant) }}</span>
                   <span class="wine-path">{{ selectedWineVersion.path }}</span>
                 </div>
@@ -1468,14 +1547,12 @@ defineExpose({
                 </div>
               </div>
 
-              <!-- Proton 版本提示 -->
               <div class="setting-group">
                 <div class="info-sub" style="margin-top:4px;">
                   {{ tr('gamesettingsmodal.runtimeTab.protonHint', '如需下载更多 Proton 版本，请前往「设置 → Proton 管理」页面。') }}
                 </div>
               </div>
 
-              <!-- DXVK 版本管理 -->
               <div
                 ref="runtimeDxvkRef"
                 class="setting-group"
@@ -1484,8 +1561,7 @@ defineExpose({
               >
                 <div class="setting-label">{{ tr('gamesettingsmodal.runtimeTab.dxvkTitle', 'DXVK (DirectX → Vulkan)') }}</div>
 
-                <!-- 当前安装状态 -->
-                <div class="info-card" style="margin-bottom: 10px;">
+                <div class="info-card glass-card" style="margin-bottom: 10px;">
                   <div v-if="dxvkInstalledStatus" class="info-grid" style="grid-template-columns: 100px 1fr;">
                     <span class="info-key">{{ tr('gamesettingsmodal.runtimeTab.installStatus', '安装状态') }}</span>
                     <span :class="dxvkInstalledStatus.installed ? 'text-ok' : 'text-err'">
@@ -1501,7 +1577,6 @@ defineExpose({
                   <div v-else class="text-muted" style="font-size:13px">{{ tr('gamesettingsmodal.runtimeTab.loading', '加载中...') }}</div>
                 </div>
 
-                <!-- 本地版本安装/卸载 -->
                 <div v-if="dxvkLocalVersions.length > 0">
                   <div class="flex-row" style="align-items:flex-end; gap:8px; margin-top:8px;">
                     <div style="flex:1">
@@ -1538,7 +1613,6 @@ defineExpose({
                 </div>
               </div>
 
-              <!-- VKD3D 版本管理 -->
               <div
                 ref="runtimeVkd3dRef"
                 class="setting-group"
@@ -1547,8 +1621,7 @@ defineExpose({
               >
                 <div class="setting-label">{{ tr('gamesettingsmodal.runtimeTab.vkd3dTitle', 'VKD3D-Proton (D3D12 → Vulkan)') }}</div>
 
-                <!-- 当前安装状态 -->
-                <div class="info-card" style="margin-bottom: 10px;">
+                <div class="info-card glass-card" style="margin-bottom: 10px;">
                   <div v-if="vkd3dInstalledStatus" class="info-grid" style="grid-template-columns: 100px 1fr;">
                     <span class="info-key">{{ tr('gamesettingsmodal.runtimeTab.installStatus', '安装状态') }}</span>
                     <span :class="vkd3dInstalledStatus.installed ? 'text-ok' : 'text-err'">
@@ -1597,7 +1670,6 @@ defineExpose({
                 </div>
               </div>
 
-              <!-- Proton 设置 -->
               <div class="setting-group">
                 <div class="setting-label">{{ tr('gamesettingsmodal.runtimeTab.protonSettings', 'Proton 设置') }}</div>
                 <div class="setting-checkbox-row">
@@ -1626,7 +1698,6 @@ defineExpose({
                 </div>
               </div>
 
-              <!-- DXVK/VKD3D 设置 -->
               <div class="setting-group">
                 <div class="setting-label">{{ tr('gamesettingsmodal.runtimeTab.dxvkGraphics', 'DXVK / 图形设置') }}</div>
                 <div class="setting-checkbox-row">
@@ -1651,16 +1722,14 @@ defineExpose({
                 </div>
               </div>
 
-              <!-- Steam App ID -->
               <div class="setting-group">
                 <div class="setting-label">Steam App ID</div>
                 <input v-model="protonSettings.steam_app_id" type="text" class="custom-input" placeholder="0 = N/A" />
               </div>
 
-              <!-- 自定义环境变量 -->
               <div class="setting-group">
                 <div class="setting-label">{{ tr('gamesettingsmodal.runtimeTab.customEnv', '自定义环境变量') }}</div>
-                <div v-for="(val, key) in protonSettings.custom_env" :key="key" class="env-row">
+                <div v-for="(val, key) in protonSettings.custom_env" :key="key" class="env-row glass-card">
                   <span class="env-key">{{ key }}</span>
                   <span class="env-val">{{ val }}</span>
                   <button class="env-remove" @click="removeCustomEnv(key as string)">✕</button>
@@ -1672,19 +1741,16 @@ defineExpose({
                 </div>
               </div>
 
-              <!-- 保存 -->
               <div class="button-row">
                 <button class="action-btn highlight" @click="saveRuntimeTabSettings">{{ tr('gamesettingsmodal.runtimeTab.save', '保存运行环境配置') }}</button>
               </div>
             </div>
 
-            <!-- ==================== Tab 5: 系统选项 ==================== -->
             <div v-show="activeTab === 'system'" class="tab-pane" data-onboarding="game-settings-system-tab">
 
-              <!-- 系统信息 -->
-              <div v-if="displayInfo" class="setting-group info-card">
+              <div v-if="displayInfo" class="setting-group">
                 <div class="setting-label">{{ tr('gamesettingsmodal.systemTab.systemInfo', '系统信息') }}</div>
-                <div class="info-grid">
+                <div class="info-grid glass-card" style="padding: 16px;">
                   <span class="info-key">{{ tr('gamesettingsmodal.systemTab.displayServer', '显示服务器') }}</span>
                   <span class="info-val">{{ displayInfo.server }}{{ displayInfo.wayland_compositor ? ` (${displayInfo.wayland_compositor})` : '' }}</span>
                   <span class="info-key">{{ tr('gamesettingsmodal.systemTab.gpuDriver', 'GPU 驱动') }}</span>
@@ -1698,7 +1764,6 @@ defineExpose({
                 </div>
               </div>
 
-              <!-- GPU 选择（多显卡切换） -->
               <div class="setting-group" data-onboarding="game-settings-system-gpu">
                 <div class="setting-label">{{ tr('gamesettingsmodal.systemTab.gpuSelect', '指定显卡') }}</div>
                 <div v-if="displayInfo && displayInfo.gpus.length > 0">
@@ -1725,7 +1790,6 @@ defineExpose({
                 <div v-else class="info-sub">{{ tr('gamesettingsmodal.systemTab.gpuNoNeed', '未检测到多个 GPU，无需手动指定。') }}</div>
               </div>
 
-              <!-- 语言设置 -->
               <div class="setting-group">
                 <div class="setting-label">{{ tr('gamesettingsmodal.systemTab.gameLanguage', '游戏语言') }}</div>
                 <select v-model="gameLang" class="custom-input" style="width:100%">
@@ -1749,7 +1813,6 @@ defineExpose({
                 </div>
               </div>
 
-              <!-- 沙盒设置 -->
               <div class="setting-group">
                 <div class="setting-label">{{ tr('gamesettingsmodal.systemTab.sandbox', '沙盒设置') }}</div>
 
@@ -1767,7 +1830,6 @@ defineExpose({
                 </div>
               </div>
 
-              <!-- 保存 -->
               <div class="button-row">
                 <button class="action-btn highlight" @click="saveSystemOptions">{{ tr('gamesettingsmodal.systemTab.save', '保存系统选项') }}</button>
               </div>
@@ -1780,16 +1842,30 @@ defineExpose({
 </template>
 
 <style scoped>
+/* =========== 核心：毛玻璃玻璃态容器 =========== */
+.glass-panel {
+  background-color: rgba(20, 25, 30, 0.75) !important;
+  backdrop-filter: blur(24px) saturate(120%);
+  -webkit-backdrop-filter: blur(24px) saturate(120%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+}
+
+.glass-card {
+  background-color: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+}
+
 .settings-overlay {
   position: fixed;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
-  background-color: rgba(0, 0, 0, 0.7);
+  background-color: rgba(0, 0, 0, 0.6);
   z-index: 2000;
   will-change: transform;
-  /* High z-index */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1800,12 +1876,10 @@ defineExpose({
   max-width: 900px;
   height: 80vh;
   max-height: 700px;
-  background: rgba(10, 15, 20, 0.97);
-  border: 1px solid rgba(0, 240, 255, 0.3);
-  border-radius: 8px;
+  border-radius: 12px;
   display: flex;
   overflow: hidden;
-  animation: slideUp 0.15s ease-out;
+  animation: slideUp 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
   will-change: transform;
   contain: layout style;
 }
@@ -1813,12 +1887,11 @@ defineExpose({
 @keyframes slideUp {
   from {
     opacity: 0;
-    transform: translateY(20px);
+    transform: translateY(20px) scale(0.98);
   }
-
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
 }
 
@@ -1861,7 +1934,7 @@ defineExpose({
 /* Sidebar */
 .settings-sidebar {
   width: 200px;
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(0, 0, 0, 0.25);
   border-right: 1px solid rgba(255, 255, 255, 0.05);
   display: flex;
   flex-direction: column;
@@ -1870,8 +1943,8 @@ defineExpose({
 
 .sidebar-title {
   font-size: 16px;
-  font-weight: bold;
-  color: rgba(255, 255, 255, 0.9);
+  font-weight: 600;
+  color: #fff;
   padding: 0 20px 20px 20px;
   margin-bottom: 10px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
@@ -1879,44 +1952,37 @@ defineExpose({
 
 .sidebar-item {
   padding: 12px 20px;
-  color: rgba(255, 255, 255, 0.6);
+  color: rgba(255, 255, 255, 0.65);
   cursor: pointer;
   transition: all 0.2s;
   font-size: 14px;
+  margin: 2px 10px;
+  border-radius: 6px;
 }
 
 .sidebar-item:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.08);
   color: #fff;
 }
 
 .sidebar-item.active {
-  background: rgba(0, 240, 255, 0.1);
-  color: #00f0ff;
-  border-left: 3px solid #00f0ff;
+  background: rgba(var(--el-color-primary-rgb), 0.15);
+  color: var(--el-color-primary);
+  font-weight: 600;
 }
 
 .sidebar-item.runtime-attention {
-  animation: runtimeTabPulse 0.8s ease-in-out 0s 4;
-  color: #8ffbff;
+  animation: runtimeTabPulse 1.5s ease-in-out infinite;
 }
 
 @keyframes runtimeTabPulse {
-  0% {
-    background: rgba(0, 240, 255, 0.08);
-  }
-  50% {
-    background: rgba(0, 240, 255, 0.32);
-  }
-  100% {
-    background: rgba(0, 240, 255, 0.08);
-  }
+  0%, 100% { background: rgba(var(--el-color-primary-rgb), 0.1); }
+  50% { background: rgba(var(--el-color-primary-rgb), 0.3); }
 }
 
 .runtime-pane-attention {
   position: relative;
   isolation: isolate;
-  animation: runtimePaneGlow 0.9s ease-in-out 0s 3;
 }
 
 .runtime-pane-attention::after {
@@ -1925,91 +1991,33 @@ defineExpose({
   inset: -10px;
   border-radius: 10px;
   pointer-events: none;
-  border: 1px solid rgba(0, 240, 255, 0.38);
-  animation: runtimePaneOutlinePulse 0.9s ease-in-out 0s 3;
-}
-
-.runtime-pane-attention .setting-group {
-  animation: runtimeGroupPulse 0.9s ease-in-out 0s 3;
+  border: 1px solid rgba(var(--el-color-primary-rgb), 0.4);
+  animation: runtimePaneOutlinePulse 1.5s ease-in-out infinite;
 }
 
 .runtime-section-attention {
   border-radius: 8px;
-  animation: runtimeSectionPulse 0.9s ease-in-out 0s 4;
-}
-
-@keyframes runtimePaneGlow {
-  0% {
-    filter: saturate(1);
-  }
-  50% {
-    filter: saturate(1.22) drop-shadow(0 0 14px rgba(0, 240, 255, 0.38));
-  }
-  100% {
-    filter: saturate(1);
-  }
+  animation: runtimeSectionPulse 1.5s ease-in-out infinite;
 }
 
 @keyframes runtimePaneOutlinePulse {
-  0% {
-    opacity: 0.25;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.95;
-    transform: scale(1.01);
-  }
-  100% {
-    opacity: 0.28;
-    transform: scale(1);
-  }
-}
-
-@keyframes runtimeGroupPulse {
-  0% {
-    background: rgba(0, 240, 255, 0.02);
-  }
-  50% {
-    background: rgba(0, 240, 255, 0.1);
-  }
-  100% {
-    background: rgba(0, 240, 255, 0.02);
-  }
+  0%, 100% { opacity: 0.3; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.01); }
 }
 
 @keyframes runtimeSectionPulse {
-  0% {
-    background: rgba(0, 240, 255, 0.03);
-  }
-  50% {
-    background: rgba(0, 240, 255, 0.14);
-  }
-  100% {
-    background: rgba(0, 240, 255, 0.03);
-  }
+  0%, 100% { background: rgba(var(--el-color-primary-rgb), 0.03); }
+  50% { background: rgba(var(--el-color-primary-rgb), 0.1); }
 }
 
 .runtime-guide-banner {
   margin-bottom: 16px;
   border-radius: 6px;
-  border: 1px solid rgba(0, 240, 255, 0.55);
-  background: rgba(0, 240, 255, 0.16);
-  color: #b2feff;
+  border: 1px solid rgba(var(--el-color-primary-rgb), 0.4);
+  background: rgba(var(--el-color-primary-rgb), 0.15);
+  color: var(--el-color-primary-light-3);
   padding: 10px 12px;
   font-size: 13px;
-  animation: runtimeBannerBlink 0.95s ease-in-out 0s 3;
-}
-
-@keyframes runtimeBannerBlink {
-  0% {
-    opacity: 0.7;
-  }
-  50% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0.75;
-  }
 }
 
 /* Content */
@@ -2031,7 +2039,7 @@ defineExpose({
 .header-title {
   font-size: 18px;
   font-weight: 600;
-  color: #00f0ff;
+  color: #fff;
   text-transform: uppercase;
   letter-spacing: 1px;
 }
@@ -2042,7 +2050,7 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: 6px;
   cursor: pointer;
   color: rgba(255, 255, 255, 0.6);
   transition: all 0.2s;
@@ -2057,6 +2065,14 @@ defineExpose({
   flex: 1;
   padding: 30px;
   overflow-y: auto;
+}
+
+.scroll-content::-webkit-scrollbar {
+  width: 6px;
+}
+.scroll-content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
 }
 
 .setting-group {
@@ -2076,25 +2092,27 @@ defineExpose({
 .setting-label {
   display: block;
   font-size: 14px;
-  color: rgba(255, 255, 255, 0.8);
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.85);
   margin-bottom: 8px;
 }
 
 .custom-input {
   width: 100%;
   box-sizing: border-box;
-  background: rgba(0, 0, 0, 0.3);
+  background: rgba(0, 0, 0, 0.25);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
-  padding: 8px 12px;
+  border-radius: 6px;
+  padding: 10px 12px;
   color: #fff;
   font-size: 14px;
   outline: none;
-  transition: border-color 0.2s;
+  transition: all 0.2s ease;
 }
 
 .custom-input:focus {
-  border-color: #00f0ff;
+  border-color: var(--el-color-primary);
+  background: rgba(0, 0, 0, 0.4);
 }
 
 .button-row {
@@ -2104,62 +2122,49 @@ defineExpose({
 }
 
 .action-btn {
-  padding: 8px 16px;
-  border: none;
-  border-radius: 4px;
+  padding: 10px 18px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
   font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
   transition: all 0.2s;
-  flex: 1;
   color: #fff;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
 }
 
-.action-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-}
-
-.action-btn.create {
-  background: rgba(0, 240, 255, 0.15);
-  border: 1px solid rgba(0, 240, 255, 0.4);
-  color: #00f0ff;
-}
-
-.action-btn.create:hover {
-  background: rgba(0, 240, 255, 0.3);
+.action-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.15);
 }
 
 .action-btn.highlight {
-  background: rgba(0, 240, 255, 0.15);
-  border: 1px solid rgba(0, 240, 255, 0.4);
-  color: #00f0ff;
+  background: rgba(var(--el-color-primary-rgb), 0.15);
+  border-color: rgba(var(--el-color-primary-rgb), 0.4);
+  color: var(--el-color-primary-light-3);
 }
 
-.action-btn.highlight:hover {
-  background: rgba(0, 240, 255, 0.3);
+.action-btn.highlight:hover:not(:disabled) {
+  background: rgba(var(--el-color-primary-rgb), 0.3);
 }
 
 .action-btn.delete {
-  background: rgba(232, 17, 35, 0.2);
-  border: 1px solid rgba(232, 17, 35, 0.4);
-  color: #ff6b6b;
+  background: rgba(245, 108, 108, 0.15);
+  border-color: rgba(245, 108, 108, 0.4);
+  color: #f56c6c;
 }
 
-.action-btn.delete:hover {
-  background: rgba(232, 17, 35, 0.3);
+.action-btn.delete:hover:not(:disabled) {
+  background: rgba(245, 108, 108, 0.3);
 }
 
 .empty-state {
-  color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.4);
   text-align: center;
   margin-top: 40px;
 }
 
 /* Wine Tab Styles */
 .info-card {
-  background: rgba(0, 0, 0, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 8px;
   padding: 16px;
 }
 
@@ -2178,30 +2183,20 @@ defineExpose({
   color: rgba(255, 255, 255, 0.85);
 }
 
-.text-ok { color: #67c23a; }
-.text-err { color: #f56c6c; }
+.text-ok { color: var(--el-color-success); }
+.text-err { color: var(--el-color-danger); }
 .text-muted { color: rgba(255, 255, 255, 0.4); }
-.dxvk-warning {
-  background: rgba(245, 158, 11, 0.15);
-  border: 1px solid rgba(245, 158, 11, 0.4);
-  color: #fbbf24;
-  padding: 8px 12px;
-  border-radius: 6px;
-  font-size: 13px;
-  margin-bottom: 10px;
-  line-height: 1.5;
-}
 
 .info-text {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.75);
+  color: rgba(255, 255, 255, 0.8);
   line-height: 1.6;
 }
 
 .info-sub {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.4);
-  margin-top: 2px;
+  color: rgba(255, 255, 255, 0.5);
+  margin-top: 4px;
 }
 
 .action-btn:disabled {
@@ -2213,50 +2208,45 @@ defineExpose({
   margin-top: 8px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   font-size: 12px;
+  padding: 8px 12px;
 }
 
 .badge {
-  background: rgba(0, 240, 255, 0.15);
-  color: #00f0ff;
+  background: rgba(var(--el-color-primary-rgb), 0.15);
+  color: var(--el-color-primary-light-3);
   padding: 2px 8px;
   border-radius: 4px;
   font-size: 11px;
   white-space: nowrap;
 }
-.badge-ge { background: rgba(168, 85, 247, 0.2); color: #c084fc; }
-.badge-dw { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
-.badge-wine { background: rgba(239, 68, 68, 0.2); color: #f87171; }
-.badge-tkg { background: rgba(34, 197, 94, 0.2); color: #4ade80; }
-.badge-default { background: rgba(156, 163, 175, 0.2); color: #9ca3af; }
 
 .wine-path {
-  color: rgba(255, 255, 255, 0.4);
+  color: rgba(255, 255, 255, 0.5);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-family: monospace;
 }
 
 .env-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 4px;
-  margin-bottom: 4px;
+  padding: 8px 12px;
+  margin-bottom: 6px;
   font-size: 13px;
 }
 
 .env-key {
-  color: #61afef;
+  color: var(--el-color-primary-light-3);
   font-family: monospace;
   min-width: 120px;
 }
 
 .env-val {
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(255, 255, 255, 0.8);
   font-family: monospace;
   flex: 1;
 }
@@ -2264,20 +2254,20 @@ defineExpose({
 .env-remove {
   background: none;
   border: none;
-  color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.4);
   cursor: pointer;
   font-size: 14px;
   padding: 2px 6px;
 }
 
 .env-remove:hover {
-  color: #f56c6c;
+  color: var(--el-color-danger);
 }
 
 .env-add-row {
   display: flex;
   gap: 8px;
-  margin-top: 8px;
+  margin-top: 10px;
 }
 
 .env-input {
@@ -2285,50 +2275,10 @@ defineExpose({
   font-family: monospace;
 }
 
-/* 版本列表（Proton 下载等） */
-.version-list {
-  max-height: 300px;
-  overflow-y: auto;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.15);
-}
-
-.version-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-}
-
-.version-item:last-child {
-  border-bottom: none;
-}
-
-.version-item:hover {
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.version-info {
-  display: flex;
-  align-items: center;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.85);
-}
-
-.version-tag {
-  font-weight: 500;
-}
-
-.version-action {
-  flex-shrink: 0;
-}
-
 /* Transitions */
 .modal-fade-enter-active,
 .modal-fade-leave-active {
-  transition: opacity 0.15s ease;
+  transition: opacity 0.2s ease;
 }
 
 .modal-fade-enter-from,
@@ -2342,7 +2292,8 @@ defineExpose({
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.7);
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
   z-index: 100;
   display: flex;
   flex-direction: column;
@@ -2354,75 +2305,30 @@ defineExpose({
 .spinner {
   width: 40px;
   height: 40px;
-  border: 4px solid rgba(255, 255, 255, 0.1);
-  border-top-color: #00f0ff;
+  border: 3px solid rgba(255, 255, 255, 0.1);
+  border-top-color: var(--el-color-primary);
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin-bottom: 12px;
 }
 
 .loading-text {
-  color: #00f0ff;
+  color: var(--el-color-primary-light-3);
   font-size: 14px;
+  font-weight: 500;
 }
 
 @keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+  to { transform: rotate(360deg); }
 }
 
-/* 组件下载进度条 */
-.component-dl-progress {
-  margin-top: 10px;
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 6px;
-  padding: 10px 12px;
+/* 自定义下拉框和选中的覆盖 */
+:deep(.el-select .el-input__wrapper) {
+  background-color: rgba(0, 0, 0, 0.25) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  box-shadow: none !important;
 }
-.component-dl-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-  font-size: 13px;
-}
-.component-dl-name {
-  color: rgba(255, 255, 255, 0.85);
-  font-weight: 500;
-}
-.component-dl-phase {
-  color: rgba(255, 255, 255, 0.5);
-}
-.component-dl-pct {
-  margin-left: auto;
-  color: #00f0ff;
-  font-weight: 600;
-}
-.component-dl-track {
-  height: 6px;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 3px;
-  overflow: hidden;
-}
-.component-dl-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #00f0ff, #0099ff);
-  border-radius: 3px;
-  transition: width 0.3s ease;
-}
-.component-dl-fill.component-dl-extracting {
-  background: linear-gradient(90deg, #60a5fa, #3b82f6);
-  animation: pulse-extract 1.5s ease-in-out infinite;
-}
-@keyframes pulse-extract {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-.component-dl-size {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.4);
-  margin-top: 4px;
-  text-align: right;
+:deep(.el-select .el-input__wrapper.is-focus) {
+  border-color: var(--el-color-primary) !important;
 }
 </style>

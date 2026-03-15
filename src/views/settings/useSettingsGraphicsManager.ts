@@ -93,6 +93,9 @@ export function useSettingsGraphicsManager({
 
   const dxvkVersionList = computed<DxvkVersionItem[]>(() => {
     const map = new Map<string, DxvkVersionItem>();
+    const localKeys = new Set(
+      dxvkLocalVersions.value.map((item) => `${item.version}|${item.variant}`),
+    );
 
     for (const rv of dxvkRemoteVersions.value) {
       const key = `${rv.version}|${rv.variant}`;
@@ -100,7 +103,7 @@ export function useSettingsGraphicsManager({
         version: rv.version,
         variant: rv.variant,
         key,
-        isLocal: rv.is_local,
+        isLocal: localKeys.has(key),
         isRemote: true,
         fileSize: rv.file_size,
         publishedAt: rv.published_at,
@@ -202,8 +205,7 @@ export function useSettingsGraphicsManager({
   };
 
   const refreshDxvkState = async () => {
-    const [, remote] = await Promise.all([refreshDxvkLocal(), fetchDxvkVersions()]);
-    dxvkRemoteVersions.value = remote;
+    await refreshDxvkLocal();
   };
 
   const doDownloadDxvk = async () => {
@@ -277,11 +279,12 @@ export function useSettingsGraphicsManager({
 
   const vkd3dVersionList = computed<Vkd3dVersionItem[]>(() => {
     const map = new Map<string, Vkd3dVersionItem>();
+    const localVersions = new Set(vkd3dLocalVersions.value.map((item) => item.version));
 
     for (const rv of vkd3dRemoteVersions.value) {
       map.set(rv.version, {
         version: rv.version,
-        isLocal: rv.is_local,
+        isLocal: localVersions.has(rv.version),
         isRemote: true,
         fileSize: rv.file_size,
         publishedAt: rv.published_at,
@@ -347,11 +350,7 @@ export function useSettingsGraphicsManager({
   };
 
   const refreshVkd3dState = async () => {
-    const [, remote] = await Promise.all([
-      refreshVkd3dLocal(),
-      fetchVkd3dVersions(),
-    ]);
-    vkd3dRemoteVersions.value = remote;
+    await refreshVkd3dLocal();
   };
 
   const doDownloadVkd3d = async () => {

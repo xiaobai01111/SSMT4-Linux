@@ -36,6 +36,16 @@ export function useSettingsXxmiManager({
   const xxmiMessage = ref('');
   const xxmiMessageType = ref<'success' | 'error' | ''>('');
 
+  const syncXxmiInstalledState = (versions: XxmiRemoteVersion[]) => {
+    const installedSet = new Set(
+      xxmiLocalPackages.value.map((item) => `${item.source_id}|${item.version}`),
+    );
+    return versions.map((item) => ({
+      ...item,
+      installed: installedSet.has(`${item.source_id}|${item.version}`),
+    }));
+  };
+
   const loadXxmiSources = async () => {
     try {
       xxmiSources.value = await getXxmiPackageSources();
@@ -48,6 +58,7 @@ export function useSettingsXxmiManager({
     try {
       const status = await scanLocalXxmiPackages();
       xxmiLocalPackages.value = status.packages;
+      xxmiRemoteVersions.value = syncXxmiInstalledState(xxmiRemoteVersions.value);
     } catch (e) {
       console.warn('[xxmi] 扫描本地包失败:', e);
     }
@@ -58,8 +69,8 @@ export function useSettingsXxmiManager({
     try {
       isXxmiFetching.value = true;
       xxmiMessage.value = '';
-      xxmiRemoteVersions.value = await fetchXxmiRemoteVersions(
-        xxmiSelectedSource.value,
+      xxmiRemoteVersions.value = syncXxmiInstalledState(
+        await fetchXxmiRemoteVersions(xxmiSelectedSource.value),
       );
     } catch (e) {
       xxmiMessage.value = tr(
@@ -73,7 +84,7 @@ export function useSettingsXxmiManager({
   };
 
   const refreshXxmiState = async () => {
-    await Promise.all([refreshXxmiLocal(), refreshXxmiRemote()]);
+    await refreshXxmiLocal();
   };
 
   const runXxmiAction = async <T>({
@@ -172,9 +183,10 @@ export function useSettingsXxmiManager({
 
   watch(
     () => xxmiSelectedSource.value,
-    async () => {
+    () => {
       xxmiRemoteVersions.value = [];
-      await refreshXxmiRemote();
+      xxmiMessage.value = '';
+      xxmiMessageType.value = '';
     },
   );
 

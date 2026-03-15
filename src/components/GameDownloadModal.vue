@@ -904,8 +904,7 @@ useGameDownloadModalLifecycle({
 <template>
   <transition name="modal-fade">
     <div v-if="modelValue" class="dl-overlay" @click.self="close">
-      <div class="dl-window" data-onboarding="download-modal-root">
-        <!-- 标题栏 -->
+      <div class="dl-window glass-panel" data-onboarding="download-modal-root">
         <div class="dl-header">
           <span class="dl-title">{{ tr('gamedownload.title', '下载 / 安装游戏') }}</span>
           <div class="dl-close" @click="close">
@@ -917,19 +916,15 @@ useGameDownloadModalLifecycle({
         </div>
 
         <div class="dl-body">
-          <!-- 游戏名 -->
           <div class="game-info">
             <span class="game-name">{{ displayName || gameName }}</span>
             <span v-if="isSupported" class="badge supported">{{ tr('gamedownload.badge.supported', '支持自动下载') }}</span>
             <span v-else class="badge manual">{{ tr('gamedownload.badge.manual', '手动安装') }}</span>
           </div>
 
-          <!-- 加载提示 -->
           <div v-if="statusMsg" class="status-msg">{{ statusMsg }}</div>
 
-          <!-- ========== 支持自动下载的游戏 (鸣潮) ========== -->
           <template v-if="isSupported">
-            <!-- 服务器选择 -->
             <div v-if="availableServers.length > 1 && !isWorking" class="server-section">
               <label class="server-label">{{ tr('gamedownload.server.label', '服务器') }}</label>
               <div class="server-options">
@@ -945,8 +940,7 @@ useGameDownloadModalLifecycle({
               </div>
             </div>
 
-            <!-- 游戏状态卡片 -->
-            <div v-if="gameState" class="state-card" :class="stateClass" data-onboarding="download-state-card">
+            <div v-if="gameState" class="state-card glass-card" :class="stateClass" data-onboarding="download-state-card">
               <div class="state-label">{{ stateLabel }}</div>
               <div class="state-versions" v-if="gameState.remote_version">
                 <span v-if="gameState.local_version">{{ tr('gamedownload.state.local', '本地') }}: {{ gameState.local_version }}</span>
@@ -956,7 +950,7 @@ useGameDownloadModalLifecycle({
 
             <div
               v-if="!isLauncherInstallerMode && channelProtection?.supported && channelProtection.channel?.required && !isWorking"
-              class="channel-mode-card"
+              class="channel-mode-card glass-card"
             >
               <div class="channel-mode-head">
                 <span class="channel-mode-title">{{ tr('gamedownload.channel.title', '渠道模式') }}</span>
@@ -976,7 +970,7 @@ useGameDownloadModalLifecycle({
                 <button class="action-btn sm" @click="setChannelMode('init')" :disabled="isChannelModeBusy || !gameFolder">
                   {{ tr('gamedownload.channel.switchInit', '切换初始化模式(19)') }}
                 </button>
-                <button class="action-btn sm primary" @click="setChannelMode('protected')" :disabled="isChannelModeBusy || !gameFolder">
+                <button class="action-btn sm highlight" @click="setChannelMode('protected')" :disabled="isChannelModeBusy || !gameFolder">
                   {{ tr('gamedownload.channel.switchProtected', '切换联机模式(205)') }}
                 </button>
                 <button class="action-btn sm" @click="setChannelMode('init')" :disabled="isChannelModeBusy || !gameFolder">
@@ -994,7 +988,6 @@ useGameDownloadModalLifecycle({
               </p>
             </div>
 
-            <!-- 安装目录（始终显示，下载前必须确认） -->
             <div v-if="!isWorking" class="install-dir-section" data-onboarding="download-install-dir">
               <label class="install-dir-label">{{ tr('gamedownload.installDir.label', '安装目录') }}</label>
               <div class="install-dir-row">
@@ -1012,7 +1005,6 @@ useGameDownloadModalLifecycle({
               <p v-else class="install-dir-hint">{{ tr('gamedownload.installDir.gameHint', '游戏文件将下载到此目录，请确保有足够磁盘空间（约 130GB+）') }}</p>
             </div>
 
-            <!-- 语言包选择 -->
             <div v-if="!isLauncherInstallerMode && availableLanguages.length > 0 && !isWorking" class="lang-section">
               <label class="lang-label">{{ tr('gamedownload.language.label', '语音包（可多选）') }}</label>
               <div class="lang-options">
@@ -1030,22 +1022,21 @@ useGameDownloadModalLifecycle({
                 </label>
               </div>
               <p class="lang-hint" v-if="selectedLanguages.length === 0">
-                {{ tr('gamedownload.language.noneSelectedHint', '⚠ 未选择任何语音包，游戏将没有角色语音') }}
+                <i class="el-icon-warning-outline mr-1"></i> {{ tr('gamedownload.language.noneSelectedHint', '未选择任何语音包，游戏将没有角色语音') }}
               </p>
             </div>
 
-            <!-- 下载/更新按钮 -->
             <div v-if="!isWorking" class="main-actions" data-onboarding="download-main-actions">
               <div
                 v-if="!isLauncherInstallerMode && protectionInfo?.hasProtections"
-                class="protection-status"
+                class="protection-status glass-card"
                 :class="protectionStatusClass"
               >
                 {{ protectionStatusLabel }}
               </div>
               <button
                 v-if="isPaused"
-                class="action-btn primary large"
+                class="action-btn highlight large"
                 @click="resumeDownload"
                 :disabled="!gameFolder"
               >
@@ -1053,7 +1044,7 @@ useGameDownloadModalLifecycle({
               </button>
               <button
                 v-else-if="canShowPrimaryDownload"
-                class="action-btn primary large"
+                class="action-btn highlight large"
                 @click="startDownload"
                 :disabled="!gameFolder"
               >
@@ -1080,7 +1071,7 @@ useGameDownloadModalLifecycle({
                 {{ isProtectionBusy ? tr('gamedownload.common.processing', '处理中...') : tr('gamedownload.protection.apply', '应用安全防护') }}
               </button>
               <button
-                class="action-btn danger-soft"
+                class="action-btn delete"
                 v-if="!isPaused && !isLauncherInstallerMode && protectionInfo?.hasProtections && protectionApplied && !hideDisableProtectionButton"
                 @click="disableProtection"
                 :disabled="isProtectionBusy"
@@ -1090,13 +1081,12 @@ useGameDownloadModalLifecycle({
               <button class="action-btn" @click="checkState" :disabled="isChecking">
                 {{ isChecking ? tr('gamedownload.common.checking', '检查中...') : tr('gamedownload.actions.refreshState', '刷新状态') }}
               </button>
-              <button v-if="isPaused" class="action-btn danger" @click="cancelDownload">
+              <button v-if="isPaused" class="action-btn delete" @click="cancelDownload">
                 {{ tr('gamedownload.actions.cancelTask', '取消任务') }}
               </button>
             </div>
 
-            <!-- 进度条 -->
-            <div v-if="isWorking" class="progress-section">
+            <div v-if="isWorking" class="progress-section glass-card">
               <div class="progress-phase">{{ workingPhase }}</div>
               <template v-if="progress">
                 <div class="progress-bar-track">
@@ -1129,11 +1119,10 @@ useGameDownloadModalLifecycle({
               <div v-else class="progress-waiting">{{ tr('gamedownload.progress.waiting', '任务已启动，正在等待进度数据...') }}</div>
               <div class="progress-actions">
                 <button class="action-btn" @click="pauseDownload">{{ tr('gamedownload.actions.pause', '暂停') }}</button>
-                <button class="action-btn danger" @click="cancelDownload">{{ tr('gamedownload.actions.cancel', '取消') }}</button>
+                <button class="action-btn delete" @click="cancelDownload">{{ tr('gamedownload.actions.cancel', '取消') }}</button>
               </div>
             </div>
 
-            <!-- 高级配置（折叠） -->
             <details class="config-details">
               <summary>{{ tr('gamedownload.advanced.title', '高级配置') }}</summary>
               <div class="config-content">
@@ -1155,11 +1144,10 @@ useGameDownloadModalLifecycle({
             <div class="divider"><span>{{ tr('gamedownload.common.or', '或者') }}</span></div>
           </template>
 
-          <!-- ========== 手动指定路径 ========== -->
           <div class="section">
             <p v-if="!isSupported" class="hint">{{ tr('gamedownload.manual.notSupported', '此游戏暂不支持自动下载。') }}</p>
             <p class="hint">{{ tr('gamedownload.manual.hint', '如果游戏已安装（通过 Steam、Lutris 或手动安装），选择可执行文件即可。') }}</p>
-            <button class="action-btn primary large" @click="selectGameExe">
+            <button class="action-btn highlight large" @click="selectGameExe" style="max-width: 320px;">
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
@@ -1168,7 +1156,6 @@ useGameDownloadModalLifecycle({
             </button>
           </div>
 
-          <!-- 错误提示 -->
           <div v-if="error" class="error-msg">{{ error }}</div>
         </div>
       </div>
@@ -1177,407 +1164,267 @@ useGameDownloadModalLifecycle({
 </template>
 
 <style scoped>
+/* =========== 核心：毛玻璃玻璃态容器 =========== */
+.glass-panel {
+  background-color: rgba(20, 25, 30, 0.75) !important;
+  backdrop-filter: blur(24px) saturate(120%);
+  -webkit-backdrop-filter: blur(24px) saturate(120%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+}
+
+.glass-card {
+  background-color: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+}
+
 .dl-overlay {
   position: fixed; inset: 0;
-  background: rgba(0,0,0,0.7); will-change: transform;
+  background: rgba(0, 0, 0, 0.6); will-change: transform;
   z-index: 2000; display: flex; align-items: center; justify-content: center;
 }
 .dl-window {
   width: 100%; max-width: 900px;
   height: 80vh; max-height: 700px;
-  background: rgba(10, 15, 20, 0.97); contain: layout style;
-  border: 1px solid rgba(0, 240, 255, 0.3);
-  border-radius: 8px; display: flex; flex-direction: column; animation: slideUp 0.15s ease-out;
+  border-radius: 12px; display: flex; flex-direction: column; 
+  animation: slideUp 0.15s cubic-bezier(0.25, 0.8, 0.25, 1);
+  contain: layout style;
 }
 @keyframes slideUp {
-  from { opacity:0; transform:translateY(20px); }
-  to { opacity:1; transform:translateY(0); }
+  from { opacity: 0; transform: translateY(20px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 .dl-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 0 30px; height: 60px; border-bottom: 1px solid rgba(255,255,255,0.05);
+  padding: 0 30px; height: 60px; border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
-.dl-title { font-size:18px; font-weight:600; color:#00f0ff; text-transform: uppercase; letter-spacing: 1px; }
+.dl-title { font-size: 18px; font-weight: 600; color: var(--el-color-primary); text-transform: uppercase; letter-spacing: 1px; }
 .dl-close {
-  width:32px; height:32px; display:flex; align-items:center; justify-content:center;
-  border-radius:4px; cursor:pointer; color:rgba(255,255,255,0.6); transition:all 0.2s;
+  width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
+  border-radius: 6px; cursor: pointer; color: rgba(255, 255, 255, 0.6); transition: all 0.2s;
 }
-.dl-close:hover { background:rgba(255,255,255,0.1); color:#fff; }
-.dl-body { padding:30px; overflow-y:auto; flex:1; }
+.dl-close:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+.dl-body { padding: 30px; overflow-y: auto; flex: 1; }
+
+.dl-body::-webkit-scrollbar { width: 6px; }
+.dl-body::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 3px; }
 
 /* 游戏信息 */
-.game-info { margin-bottom:20px; display:flex; align-items:center; gap:10px; }
-.game-name { font-size:18px; font-weight:600; color:#00f0ff; }
+.game-info { margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
+.game-name { font-size: 18px; font-weight: 600; color: #fff; }
 .badge {
-  font-size:11px; padding:2px 8px; border-radius:4px; white-space:nowrap;
+  font-size: 11px; padding: 2px 8px; border-radius: 4px; white-space: nowrap;
 }
-.badge.supported { background:rgba(103,194,58,0.15); color:#67c23a; border:1px solid rgba(103,194,58,0.3); }
-.badge.manual { background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.4); }
+.badge.supported { background: rgba(var(--el-color-success-rgb), 0.15); color: var(--el-color-success); border: 1px solid rgba(var(--el-color-success-rgb), 0.3); }
+.badge.manual { background: rgba(255, 255, 255, 0.06); color: rgba(255, 255, 255, 0.4); }
 
 .status-msg {
-  text-align:center; color:rgba(255,255,255,0.5); font-size:13px;
-  padding:16px 0; animation: pulse 1.5s ease-in-out infinite;
+  text-align: center; color: rgba(255, 255, 255, 0.5); font-size: 13px;
+  padding: 16px 0; animation: pulse 1.5s ease-in-out infinite;
 }
-@keyframes pulse { 0%,100% { opacity:0.5; } 50% { opacity:1; } }
+@keyframes pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
 
 /* 服务器选择 */
-.server-section { margin-bottom:16px; }
+.server-section { margin-bottom: 16px; }
 .server-label {
-  display:block; font-size:14px;
-  color:rgba(255,255,255,0.8); margin-bottom:8px;
+  display: block; font-size: 14px; font-weight: 500;
+  color: rgba(255, 255, 255, 0.85); margin-bottom: 8px;
 }
-.server-options { display:flex; gap:8px; }
+.server-options { display: flex; gap: 8px; }
 .server-btn {
-  padding:6px 16px; border:1px solid rgba(255,255,255,0.12); border-radius:4px;
-  background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.7);
-  font-size:13px; cursor:pointer; transition:all 0.2s;
+  padding: 6px 16px; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05); color: rgba(255, 255, 255, 0.7);
+  font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s;
 }
-.server-btn:hover { background:rgba(255,255,255,0.1); border-color:rgba(255,255,255,0.2); }
+.server-btn:hover { background: rgba(255, 255, 255, 0.15); }
 .server-btn.active {
-  background:rgba(0, 240, 255, 0.15); color:#00f0ff;
-  border-color:rgba(0, 240, 255, 0.4);
+  background: rgba(var(--el-color-primary-rgb), 0.15); color: var(--el-color-primary-light-3);
+  border-color: rgba(var(--el-color-primary-rgb), 0.4);
 }
 
 /* 状态卡片 */
 .state-card {
-  background:rgba(0,0,0,0.25); border:1px solid rgba(255,255,255,0.06);
-  border-radius:10px; padding:18px 20px; margin-bottom:24px;
+  padding: 18px 20px; margin-bottom: 24px;
   transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
-.state-card:hover {
-  transform: translateY(-2px);
-}
-.state-card.state-ok { border-color:rgba(103,194,58,0.4); background: rgba(103,194,58,0.05); }
-.state-card.state-install { border-color:rgba(247,206,70,0.4); background: rgba(247,206,70,0.05); }
-.state-card.state-update { border-color:rgba(0,122,204,0.4); background: rgba(0,122,204,0.05); }
-.state-card.state-error { border-color:rgba(232,17,35,0.4); background: rgba(232,17,35,0.05); }
-.state-label { font-size:16px; font-weight:600; color:rgba(255,255,255,0.95); }
+.state-card:hover { transform: translateY(-2px); }
+.state-card.state-ok { border-color: rgba(var(--el-color-success-rgb), 0.4); background: rgba(var(--el-color-success-rgb), 0.05); }
+.state-card.state-install { border-color: rgba(var(--el-color-warning-rgb), 0.4); background: rgba(var(--el-color-warning-rgb), 0.05); }
+.state-card.state-update { border-color: rgba(var(--el-color-primary-rgb), 0.4); background: rgba(var(--el-color-primary-rgb), 0.05); }
+.state-card.state-error { border-color: rgba(var(--el-color-danger-rgb), 0.4); background: rgba(var(--el-color-danger-rgb), 0.05); }
+.state-label { font-size: 16px; font-weight: 600; color: rgba(255, 255, 255, 0.95); }
 .state-versions {
-  margin-top:8px; font-size:13px; color:rgba(255,255,255,0.6);
-  display:flex; gap:16px;
+  margin-top: 8px; font-size: 13px; color: rgba(255, 255, 255, 0.6);
+  display: flex; gap: 16px;
 }
 
 .channel-mode-card {
-  background: rgba(0, 0, 0, 0.22);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  padding: 16px 20px;
-  margin-bottom: 24px;
+  padding: 16px 20px; margin-bottom: 24px;
   transition: all 0.3s ease;
 }
-.channel-mode-card:hover {
-  border-color: rgba(255, 255, 255, 0.15);
-}
-
-.channel-mode-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-
-.channel-mode-title {
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.channel-mode-pill {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: rgba(255, 255, 255, 0.75);
-}
-
-.channel-mode-pill.ok {
-  color: #67c23a;
-  border-color: rgba(103, 194, 58, 0.4);
-  background: rgba(103, 194, 58, 0.1);
-}
-
-.channel-mode-pill.warn {
-  color: #e6a23c;
-  border-color: rgba(230, 162, 60, 0.4);
-  background: rgba(230, 162, 60, 0.1);
-}
-
-.channel-mode-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 14px;
-  color: rgba(255, 255, 255, 0.55);
-  font-size: 12px;
-  margin-bottom: 10px;
-}
-
-.channel-mode-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.channel-mode-hint {
-  margin: 8px 0 0 0;
-  color: rgba(255, 255, 255, 0.5);
-  font-size: 12px;
-}
-
-.channel-mode-hint.warning {
-  color: #e6a23c;
-}
+.channel-mode-card:hover { border-color: rgba(255, 255, 255, 0.15); }
+.channel-mode-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.channel-mode-title { color: rgba(255, 255, 255, 0.85); font-size: 13px; font-weight: 600; }
+.channel-mode-pill { font-size: 11px; padding: 2px 8px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.2); color: rgba(255, 255, 255, 0.75); }
+.channel-mode-pill.ok { color: var(--el-color-success); border-color: rgba(var(--el-color-success-rgb), 0.4); background: rgba(var(--el-color-success-rgb), 0.1); }
+.channel-mode-pill.warn { color: var(--el-color-warning); border-color: rgba(var(--el-color-warning-rgb), 0.4); background: rgba(var(--el-color-warning-rgb), 0.1); }
+.channel-mode-meta { display: flex; flex-wrap: wrap; gap: 8px 14px; color: rgba(255, 255, 255, 0.55); font-size: 12px; margin-bottom: 10px; }
+.channel-mode-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.channel-mode-hint { margin: 8px 0 0 0; color: rgba(255, 255, 255, 0.5); font-size: 12px; }
+.channel-mode-hint.warning { color: var(--el-color-warning); }
 
 /* 安装目录 */
-.install-dir-section { margin-bottom:24px; }
+.install-dir-section { margin-bottom: 24px; }
 .install-dir-label {
-  display:block; font-size:14px; font-weight: 500;
-  color:rgba(255,255,255,0.85); margin-bottom:10px;
+  display: block; font-size: 14px; font-weight: 500;
+  color: rgba(255, 255, 255, 0.85); margin-bottom: 10px;
 }
-.install-dir-row { display:flex; gap:12px; }
+.install-dir-row { display: flex; gap: 12px; }
 .install-dir-row .dl-input { 
-  flex:1; 
-  background: rgba(0, 0, 0, 0.2);
+  flex: 1; 
+  background: rgba(0, 0, 0, 0.25);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  transition: all 0.3s ease;
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: #fff;
+  font-size: 14px;
+  outline: none;
+  transition: all 0.2s ease;
 }
 .install-dir-row .dl-input:focus {
   background: rgba(0, 0, 0, 0.4);
-  border-color: rgba(0, 240, 255, 0.5);
+  border-color: var(--el-color-primary);
 }
 .install-dir-row .dir-btn {
-  display:flex; align-items:center; justify-content:center;
-  color:rgba(255,255,255,0.7);
-  padding: 0 16px;
-  height: 38px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.06);
-  cursor: pointer;
-  transition: all 0.2s;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; padding: 0 16px; height: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05); cursor: pointer; transition: all 0.2s;
 }
 .install-dir-row .dir-btn:hover { 
-  color:#fff;
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.25);
-  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.15); border-color: rgba(255, 255, 255, 0.25); transform: translateY(-1px);
 }
-.install-dir-row .dir-btn:active {
-  transform: translateY(0);
-}
-.install-dir-hint {
-  font-size:12px; color:rgba(255,255,255,0.5); margin-top:8px; line-height:1.5;
-}
+.install-dir-row .dir-btn:active { transform: translateY(0); }
+.install-dir-hint { font-size: 12px; color: rgba(255, 255, 255, 0.5); margin-top: 8px; line-height: 1.5; }
 
 /* 语言包选择 */
-.lang-section { margin-bottom:24px; }
-.lang-label {
-  display:block; font-size:14px;
-  color:rgba(255,255,255,0.8); margin-bottom:8px;
-}
-.lang-options {
-  display:flex; flex-wrap:wrap; gap:12px;
-}
+.lang-section { margin-bottom: 24px; }
+.lang-label { display: block; font-size: 14px; font-weight: 500; color: rgba(255, 255, 255, 0.85); margin-bottom: 8px; }
+.lang-options { display: flex; flex-wrap: wrap; gap: 12px; }
 .lang-checkbox {
-  display:flex; align-items:center; gap:8px;
-  padding:8px 16px; border-radius:4px;
-  background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1);
-  cursor:pointer; transition:all 0.2s; user-select:none;
+  display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 6px;
+  background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(255, 255, 255, 0.05);
+  cursor: pointer; transition: all 0.2s; user-select: none;
 }
-.lang-checkbox:hover { background:rgba(255,255,255,0.1); border-color:rgba(255,255,255,0.2); }
-.lang-checkbox input[type="checkbox"] {
-  accent-color:#00f0ff; width:16px; height:16px; cursor:pointer;
-}
-.lang-name { font-size:14px; color:rgba(255,255,255,0.9); }
-.lang-hint {
-  font-size:12px; color:#f0a030; margin-top:8px; line-height:1.4;
-}
+.lang-checkbox:hover { background: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.2); }
+.lang-checkbox input[type="checkbox"] { accent-color: var(--el-color-primary); width: 16px; height: 16px; cursor: pointer; }
+.lang-name { font-size: 14px; color: rgba(255, 255, 255, 0.9); }
+.lang-hint { font-size: 12px; color: var(--el-color-warning); margin-top: 8px; line-height: 1.4; display: flex; align-items: center; }
 
 /* 主要操作按钮 */
-.main-actions { display:flex; gap:12px; margin-bottom:24px; flex-wrap:wrap; }
+.main-actions { display: flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
 .protection-status {
-  width: 100%;
-  font-size: 13px;
-  border-radius: 8px;
-  padding: 12px 16px;
-  border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(255,255,255,0.06);
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  width: 100%; font-size: 13px; border-radius: 8px; padding: 12px 16px;
+  display: flex; align-items: center; gap: 8px;
 }
-.protection-status::before {
-  content: '';
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: currentColor;
-}
-.protection-status.enabled {
-  color: #67c23a;
-  border-color: rgba(103,194,58,0.35);
-  background: rgba(103,194,58,0.12);
-}
-.protection-status.disabled {
-  color: #f0a030;
-  border-color: rgba(240,160,48,0.4);
-  background: rgba(240,160,48,0.12);
-}
-.protection-status.neutral {
-  color: rgba(255,255,255,0.5);
-}
+.protection-status::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.protection-status.enabled { color: var(--el-color-success); border-color: rgba(var(--el-color-success-rgb), 0.3); background: rgba(var(--el-color-success-rgb), 0.1); }
+.protection-status.disabled { color: var(--el-color-warning); border-color: rgba(var(--el-color-warning-rgb), 0.3); background: rgba(var(--el-color-warning-rgb), 0.1); }
+.protection-status.neutral { color: rgba(255, 255, 255, 0.5); }
+
+/* 统一动作按钮 (与 GameSettingsModal 一致) */
 .action-btn {
-  padding:0 16px; height: 40px; border:none; border-radius:6px; font-size:14px; cursor:pointer;
-  color:#fff; background:rgba(255,255,255,0.1); transition:all 0.25s cubic-bezier(0.25, 0.8, 0.25, 1);
-  display:inline-flex; align-items:center; justify-content: center; gap:8px;
-  flex: 1; min-width: 120px;
+  padding: 10px 18px; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px;
+  font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s;
+  color: #fff; background: rgba(255, 255, 255, 0.05);
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  flex: 1; min-width: 120px; height: 40px;
 }
-.action-btn:hover:not(:disabled) { 
-  background:rgba(255,255,255,0.2); 
-  transform: translateY(-1px);
+.action-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.15); transform: translateY(-1px); }
+.action-btn:active:not(:disabled) { transform: translateY(0); }
+.action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.action-btn.large { padding: 0 24px; font-size: 15px; font-weight: 600; flex: 2; height: 44px; }
+
+.action-btn.highlight, .action-btn.primary {
+  background: rgba(var(--el-color-primary-rgb), 0.15);
+  border-color: rgba(var(--el-color-primary-rgb), 0.4);
+  color: var(--el-color-primary-light-3);
 }
-.action-btn:active:not(:disabled) {
-  transform: translateY(0);
+.action-btn.highlight:hover:not(:disabled), .action-btn.primary:hover:not(:disabled) {
+  background: rgba(var(--el-color-primary-rgb), 0.3);
 }
-.action-btn:disabled { opacity:0.5; cursor:not-allowed; }
-.action-btn.large { padding:0 24px; font-size:15px; font-weight:600; flex: 2; height: 44px; }
-.action-btn.primary {
-  background:rgba(0, 240, 255, 0.15); color:#00f0ff; border:1px solid rgba(0, 240, 255, 0.4);
-}
-.action-btn.primary:hover:not(:disabled) { 
-  background:rgba(0, 240, 255, 0.25); 
-}
-.action-btn.primary.large { padding:0 24px; font-size:15px; font-weight:600; flex: 2; height: 44px; }
+
 .action-btn.warning-soft {
-  background: rgba(240, 160, 48, 0.14);
-  color: #ffc266;
-  border: 1px solid rgba(240, 160, 48, 0.28);
+  background: rgba(var(--el-color-warning-rgb), 0.15);
+  color: var(--el-color-warning-light-3);
+  border-color: rgba(var(--el-color-warning-rgb), 0.4);
 }
-.action-btn.warning-soft:hover:not(:disabled) {
-  background: rgba(240, 160, 48, 0.24);
+.action-btn.warning-soft:hover:not(:disabled) { background: rgba(var(--el-color-warning-rgb), 0.3); }
+
+.action-btn.delete, .action-btn.danger {
+  background: rgba(var(--el-color-danger-rgb), 0.15);
+  border-color: rgba(var(--el-color-danger-rgb), 0.4);
+  color: var(--el-color-danger-light-3);
 }
-.action-btn.danger { background:rgba(232,17,35,0.2); color:#ff6b6b; margin-top:8px; border:1px solid rgba(232,17,35,0.3); }
-.action-btn.danger:hover:not(:disabled) { background:rgba(232,17,35,0.3); }
-.action-btn.danger-soft {
-  background: rgba(232, 17, 35, 0.12);
-  color: #ff8f8f;
-  border: 1px solid rgba(232, 17, 35, 0.24);
+.action-btn.delete:hover:not(:disabled), .action-btn.danger:hover:not(:disabled) {
+  background: rgba(var(--el-color-danger-rgb), 0.3);
 }
-.action-btn.danger-soft:hover:not(:disabled) {
-  background: rgba(232, 17, 35, 0.2);
-}
-.action-btn.sm { padding:0 12px; font-size:13px; margin-top:8px; flex: none; height: 32px; min-width: auto; }
+.action-btn.sm { padding: 0 12px; font-size: 13px; flex: none; height: 32px; min-width: auto; }
 
 /* 进度条 */
-.progress-section {
-  background:rgba(0,0,0,0.25); border:1px solid rgba(255,255,255,0.08);
-  border-radius:10px; padding:20px; margin-bottom:16px;
-}
-.progress-phase {
-  font-size:14px; font-weight:600; color:rgba(255,255,255,0.9); margin-bottom:12px;
-}
-.progress-bar-track {
-  width:100%; height:12px; background:rgba(255,255,255,0.08); border-radius:6px; overflow:hidden;
-}
+.progress-section { padding: 20px; margin-bottom: 16px; }
+.progress-phase { font-size: 14px; font-weight: 600; color: rgba(255, 255, 255, 0.9); margin-bottom: 12px; }
+.progress-bar-track { width: 100%; height: 8px; background: rgba(255, 255, 255, 0.1); border-radius: 4px; overflow: hidden; }
 .progress-bar-fill {
-  height:100%; background:linear-gradient(90deg, #00f0ff, #00a0ff); border-radius:6px;
-  transition: width 0.3s ease;
+  height: 100%; background: linear-gradient(90deg, var(--el-color-primary), var(--el-color-primary-light-3));
+  border-radius: 4px; transition: width 0.3s ease;
 }
-.progress-bar-fill.verify-fill {
-  background:linear-gradient(90deg, #67c23a, #4caf50);
-}
-.progress-info {
-  display:flex; justify-content:space-between; font-size:13px;
-  color:rgba(255,255,255,0.9); margin-top:8px; font-weight: 500;
-}
-.progress-detail {
-  display:flex; justify-content:space-between; font-size:11px;
-  color:rgba(255,255,255,0.6); margin-top:4px;
-}
-.progress-file {
-  max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-}
-.progress-counts {
-  font-size:11px; color:rgba(255,255,255,0.5); margin-top:4px;
-}
-.progress-waiting {
-  margin-top: 10px;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.6);
-}
-.progress-actions {
-  display:flex;
-  gap:8px;
-  margin-top:8px;
-}
-.progress-actions .action-btn.danger {
-  margin-top:0;
-}
+.progress-bar-fill.verify-fill { background: linear-gradient(90deg, var(--el-color-success), var(--el-color-success-light-3)); }
+.progress-info { display: flex; justify-content: space-between; font-size: 13px; color: rgba(255, 255, 255, 0.9); margin-top: 8px; font-weight: 500; }
+.progress-detail { display: flex; justify-content: space-between; font-size: 11px; color: rgba(255, 255, 255, 0.6); margin-top: 4px; }
+.progress-file { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.progress-counts { font-size: 11px; color: rgba(255, 255, 255, 0.5); margin-top: 4px; }
+.progress-waiting { margin-top: 10px; font-size: 12px; color: rgba(255, 255, 255, 0.6); }
+.progress-actions { display: flex; gap: 8px; margin-top: 12px; }
 
 /* 折叠配置 */
 .config-details {
-  margin:20px 0;
-  background: rgba(0, 0, 0, 0.15);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
-  overflow: hidden;
+  margin: 20px 0; background: rgba(0, 0, 0, 0.15); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; overflow: hidden;
 }
 .config-details summary {
-  font-size:13px; color:rgba(255,255,255,0.6); cursor:pointer;
-  padding:10px 14px; user-select:none;
-  background: rgba(255, 255, 255, 0.02);
-  transition: background 0.2s;
+  font-size: 13px; color: rgba(255, 255, 255, 0.6); cursor: pointer; padding: 10px 14px; user-select: none;
+  background: rgba(255, 255, 255, 0.02); transition: background 0.2s;
 }
-.config-details summary:hover { 
-  color:rgba(255,255,255,0.9);
-  background: rgba(255, 255, 255, 0.05);
-}
-.config-content {
-  padding:16px 14px; 
-  border-top:1px solid rgba(255,255,255,0.04);
-}
-.field { margin-bottom:12px; }
-.field label { display:block; font-size:13px; color:rgba(255,255,255,0.6); margin-bottom:6px; }
+.config-details summary:hover { color: rgba(255, 255, 255, 0.9); background: rgba(255, 255, 255, 0.05); }
+.config-content { padding: 16px 14px; border-top: 1px solid rgba(255, 255, 255, 0.04); }
+.field { margin-bottom: 12px; }
+.field label { display: block; font-size: 13px; color: rgba(255, 255, 255, 0.6); margin-bottom: 6px; }
 .dl-input {
-  width:100%; box-sizing:border-box; background:rgba(0,0,0,0.3);
-  border:1px solid rgba(255,255,255,0.1); border-radius:4px;
-  padding:8px 12px; color:#fff; font-size:14px; outline:none;
-  transition: border-color 0.2s; height: 36px;
+  width: 100%; box-sizing: border-box; background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px;
+  padding: 8px 12px; color: #fff; font-size: 13px; outline: none; transition: border-color 0.2s;
 }
-.dl-input:focus {
-  border-color: #00f0ff;
-}
-.input-row { display:flex; gap:6px; }
-.input-row .dl-input { flex:1; }
-.icon-btn {
-  background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.1);
-  border-radius:4px; padding:6px 10px; cursor:pointer; font-size:14px;
-}
-.icon-btn:hover { background:rgba(255,255,255,0.15); }
+.dl-input:focus { border-color: var(--el-color-primary); }
 
 /* 分隔线 */
 .divider {
-  display:flex; align-items:center; gap:16px; margin:28px 0;
-  color:rgba(255,255,255,0.4); font-size:12px; text-transform: uppercase; letter-spacing: 1px;
+  display: flex; align-items: center; gap: 16px; margin: 28px 0;
+  color: rgba(255, 255, 255, 0.4); font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
 }
-.divider::before, .divider::after {
-  content:''; flex:1; height:1px; background:rgba(255,255,255,0.08);
-}
+.divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: rgba(255, 255, 255, 0.08); }
 
 /* 手动安装区 */
-.section { margin-bottom:24px; }
-.section-title {
-  font-size:15px; font-weight:600; color:rgba(255,255,255,0.9); margin-bottom:10px;
-}
-.hint { font-size:13px; color:rgba(255,255,255,0.5); margin-bottom:16px; line-height:1.5; }
+.section { margin-bottom: 24px; }
+.hint { font-size: 13px; color: rgba(255, 255, 255, 0.5); margin-bottom: 16px; line-height: 1.5; }
 
 /* 错误 */
 .error-msg {
-  background:rgba(232,17,35,0.12); border:1px solid rgba(232,17,35,0.25);
-  border-radius:6px; padding:10px 14px; color:#ff6b6b; font-size:13px; margin-top:12px;
+  background: rgba(var(--el-color-danger-rgb), 0.15); border: 1px solid rgba(var(--el-color-danger-rgb), 0.3);
+  border-radius: 6px; padding: 10px 14px; color: var(--el-color-danger); font-size: 13px; margin-top: 12px;
 }
 
 /* 过渡 */
-.modal-fade-enter-active, .modal-fade-leave-active { transition:opacity 0.15s; }
-.modal-fade-enter-from, .modal-fade-leave-to { opacity:0; }
+.modal-fade-enter-active, .modal-fade-leave-active { transition: opacity 0.15s; }
+.modal-fade-enter-from, .modal-fade-leave-to { opacity: 0; }
 </style>

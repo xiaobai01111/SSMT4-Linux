@@ -1,6 +1,7 @@
 use crate::configs::wine_config::{PrefixConfig, PrefixTemplate};
 use crate::utils::file_manager;
 use once_cell::sync::Lazy;
+use serde_json::Value;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -45,6 +46,60 @@ fn resolve_game_root_from_db(game_id: &str) -> Option<PathBuf> {
     }
 
     None
+}
+
+fn normalize_custom_prefix_path(raw: &str) -> Result<PathBuf, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("自定义容器路径不能为空".to_string());
+    }
+
+    let path = PathBuf::from(trimmed);
+    if !path.is_absolute() {
+        return Err(format!("自定义容器路径必须是绝对路径: {}", trimmed));
+    }
+    if path.parent().is_none() {
+        return Err(format!("不允许将容器路径设置为根目录: {}", trimmed));
+    }
+    if path.exists() && !path.is_dir() {
+        return Err(format!("自定义容器路径不是目录: {}", trimmed));
+    }
+    if path.exists()
+        && path.is_dir()
+        && std::fs::read_dir(&path)
+            .map(|mut entries| entries.next().is_some())
+            .unwrap_or(false)
+        && !looks_like_prefix_root(&path)
+    {
+        return Err(format!(
+            "目标目录已存在且不像容器目录，请选择空目录或现有 prefix 根目录: {}",
+            trimmed
+        ));
+    }
+
+    Ok(path)
+}
+
+fn resolve_custom_prefix_from_db(game_id: &str) -> Option<PathBuf> {
+    let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
+    let config_json = crate::configs::database::get_game_config(&game_id)?;
+    let data: Value = serde_json::from_str(&config_json).ok()?;
+    let raw = data
+        .pointer("/other/prefixPath")
+        .and_then(Value::as_str)
+        .or_else(|| data.pointer("/prefixPath").and_then(Value::as_str))?
+        .trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    match normalize_custom_prefix_path(raw) {
+        Ok(path) => Some(path),
+        Err(err) => {
+            warn!("忽略无效的自定义容器路径 {}: {}", raw, err);
+            None
+        }
+    }
 }
 
 /// 根据 gamePath + 预设 defaultFolder 推导“配置根目录”
@@ -150,6 +205,37 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
             .map_err(|e| format!("读取文件类型失败 {}: {}", from.display(), e))?;
         if file_type.is_dir() {
             copy_dir_recursive(&from, &to)?;
+        } else if file_type.is_symlink() {
+            #[cfg(unix)]
+            {
+                let target = std::fs::read_link(&from)
+                    .map_err(|e| format!("读取符号链接失败 {}: {}", from.display(), e))?;
+                std::os::unix::fs::symlink(&target, &to).map_err(|e| {
+                    format!(
+                        "复制符号链接失败 {} -> {}: {}",
+                        from.display(),
+                        to.display(),
+                        e
+                    )
+                })?;
+            }
+            #[cfg(not(unix))]
+            {
+                let canonical = std::fs::canonicalize(&from)
+                    .map_err(|e| format!("解析符号链接失败 {}: {}", from.display(), e))?;
+                if canonical.is_dir() {
+                    copy_dir_recursive(&canonical, &to)?;
+                } else {
+                    std::fs::copy(&canonical, &to).map_err(|e| {
+                        format!(
+                            "复制符号链接目标失败 {} -> {}: {}",
+                            canonical.display(),
+                            to.display(),
+                            e
+                        )
+                    })?;
+                }
+            }
         } else if file_type.is_file() {
             std::fs::copy(&from, &to).map_err(|e| {
                 format!("复制文件失败 {} -> {}: {}", from.display(), to.display(), e)
@@ -180,7 +266,7 @@ fn migrate_legacy_prefix(legacy: &Path, preferred: &Path) -> Result<(), String> 
     Ok(())
 }
 
-pub fn get_prefix_dir(game_id: &str) -> PathBuf {
+fn default_prefix_dir_for_game(game_id: &str) -> PathBuf {
     let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
     // 如果找到游戏根目录，总是使用游戏目录下的 prefix/
     if let Some(game_root) = resolve_game_root_from_db(&game_id) {
@@ -226,6 +312,116 @@ pub fn get_prefix_dir(game_id: &str) -> PathBuf {
     file_manager::get_prefixes_dir().join(&game_id)
 }
 
+fn persist_custom_prefix_path_in_db(
+    game_id: &str,
+    custom_prefix_path: Option<&Path>,
+) -> Result<(), String> {
+    let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
+    let raw = crate::configs::database::get_game_config(&game_id)
+        .ok_or_else(|| format!("未找到游戏配置，无法保存容器路径: {}", game_id))?;
+    let mut data: Value =
+        serde_json::from_str(&raw).map_err(|e| format!("解析游戏配置失败: {}", e))?;
+
+    if !data.is_object() {
+        data = Value::Object(serde_json::Map::new());
+    }
+    let root = data
+        .as_object_mut()
+        .ok_or_else(|| "游戏配置格式错误".to_string())?;
+    let other = root
+        .entry("other".to_string())
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    if !other.is_object() {
+        *other = Value::Object(serde_json::Map::new());
+    }
+    let other_map = other
+        .as_object_mut()
+        .ok_or_else(|| "游戏配置 other 字段格式错误".to_string())?;
+
+    if let Some(path) = custom_prefix_path {
+        other_map.insert(
+            "prefixPath".to_string(),
+            Value::String(path.to_string_lossy().to_string()),
+        );
+    } else {
+        other_map.remove("prefixPath");
+    }
+    root.remove("prefixPath");
+
+    let serialized = serde_json::to_string_pretty(&data)
+        .map_err(|e| format!("序列化游戏配置失败: {}", e))?;
+    crate::configs::database::set_game_config(&game_id, &serialized);
+    Ok(())
+}
+
+pub fn set_custom_prefix_dir(
+    game_id: &str,
+    raw_prefix_path: Option<&str>,
+    previous_prefix_path: Option<&str>,
+) -> Result<PathBuf, String> {
+    let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
+    let current_effective = previous_prefix_path
+        .and_then(|raw| {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            let candidate = PathBuf::from(trimmed);
+            if candidate.is_absolute() {
+                Some(candidate)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| get_prefix_dir(&game_id));
+    let default_prefix_dir = default_prefix_dir_for_game(&game_id);
+
+    let mut custom_prefix_dir = match raw_prefix_path {
+        Some(raw) if !raw.trim().is_empty() => Some(normalize_custom_prefix_path(raw)?),
+        _ => None,
+    };
+    if custom_prefix_dir.as_ref() == Some(&default_prefix_dir) {
+        custom_prefix_dir = None;
+    }
+
+    let next_effective = custom_prefix_dir
+        .clone()
+        .unwrap_or_else(|| default_prefix_dir.clone());
+
+    if current_effective != next_effective && current_effective.exists() {
+        if next_effective.starts_with(&current_effective)
+            || current_effective.starts_with(&next_effective)
+        {
+            return Err(format!(
+                "容器路径不能与当前容器目录形成父子嵌套关系: {} -> {}",
+                current_effective.display(),
+                next_effective.display()
+            ));
+        }
+
+        if !next_effective.exists() {
+            migrate_legacy_prefix(&current_effective, &next_effective)?;
+        } else {
+            info!(
+                "切换容器路径时目标目录已存在，保留现有目录并仅更新配置: {} -> {}",
+                current_effective.display(),
+                next_effective.display()
+            );
+        }
+    }
+
+    persist_custom_prefix_path_in_db(&game_id, custom_prefix_dir.as_deref())?;
+    Ok(next_effective)
+}
+
+pub fn get_prefix_dir(game_id: &str) -> PathBuf {
+    let game_id = crate::configs::game_identity::to_canonical_or_keep(game_id);
+    if let Some(custom_dir) = resolve_custom_prefix_from_db(&game_id) {
+        return custom_dir;
+    }
+    default_prefix_dir_for_game(&game_id)
+}
+
 pub fn get_prefix_pfx_dir(game_id: &str) -> PathBuf {
     get_prefix_dir(game_id).join("pfx")
 }
@@ -234,6 +430,13 @@ fn is_proton_compat_root(path: &Path) -> bool {
     path.join("version").exists()
         && path.join("tracked_files").exists()
         && path.join("config_info").exists()
+}
+
+fn looks_like_prefix_root(path: &Path) -> bool {
+    path.join("prefix.json").exists()
+        || path.join("pfx").exists()
+        || path.join("drive_c").exists()
+        || is_proton_compat_root(path)
 }
 
 fn uses_proton_compat_layout(config: &PrefixConfig) -> bool {
@@ -391,6 +594,13 @@ fn ensure_safe_prefix_delete_target(game_id: &str, prefix_dir: &Path) -> Result<
     if let Some(game_root) = resolve_game_root_from_db(game_id) {
         let canonical_root = std::fs::canonicalize(&game_root).unwrap_or(game_root);
         if canonical_prefix.starts_with(&canonical_root) && is_prefix_name {
+            allowed = true;
+        }
+    }
+
+    if let Some(custom_prefix_dir) = resolve_custom_prefix_from_db(game_id) {
+        let canonical_custom = std::fs::canonicalize(&custom_prefix_dir).unwrap_or(custom_prefix_dir);
+        if canonical_prefix == canonical_custom {
             allowed = true;
         }
     }

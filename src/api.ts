@@ -824,6 +824,18 @@ export async function setGameWineConfig(
   return invoke('set_game_wine_config', { gameId, wineVersionId, protonSettings });
 }
 
+export async function setGamePrefixPath(
+  gameId: string,
+  prefixPath?: string | null,
+  previousPrefixPath?: string | null,
+): Promise<string> {
+  return invoke<string>('set_game_prefix_path', {
+    gameId,
+    prefixPath: prefixPath ?? null,
+    previousPrefixPath: previousPrefixPath ?? null,
+  });
+}
+
 export async function createPrefix(gameId: string, templateId?: string): Promise<string> {
   return invoke<string>('create_prefix', { gameId, templateId: templateId ?? null });
 }

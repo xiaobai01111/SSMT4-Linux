@@ -148,12 +148,10 @@ sudo rpm -ivh "Installation package/SSMT4-Linux-*.rpm"
 sudo pacman -U "Installation package/ssmt4-linux-*.pkg.tar.zst"
 ```
 
-如果通过 AUR 构建，PKGBUILD 会默认先探测 GitHub，可用时继续使用 GitHub；GitHub 不可用时会自动切换到 Gitee 镜像。
-
-如果你需要强制指定镜像，也可以手动切到 Gitee：
+如果通过 AUR 构建，`PKGBUILD` 现在固定使用 GitHub tag 源：
 
 ```bash
-SSMT4_AUR_SOURCE_MIRROR=gitee yay -S ssmt4-linux
+yay -S ssmt4-linux
 ```
 
 ### 方式 2：开发环境运行
