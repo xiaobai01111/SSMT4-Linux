@@ -1,4 +1,8 @@
 use super::*;
+use tauri::Manager;
+
+const AUTO_MINIMIZE_POLL_INTERVAL_MS: u64 = 250;
+const AUTO_MINIMIZE_MAX_POLLS: usize = 24;
 
 pub(super) async fn spawn_monitored_launch(
     app: tauri::AppHandle,
@@ -53,6 +57,7 @@ pub(super) async fn spawn_monitored_launch(
         region: &launch_profile.runtime_flags.region,
     })
     .await;
+    schedule_main_window_minimize_after_focus_handoff(app.clone(), game_name.clone());
     super::attach_launch_log_pipes(&mut child, &game_name);
 
     let monitor_context = LaunchMonitorContext {
@@ -71,6 +76,79 @@ pub(super) async fn spawn_monitored_launch(
     spawn_launch_exit_monitor(child, write_guard, monitor_context);
 
     Ok(format!("Game launched (PID: {})", started_launch.pid))
+}
+
+fn schedule_main_window_minimize_after_focus_handoff(
+    app: tauri::AppHandle,
+    game_name: String,
+) {
+    tokio::spawn(async move {
+        let Some(window) = app.get_webview_window("main") else {
+            return;
+        };
+
+        for _ in 0..AUTO_MINIMIZE_MAX_POLLS {
+            tokio::time::sleep(tokio::time::Duration::from_millis(
+                AUTO_MINIMIZE_POLL_INTERVAL_MS,
+            ))
+            .await;
+
+            if !process_monitor::is_game_running(&game_name).await {
+                super::append_game_log(
+                    &game_name,
+                    "INFO",
+                    "session",
+                    "skip launcher auto-minimize because launched process is no longer running",
+                );
+                return;
+            }
+
+            let is_focused = match window.is_focused() {
+                Ok(value) => value,
+                Err(error) => {
+                    warn!("读取主窗口焦点状态失败: {}", error);
+                    super::append_game_log(
+                        &game_name,
+                        "WARN",
+                        "session",
+                        format!("failed to read launcher focus state before auto-minimize: {}", error),
+                    );
+                    return;
+                }
+            };
+
+            if is_focused {
+                continue;
+            }
+
+            if let Err(error) = window.minimize() {
+                warn!("游戏启动后最小化主窗口失败: {}", error);
+                super::append_game_log(
+                    &game_name,
+                    "WARN",
+                    "session",
+                    format!("failed to minimize launcher window after focus handoff: {}", error),
+                );
+                return;
+            }
+
+            info!("焦点已移出启动器，主窗口已自动最小化");
+            super::append_game_log(
+                &game_name,
+                "INFO",
+                "session",
+                "launcher window auto-minimized after focus handoff",
+            );
+            return;
+        }
+
+        super::append_game_log(
+            &game_name,
+            "INFO",
+            "session",
+            "skip launcher auto-minimize because focus handoff did not happen in time",
+        );
+    });
 }
 
 async fn register_started_launch(context: LaunchStartedContext<'_>) -> StartedLaunch {

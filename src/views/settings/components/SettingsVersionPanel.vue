@@ -26,7 +26,7 @@ const tr = (key: string, fallback: string) => {
           <div>
             <div class="card-header-title text-primary">{{ tr('settings.version_check_overview', '当前版本信息') }}</div>
             <div class="setting-desc mt-1">
-              {{ tr('settings.version_check_hint', '优先从 GitHub 检查主程序 version 和 version-log；GitHub 异常时会自动回退到 Gitee，最后再回退到本地打包文件。') }}
+              {{ tr('settings.version_check_hint', '从 GitHub 检查主程序 version 和 version-log；远程不可用时回退到本地打包文件。') }}
             </div>
           </div>
           <div class="flex-row w-auto">

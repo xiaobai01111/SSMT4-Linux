@@ -52,6 +52,7 @@ where
 }
 
 fn initialize_database() -> Result<(), String> {
+    let started_at = std::time::Instant::now();
     let db_path = get_db_path();
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)
@@ -61,7 +62,11 @@ fn initialize_database() -> Result<(), String> {
     let conn = Connection::open(&db_path)
         .map_err(|e| format!("无法打开数据库 {}: {}", db_path.display(), e))?;
     init_tables(&conn)?;
-    tracing::info!("SQLite 数据库已打开: {}", db_path.display());
+    tracing::info!(
+        "SQLite database ready: {} ({}ms)",
+        db_path.display(),
+        started_at.elapsed().as_millis()
+    );
     Ok(())
 }
 

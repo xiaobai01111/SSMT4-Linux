@@ -6,7 +6,6 @@ import {
   getAppDataDirPath,
   loadGameConfig,
   openInExplorer,
-  pathExists,
   saveGameConfig,
   scanGameMods,
   setAllGameModEntriesEnabled,
@@ -19,7 +18,10 @@ import {
 import { useI18n } from 'vue-i18n';
 import { messages } from '../../i18n';
 import { NOTIFY_KEY, type NotifyApi } from '../../types/notify';
-import { detectMigotoResolvedPaths, resolveMigotoImporter } from '../../utils/migotoLayout';
+import {
+  buildMigotoResolvedPaths,
+  resolveMigotoImporter,
+} from '../../utils/migotoLayout';
 import type { ModGameSummary, ModStatusFilter } from './types';
 
 const gameNameLocales = ['zhs', 'zht', 'en'] as const;
@@ -64,6 +66,18 @@ const formatModified = (unix?: number | null) => {
   if (Number.isNaN(date.getTime())) return '-';
   return date.toLocaleString();
 };
+
+const waitNextFrame = () =>
+  new Promise<void>((resolve) => {
+    if (
+      typeof window !== 'undefined'
+      && typeof window.requestAnimationFrame === 'function'
+    ) {
+      window.requestAnimationFrame(() => resolve());
+      return;
+    }
+    setTimeout(resolve, 0);
+  });
 
 export function useModsView() {
   const { t, te } = useI18n();
@@ -146,9 +160,9 @@ export function useModsView() {
     await showMessage(message, { title, kind });
   };
 
-  const buildSummaryFolders = async (gameName: string, config: GameConfig) => {
+  const buildSummaryPreview = (gameName: string, config: GameConfig) => {
     const migoto = (config.other?.migoto || {}) as Record<string, unknown>;
-    const resolved = await detectMigotoResolvedPaths({
+    const resolved = buildMigotoResolvedPaths({
       gameName,
       config: {
         importer: trimValue(migoto.importer),
@@ -158,12 +172,11 @@ export function useModsView() {
         shader_fixes_folder: trimValue(migoto.shader_fixes_folder),
       },
       defaultMigotoPath: joinPathString(appDataDir.value, '3Dmigoto-data'),
-      pathExistsAt: pathExists,
     });
 
     return {
-      importer: resolved.importer,
       migotoEnabled: Boolean(migoto.enabled),
+      importer: resolved.importer,
       modFolder: resolved.modFolder,
       shaderFixesFolder: resolved.shaderFixesFolder,
     };
@@ -190,11 +203,7 @@ export function useModsView() {
 
     try {
       const config = await loadGameConfig(game.name);
-      const folders = await buildSummaryFolders(game.name, config);
-      const [modFolderExists, shaderFixesFolderExists] = await Promise.all([
-        folders.modFolder ? pathExists(folders.modFolder) : Promise.resolve(false),
-        folders.shaderFixesFolder ? pathExists(folders.shaderFixesFolder) : Promise.resolve(false),
-      ]);
+      const folders = buildSummaryPreview(game.name, config);
 
       return {
         name: game.name,
@@ -207,8 +216,8 @@ export function useModsView() {
         migotoEnabled: folders.migotoEnabled,
         modFolder: folders.modFolder,
         shaderFixesFolder: folders.shaderFixesFolder,
-        modFolderExists,
-        shaderFixesFolderExists,
+        modFolderExists: false,
+        shaderFixesFolderExists: false,
         loadError: '',
       };
     } catch (error) {
@@ -298,6 +307,7 @@ export function useModsView() {
 
     try {
       isLoadingSelectedMods.value = true;
+      selectedState.value = null;
       const state = await scanGameMods(selectedGameName.value);
       selectedState.value = state;
       syncSummaryFromState(state);
@@ -313,7 +323,7 @@ export function useModsView() {
     }
   };
 
-  const loadGameSummaries = async () => {
+  const loadGameSummaries = async (forceRescan = true) => {
     if (!appSettings.migotoEnabled) {
       gameSummaries.value = [];
       selectedGameName.value = '';
@@ -326,8 +336,16 @@ export function useModsView() {
     try {
       isLoadingGames.value = true;
       appDataDir.value = await getAppDataDirPath();
-      await loadGames();
-      const summaries = await Promise.all(gamesList.map((game) => buildSummary(game)));
+      if (forceRescan || gamesList.length === 0) {
+        await loadGames();
+      }
+      const summaries: ModGameSummary[] = [];
+      for (let index = 0; index < gamesList.length; index += 1) {
+        summaries.push(await buildSummary(gamesList[index]));
+        if ((index + 1) % 4 === 0) {
+          await waitNextFrame();
+        }
+      }
       gameSummaries.value = sortGameSummaries(
         summaries.map((summary) => localizeGameSummary(summary)),
       );
@@ -345,6 +363,7 @@ export function useModsView() {
       selectedGameName.value = nextSelection;
 
       if (!selectionChanged) {
+        await waitNextFrame();
         await loadSelectedGameMods();
       }
     } catch (error) {
@@ -494,7 +513,7 @@ export function useModsView() {
     () => selectedGameName.value,
     (value, oldValue) => {
       if (!value || value === oldValue) return;
-      void loadSelectedGameMods();
+      void waitNextFrame().then(() => loadSelectedGameMods());
     },
   );
 
@@ -505,7 +524,7 @@ export function useModsView() {
         void router.replace('/');
         return;
       }
-      void loadGameSummaries();
+      void loadGameSummaries(false);
     },
   );
 
@@ -520,7 +539,7 @@ export function useModsView() {
   );
 
   onMounted(() => {
-    void loadGameSummaries();
+    void loadGameSummaries(false);
   });
 
   return {

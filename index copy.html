@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSMT4 - OPUS MAGNUM (THE SINGULARITY)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/CustomEase.min.js"></script>
+    <style>
+        :root {
+            --bg-deep: #020203;
+            --bg-void: #000000;
+            --white-pure: #ffffff;
+            --white-muted: #8b9bb4;
+            --accent-red: #ff003c;
+            --accent-cyan: #00f3ff;
+            --grid-color: rgba(255, 255, 255, 0.04);
+            --dark-gray: #1e293b;
+        }
+
+        body, html {
+            margin: 0; padding: 0; width: 100vw; height: 100vh;
+            background-color: var(--bg-deep); overflow: hidden;
+            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, monospace;
+            color: var(--white-pure); user-select: none;
+            perspective: 1200px;
+        }
+
+        /* --- 环境与底层 --- */
+        #matter-container {
+            position: absolute; inset: 0; transform-origin: center center;
+            width: 100%; height: 100%; transform-style: preserve-3d;
+        }
+
+        .cinematic-noise {
+            position: absolute; inset: 0; z-index: 100; pointer-events: none; opacity: 0.04;
+            background-image: url('data:image/svg+xml;utf8,%3Csvg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"%3E%3Cfilter id="n"%3E%3CfeTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="4" stitchTiles="stitch"/%3E%3C/filter%3E%3Crect width="100%25" height="100%25" filter="url(%23n)"/%3E%3C/svg%3E');
+        }
+
+        .scanlines {
+            position: absolute; inset: 0; z-index: 101; pointer-events: none;
+            background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.15) 50%, rgba(0,0,0,0.15));
+            background-size: 100% 4px;
+        }
+
+        /* 1. 巨型滚动水印 */
+        .marquee-bg {
+            position: absolute; top: 15%; left: 0; white-space: nowrap; z-index: 0; pointer-events: none;
+            font-size: 18vw; font-weight: 900; color: rgba(255, 255, 255, 0.015);
+            letter-spacing: -5px; line-height: 1; text-transform: uppercase;
+            animation: scrollMarquee 40s linear infinite;
+        }
+        @keyframes scrollMarquee { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+
+        .grid-3d {
+            position: absolute; inset: -50%; z-index: 1; opacity: 0;
+            background-image: 
+                linear-gradient(var(--grid-color) 1px, transparent 1px),
+                linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+            background-size: 60px 60px; background-position: center center;
+            transform: rotateX(75deg) translateY(-150px) translateZ(-100px);
+            mask-image: radial-gradient(ellipse at center, black 10%, transparent 60%);
+            -webkit-mask-image: radial-gradient(ellipse at center, black 10%, transparent 60%);
+        }
+
+        .vignette {
+            position: absolute; inset: 0; z-index: 2; pointer-events: none;
+            background: radial-gradient(circle at 50% 50%, transparent 20%, var(--bg-deep) 120%);
+        }
+
+        /* 2. 量子环境尘埃画布 */
+        #dust-canvas {
+            position: absolute; inset: 0; z-index: 3; pointer-events: none; opacity: 0;
+        }
+
+        /* --- 结构与UI --- */
+        #terminal-layer {
+            position: absolute; top: 30px; left: 40px; right: 40px; bottom: 30px;
+            z-index: 10; font-family: 'Courier New', Courier, monospace;
+            font-size: 13px; line-height: 1.5; color: var(--white-muted);
+            text-shadow: 0 0 5px rgba(255,255,255,0.2);
+            display: flex; flex-direction: column; justify-content: flex-end; overflow: hidden;
+        }
+
+        .blade-line { position: absolute; background: var(--white-muted); z-index: 5; opacity: 0.3; box-shadow: 0 0 8px rgba(255,255,255,0.2); }
+        .blade-h { top: 50%; left: 0; width: 100%; height: 1px; transform: scaleX(0); }
+        .blade-v { top: 0; left: 50%; width: 1px; height: 100%; transform: scaleY(0); }
+
+        .ui-layer { position: absolute; inset: 0; z-index: 30; padding: 4vw; pointer-events: none; display: none; }
+        .mask { overflow: hidden; position: relative; }
+        .reveal { transform: translateY(110%); display: inline-block; }
+
+        .sys-block { position: absolute; top: 5vh; left: 4vw; display: flex; flex-direction: column; gap: 8px; }
+        .sys-label { font-family: 'Courier New', monospace; font-size: 10px; color: var(--accent-cyan); letter-spacing: 2px; filter: drop-shadow(0 0 4px var(--accent-cyan)); }
+        .sys-value { font-size: 12px; letter-spacing: 3px; font-weight: 600; text-transform: uppercase; }
+
+        .data-stream { position: absolute; top: 5vh; right: 4vw; text-align: right; font-family: 'Courier New', monospace; font-size: 10px; color: var(--white-muted); line-height: 1.4; opacity: 0.8; }
+
+        .title-block { position: absolute; bottom: 8vh; left: 4vw; }
+        .brand-name { font-size: 6.5vw; font-weight: 900; letter-spacing: -2px; line-height: 0.9; text-shadow: 0 15px 30px rgba(0,0,0,0.8); }
+        .brand-sub { font-size: 1.5vw; font-weight: 300; letter-spacing: 0.6em; color: var(--white-muted); margin-top: 15px; display: block; }
+
+        .status-block { position: absolute; bottom: 8vh; right: 4vw; width: 300px; display: flex; flex-direction: column; align-items: flex-end; }
+        .glitch-text { font-size: 20px; font-weight: 800; letter-spacing: 4px; color: var(--white-pure); transition: color 0.2s, text-shadow 0.2s; }
+        .progress-track { width: 100%; height: 2px; background: rgba(255,255,255,0.1); margin-top: 15px; position: relative; }
+        .progress-bar { width: 100%; height: 100%; background: var(--white-pure); transform: scaleX(0); transform-origin: left; }
+        .progress-glow { position: absolute; right: 0; top: -4px; width: 10px; height: 10px; background: var(--white-pure); border-radius: 50%; filter: blur(4px); opacity: 0; mix-blend-mode: screen; }
+
+        /* --- 机械核心 --- */
+        .core-wrapper {
+            position: absolute; top: 50%; left: 50%; 
+            /* 移除 Transform，交给 GSAP 管理避免冲突 */
+            width: 70vw; max-width: 800px; height: 70vw; max-height: 800px;
+            margin-top: -35vw; margin-left: -35vw; /* 居中替代方案 */
+            z-index: 20; mix-blend-mode: screen; 
+            transform-style: preserve-3d;
+        }
+        @media (min-width: 1142px) { .core-wrapper { margin-top: -400px; margin-left: -400px; } }
+
+        svg { width: 100%; height: 100%; overflow: visible; }
+        
+        .st-guide { fill: none; stroke: var(--dark-gray); stroke-width: 0.5; }
+        .st-ring-outer { fill: none; stroke: var(--white-muted); stroke-width: 1; stroke-dasharray: 2 6; opacity: 0; transform-origin: center; }
+        .st-ring-inner { fill: none; stroke: var(--white-pure); stroke-width: 1.5; stroke-dasharray: 20 10 5 10; opacity: 0; transform-origin: center; filter: drop-shadow(0 0 4px rgba(255,255,255,0.3)); }
+        
+        .st-ticks { fill: none; stroke: var(--white-muted); stroke-width: 4; stroke-dasharray: 1 8; opacity: 0; transform-origin: center; }
+        .st-solid { fill: none; stroke: var(--white-pure); stroke-width: 2.5; opacity: 0; transform-origin: center; }
+        
+        .st-accent { 
+            fill: none; stroke: var(--accent-red); stroke-width: 2; opacity: 0; transform-origin: center; 
+            filter: drop-shadow(0 0 6px var(--accent-red)) drop-shadow(0 0 15px rgba(255, 0, 60, 0.4));
+        }
+        .st-crosshair { stroke: var(--accent-red); stroke-width: 1.5; opacity: 0; transform-origin: center; filter: drop-shadow(0 0 5px var(--accent-red)); }
+        
+        .st-core { fill: var(--bg-deep); stroke: var(--white-pure); stroke-width: 2; opacity: 0; transform-origin: center; filter: drop-shadow(0 0 8px rgba(255,255,255,0.4)); transition: all 0.1s; }
+        .st-core-inner { fill: var(--white-pure); opacity: 0; transform-origin: center; filter: drop-shadow(0 0 10px rgba(255,255,255,0.8)); transition: all 0.1s; }
+
+        /* --- 3. 光学宽银幕耀斑 --- */
+        .anamorphic-flare {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 0%; height: 2px; background: #fff;
+            box-shadow: 0 0 20px 5px var(--accent-cyan), 0 0 50px 15px var(--accent-red);
+            opacity: 0; z-index: 900; pointer-events: none; mix-blend-mode: screen;
+        }
+
+        /* 视网膜负片与畸变 */
+        .aberration { animation: rgbSplit 0.08s linear infinite; }
+        @keyframes rgbSplit {
+            0% { text-shadow: 4px 0 0 red, -4px 0 0 cyan; }
+            50% { text-shadow: -4px 0 0 red, 4px 0 0 cyan; }
+            100% { text-shadow: 3px 0 0 red, -3px 0 0 cyan; }
+        }
+
+        .invert-flash {
+            position: absolute; inset: 0; background: transparent; z-index: 998;
+            backdrop-filter: invert(1) hue-rotate(180deg); -webkit-backdrop-filter: invert(1) hue-rotate(180deg);
+            opacity: 0; pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="matter-container">
+        <div class="marquee-bg">
+            SSMT4 CORE_ENGINE // ARCH LINUX NATIVE // WAYLAND COMPOSITOR // KERNEL OVERRIDE INITIALIZED // SSMT4 CORE_ENGINE // ARCH LINUX NATIVE //
+        </div>
+        
+        <div class="cinematic-noise"></div>
+        <div class="scanlines"></div>
+        <div class="vignette"></div>
+        
+        <canvas id="dust-canvas"></canvas>
+        
+        <div class="grid-3d"></div>
+        
+        <div id="terminal-layer"></div>
+
+        <div class="blade-line blade-h"></div>
+        <div class="blade-line blade-v"></div>
+
+        <div class="ui-layer">
+            <div class="sys-block">
+                <div class="mask"><span class="reveal sys-label">ENVIRONMENT</span></div>
+                <div class="mask"><span class="reveal sys-value">ARCH LINUX / WAYLAND</span></div>
+                <div style="height: 10px;"></div>
+                <div class="mask"><span class="reveal sys-label">AUTHORIZATION</span></div>
+                <div class="mask"><span class="reveal sys-value">XIAOBAI_ADMIN</span></div>
+            </div>
+
+            <div class="data-stream" id="hex-stream"></div>
+
+            <div class="title-block">
+                <div class="mask"><span class="reveal brand-name">SSMT4</span></div>
+                <div class="mask"><span class="reveal brand-sub">TACTICAL LAUNCH ENGINE</span></div>
+            </div>
+
+            <div class="status-block">
+                <div class="mask"><span class="reveal glitch-text" id="status-text">STANDBY</span></div>
+                <div class="progress-track">
+                    <div class="progress-bar"></div>
+                    <div class="progress-glow"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="anamorphic-flare"></div>
+
+    <div class="core-wrapper">
+        <svg class="svg-engine" viewBox="0 0 300 300">
+            <circle class="st-guide guide-1" cx="150" cy="150" r="140" />
+            <line class="st-guide" x1="150" y1="0" x2="150" y2="300" stroke-dasharray="4 4"/>
+            <line class="st-guide" x1="0" y1="150" x2="300" y2="150" stroke-dasharray="4 4"/>
+
+            <circle class="st-ring-outer ring-1" cx="150" cy="150" r="125" />
+            <circle class="st-ring-inner ring-2" cx="150" cy="150" r="110" />
+            
+            <circle class="st-ticks tick-ring" cx="150" cy="150" r="95" />
+            
+            <circle class="st-solid solid-1" cx="150" cy="150" r="85" />
+            <circle class="st-solid solid-2" cx="150" cy="150" r="75" />
+            
+            <path class="st-crosshair cross-1" d="M150,40 L150,55 M150,245 L150,260 M40,150 L55,150 M245,150 L260,150" />
+            <circle class="st-accent accent-1" cx="150" cy="150" r="60" stroke-dasharray="60 140" />
+            <circle class="st-accent accent-2" cx="150" cy="150" r="50" stroke-dasharray="10 30" />
+
+            <polygon class="st-core" points="150,100 195,175 105,175" />
+            <polygon class="st-core-inner" points="150,120 175,165 125,165" />
+        </svg>
+    </div>
+
+    <div class="invert-flash"></div>
+
+    <script>
+        gsap.registerPlugin(CustomEase);
+        CustomEase.create("mech", "M0,0 C0.85,0 0.15,1 1,1");
+
+        const terminal = document.getElementById('terminal-layer');
+        const uiLayer = document.querySelector('.ui-layer');
+        const hexStream = document.getElementById('hex-stream');
+        const statusText = document.getElementById('status-text');
+        const svgWrapper = document.querySelector('.core-wrapper');
+        const matterContainer = document.getElementById('matter-container');
+        const grid3d = document.querySelector('.grid-3d');
+
+        // ==========================================
+        // 核心 1：量子微观尘埃 (Canvas Particle System)
+        // ==========================================
+        const canvas = document.getElementById('dust-canvas');
+        const ctx = canvas.getContext('2d');
+        let cw = canvas.width = window.innerWidth;
+        let ch = canvas.height = window.innerHeight;
+        window.addEventListener('resize', () => { cw = canvas.width = window.innerWidth; ch = canvas.height = window.innerHeight; });
+
+        let isSingularity = false; // 控制黑洞吸入状态
+        const particles = [];
+        for(let i=0; i<150; i++) {
+            particles.push({
+                x: Math.random() * cw,
+                y: Math.random() * ch,
+                vx: (Math.random() - 0.5) * 0.5,
+                vy: (Math.random() - 0.5) * 0.5,
+                size: Math.random() * 1.5 + 0.5,
+                alpha: Math.random() * 0.5 + 0.1
+            });
+        }
+
+        function renderDust() {
+            ctx.clearRect(0, 0, cw, ch);
+            ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
+            
+            particles.forEach(p => {
+                if(!isSingularity) {
+                    // 平缓漂浮
+                    p.x += p.vx; p.y += p.vy;
+                    if(p.x < 0 || p.x > cw) p.vx *= -1;
+                    if(p.y < 0 || p.y > ch) p.vy *= -1;
+                    ctx.globalAlpha = p.alpha;
+                    ctx.fillRect(p.x, p.y, p.size, p.size);
+                } else {
+                    // 黑洞引力：面条化撕裂 (Spaghettification)
+                    const dx = (cw/2) - p.x;
+                    const dy = (ch/2) - p.y;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    const angle = Math.atan2(dy, dx);
+                    
+                    // 越靠近中心被吸得越快，拉得越长
+                    const gravity = Math.max(10, 1000 / Math.max(dist, 1)); 
+                    p.x += Math.cos(angle) * gravity;
+                    p.y += Math.sin(angle) * gravity;
+                    
+                    ctx.globalAlpha = Math.min(1, p.alpha * 3); // 爆发高光
+                    ctx.beginPath();
+                    ctx.moveTo(p.x, p.y);
+                    // 速度极快时拉成光束
+                    ctx.lineTo(p.x - Math.cos(angle)*gravity*2, p.y - Math.sin(angle)*gravity*2);
+                    ctx.strokeStyle = "#fff"; ctx.lineWidth = p.size; ctx.stroke();
+                }
+            });
+            requestAnimationFrame(renderDust);
+        }
+        renderDust();
+
+        // 乱码解密
+        function scrambleText(element, finalString, durationSec) {
+            const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%&*";
+            let frame = 0; const totalFrames = durationSec * 60;
+            const run = () => {
+                let output = "";
+                for(let i=0; i<finalString.length; i++) {
+                    if (frame / totalFrames > (i / finalString.length)) output += finalString[i];
+                    else output += chars[Math.floor(Math.random() * chars.length)];
+                }
+                element.innerText = output;
+                frame++;
+                if (frame <= totalFrames) requestAnimationFrame(run);
+            };
+            run();
+        }
+
+        // ==========================================
+        // The Director: 13.5s Ultimate Timeline
+        // ==========================================
+        const tl = gsap.timeline({ onComplete: () => { document.body.style.display = 'none'; } });
+
+        // 阶段 1：伪终端 (0 - 2.5s)
+        tl.to("#dust-canvas", { opacity: 1, duration: 2 }, 0); // 尘埃淡入
+        const logs = [
+            "INIT: Mounting /dev/nvme0n1p2...",
+            "LOAD: Wayland Compositor Detected.",
+            "EXEC: SSMT4_Daemon --bypass-vm",
+            "OK: Wine/Proton Prefix Locked.",
+            "WARN: Unauthorized Kernel Module.",
+            "OVERRIDE: XIAOBAI_ADMIN confirmed.",
+            "BOOTING TACTICAL UI..."
+        ];
+        logs.forEach((log, index) => {
+            tl.call(() => {
+                const p = document.createElement('div'); p.style.marginBottom = "4px";
+                terminal.appendChild(p);
+                scrambleText(p, `[${(index * 0.15 + 1.2).toFixed(3)}] ${log}`, 0.5);
+            }, null, index * 0.3);
+        });
+
+        // 阶段 2：UI与网格展开 (2.5s - 4.5s)
+        tl.to(terminal, { opacity: 0, filter: "blur(10px)", duration: 0.5 }, 2.5)
+          .call(() => { uiLayer.style.display = "block"; }, null, 2.5)
+          .to(".blade-h", { scaleX: 1, duration: 1.5, ease: "mech" }, 2.6)
+          .to(".blade-v", { scaleY: 1, duration: 1.5, ease: "mech" }, 2.8)
+          .to(".grid-3d", { opacity: 0.8, y: 0, rotateX: 60, duration: 3, ease: "power3.out" }, 2.5)
+          .to(".reveal", { y: "0%", duration: 1.2, stagger: 0.05, ease: "power4.out" }, 3.0);
+
+        // 阶段 3：恢复战术核心砸下构筑 (3.5s - 6.5s)
+        tl.to(".ring-1", { opacity: 0.3, rotation: 180, duration: 3.5, ease: "expo.out" }, 3.5)
+          .to(".ring-2", { opacity: 0.8, rotation: -270, duration: 3.5, ease: "expo.out" }, 3.7)
+          .to(".tick-ring", { opacity: 0.2, rotation: 360, duration: 20, ease: "none", repeat: -1 }, 3.8)
+          .fromTo(".solid-1", { scale: 1.5, opacity: 0 }, { scale: 1, opacity: 1, duration: 2, ease: "elastic.out(1, 0.4)" }, 4.0)
+          .fromTo(".solid-2", { scale: 0.5, opacity: 0 }, { scale: 1, opacity: 1, duration: 2, ease: "elastic.out(1, 0.4)" }, 4.2)
+          .to(".cross-1", { opacity: 1, scale: 1.2, duration: 0.2, yoyo: true, repeat: 1, ease: "power1.inOut" }, 4.5)
+          .to(".cross-1", { opacity: 1, scale: 1, duration: 0.5 }, 4.9)
+          .to(".accent-1", { opacity: 1, rotation: 360, duration: 4, ease: "power3.inOut" }, 4.6)
+          .to(".accent-2", { opacity: 1, rotation: -360, duration: 4, ease: "power3.inOut" }, 4.8)
+          .fromTo(".st-core", { scale: 0, opacity: 0, rotation: -180 }, { scale: 1, opacity: 1, rotation: 0, duration: 2.5, ease: "expo.out" }, 5.0)
+          .fromTo(".st-core-inner", { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, duration: 2, ease: "back.out(2)" }, 5.5);
+
+        // 阶段 4：高压顿挫与旋转咬合 (7.5s - 10.5s)
+        tl.call(() => scrambleText(statusText, "INJECTING MODS", 0.5), null, 7.5)
+          .to(".progress-bar", { scaleX: 0.35, duration: 0.8, ease: "mech" }, 7.5)
+          .to(".progress-glow", { opacity: 1, right: "65%", duration: 0.8, ease: "mech" }, 7.5)
+          .to(".svg-engine", { rotation: 90, scale: 0.95, duration: 1.2, ease: "expo.inOut" }, 7.5)
+
+          .call(() => scrambleText(statusText, "SYNCING VRAM", 0.5), null, 9.0)
+          .to(".progress-bar", { scaleX: 0.75, duration: 0.6, ease: "mech" }, 9.0)
+          .to(".progress-glow", { right: "25%", duration: 0.6, ease: "mech" }, 9.0)
+          .to(".svg-engine", { scale: 1.02, duration: 0.6, ease: "back.out(2)" }, 9.0);
+
+        // 阶段 5：过载临界点与光学耀斑爆发 (10.5s - 12.0s)
+        tl.call(() => scrambleText(statusText, "CRITICAL MASS", 0.5), null, 10.5)
+          .to(statusText, { color: "var(--accent-red)", textShadow: "0 0 15px rgba(255,0,60,0.8)", duration: 0.1 }, 10.5)
+          .to(".progress-bar", { scaleX: 1, backgroundColor: "var(--accent-red)", duration: 1.5, ease: "expo.out" }, 10.5)
+          .to(".progress-glow", { right: "0%", backgroundColor: "var(--accent-red)", filter: "blur(8px)", boxShadow: "0 0 30px red", duration: 1.5, ease: "expo.out" }, 10.5)
+          
+          // 光学宽银幕耀斑爆发
+          .to(".anamorphic-flare", { opacity: 1, width: "120%", duration: 1.5, ease: "expo.out" }, 10.5)
+          
+          .call(() => {
+              statusText.classList.add("aberration");
+              document.querySelector(".brand-name").classList.add("aberration");
+          }, null, 10.5)
+          .to({val: 0}, {
+              val: 1, duration: 1.4, 
+              onUpdate: function() {
+                  // SVG 剧烈震动
+                  gsap.set(".svg-engine", { x: (Math.random() - 0.5) * 10, y: (Math.random() - 0.5) * 10 });
+                  
+                  // 真实 Linux 内存 Dump 模拟
+                  let hex = ""; 
+                  for(let i=0; i<10; i++) {
+                      const addr = "0x7FF" + Math.floor(Math.random()*0xFFFFF).toString(16).padStart(5,'0').toUpperCase();
+                      const val = Math.random().toString(16).substr(2,4).toUpperCase();
+                      hex += addr + "  " + val + "<br>";
+                  }
+                  hexStream.innerHTML = hex;
+              },
+              onComplete: function() { gsap.set(".svg-engine", { x: 0, y: 0 }); hexStream.innerHTML = ""; }
+          }, 10.5);
+
+        // 阶段 6：视网膜反相与死寂降临 (11.85s -> 11.9s)
+        tl.to(".invert-flash", { opacity: 1, duration: 0.05 }, 11.85)
+          .to(".invert-flash", { opacity: 0, duration: 0.05 }, 11.9);
+
+        tl.call(() => {
+              statusText.classList.remove("aberration");
+              document.querySelector(".brand-name").classList.remove("aberration");
+              statusText.innerText = "ANNIHILATION";
+              statusText.style.color = "var(--white-muted)";
+              statusText.style.textShadow = "none";
+              hexStream.innerHTML = ""; 
+              isSingularity = true; // 触发环境尘埃被黑洞吸入
+          }, null, 11.9)
+          .to(".st-core-inner", { fill: "var(--bg-void)", filter: "none", duration: 0.1 }, 11.9)
+          .to(".st-core", { fill: "var(--bg-void)", stroke: "var(--bg-void)", filter: "none", scale: 0.8, duration: 0.1 }, 11.9)
+          .to(".anamorphic-flare", { opacity: 0, duration: 0.1 }, 11.9); // 耀斑瞬间掐灭
+
+        // 阶段 7：绝对湮灭引力坍缩 (12.2s - 13.4s) - 加入面条化拉扯效应
+        tl.to(matterContainer, { 
+              scaleX: 1.8, scaleY: 0.05, filter: "blur(10px)", // 引力透镜横向拉扯
+              duration: 0.15, ease: "power4.in" 
+          }, 12.1)
+          .to(".svg-engine", { 
+              scaleX: 2.2, scaleY: 0.02, filter: "blur(5px)", 
+              duration: 0.15, ease: "power4.in" 
+          }, 12.1)
+          
+          // 彻底卷入中心归零
+          .to(matterContainer, { 
+              scaleX: 0, scaleY: 0, rotation: 90, opacity: 0, 
+              duration: 0.8, ease: "expo.out" 
+          }, 12.25)
+          .to(svgWrapper, { 
+              scale: 0, rotation: -180, opacity: 0, 
+              duration: 0.8, ease: "expo.out" 
+          }, 12.25)
+          
+          .to("body, html", { backgroundColor: "#000000", duration: 0.8, ease: "power2.in" }, 12.25)
+          .to("#dust-canvas", { opacity: 0, duration: 0.5 }, 12.5); // 尘埃彻底消失
+
+        // ==========================================
+        // 核心 2：实时全息鼠标微视差 (Holographic Parallax)
+        // ==========================================
+        window.addEventListener('mousemove', (e) => {
+            if (tl.time() > 11.8) return; // 黑洞成型后停止鼠标交互，强化失控感
+            
+            const x = (e.clientX / window.innerWidth - 0.5) * 2;
+            const y = (e.clientY / window.innerHeight - 0.5) * 2;
+
+            // 核心三角反向微动，产生深度差
+            gsap.to(svgWrapper, { 
+                x: x * -15, y: y * -15, 
+                rotationY: x * 8, rotationX: y * -8,
+                duration: 0.5, ease: "power2.out" 
+            });
+
+            // 背景网格同向移动，加深空间透视
+            gsap.to(grid3d, { 
+                x: x * 20, y: y * 20, 
+                duration: 0.8, ease: "power2.out" 
+            });
+        });
+
+    </script>
+</body>
+</html>

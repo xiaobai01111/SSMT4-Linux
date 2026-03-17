@@ -8,30 +8,15 @@ use std::sync::{Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const DATA_PARAMETERS_GITHUB_REPO_URL: &str = "https://github.com/peachycommit/data-linux.git";
-pub const DATA_PARAMETERS_GITEE_REPO_URL: &str =
-    "https://gitee.com/xiaobai01111/data-parameters.git";
-pub const DATA_PARAMETERS_REPO_MIRRORS: &[(&str, &str)] = &[
-    ("GitHub", DATA_PARAMETERS_GITHUB_REPO_URL),
-    ("Gitee", DATA_PARAMETERS_GITEE_REPO_URL),
-];
+pub const DATA_PARAMETERS_REPO_MIRRORS: &[(&str, &str)] =
+    &[("GitHub", DATA_PARAMETERS_GITHUB_REPO_URL)];
 pub const DATA_PARAMETERS_GITHUB_PAGE_URL: &str = "https://github.com/peachycommit/data-linux";
-pub const DATA_PARAMETERS_GITEE_PAGE_URL: &str = "https://gitee.com/xiaobai01111/data-parameters";
-pub const DATA_PARAMETERS_REPO_PAGES: &[(&str, &str)] = &[
-    ("GitHub", DATA_PARAMETERS_GITHUB_PAGE_URL),
-    ("Gitee", DATA_PARAMETERS_GITEE_PAGE_URL),
-];
+pub const DATA_PARAMETERS_REPO_PAGES: &[(&str, &str)] =
+    &[("GitHub", DATA_PARAMETERS_GITHUB_PAGE_URL)];
 pub const DATA_PARAMETERS_VERSION_MIRRORS: &[(&str, &str)] = &[
     (
         "GitHub",
         "https://raw.githubusercontent.com/peachycommit/data-linux/main/version",
-    ),
-    (
-        "Gitee",
-        "https://gitee.com/xiaobai01111/data-parameters/raw/master/version",
-    ),
-    (
-        "Gitee (main)",
-        "https://gitee.com/xiaobai01111/data-parameters/raw/main/version",
     ),
 ];
 pub const DATA_REPO_DIR_NAME: &str = "data-linux";
@@ -102,40 +87,12 @@ fn run_git(args: &[&str], action: &str) -> Result<(), String> {
     }
 }
 
-fn run_git_output(args: &[&str], action: &str) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(args)
-        .output()
-        .map_err(|e| format!("执行 git {} 失败: {}", action, e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return if stderr.is_empty() {
-            Err(format!("git {} 失败，退出码: {}", action, output.status))
-        } else {
-            Err(format!("git {} 失败: {}", action, stderr))
-        };
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-fn repo_sync_candidates(repo_dir: Option<&Path>) -> Vec<String> {
+fn repo_sync_candidates() -> Vec<String> {
     let mut urls = Vec::new();
     let mut seen = HashSet::new();
 
     if let Ok(raw) = std::env::var("SSMT4_DATA_PARAMETERS_REPO_URL") {
         push_unique_string(&mut urls, &mut seen, raw);
-    }
-
-    if let Some(repo_dir) = repo_dir {
-        let repo_dir_str = repo_dir.to_string_lossy().to_string();
-        if let Ok(current_origin) = run_git_output(
-            &["-C", &repo_dir_str, "config", "--get", "remote.origin.url"],
-            "config --get remote.origin.url",
-        ) {
-            push_unique_string(&mut urls, &mut seen, current_origin);
-        }
     }
 
     for (_, url) in DATA_PARAMETERS_REPO_MIRRORS {
@@ -147,7 +104,7 @@ fn repo_sync_candidates(repo_dir: Option<&Path>) -> Vec<String> {
 
 fn summarize_sync_errors(action: &str, errors: Vec<String>) -> String {
     format!(
-        "data-linux {} 失败，GitHub/Gitee 镜像均不可用: {}",
+        "data-linux {} 失败，GitHub 源不可用: {}",
         action,
         errors.join(" | ")
     )
@@ -324,7 +281,7 @@ fn clone_repo(repo_dir: &Path) -> Result<(), String> {
     let repo_dir_str = repo_dir.to_string_lossy().to_string();
     let mut errors = Vec::new();
 
-    for url in repo_sync_candidates(None) {
+    for url in repo_sync_candidates() {
         match run_git(
             &["clone", "--depth", "1", &url, &repo_dir_str],
             &format!("clone ({})", url),
@@ -344,7 +301,7 @@ fn pull_repo(repo_dir: &Path) -> Result<(), String> {
     let repo_dir_str = repo_dir.to_string_lossy().to_string();
     let mut errors = Vec::new();
 
-    for url in repo_sync_candidates(Some(repo_dir)) {
+    for url in repo_sync_candidates() {
         let _ = run_git(
             &["-C", &repo_dir_str, "remote", "set-url", "origin", &url],
             "remote set-url",

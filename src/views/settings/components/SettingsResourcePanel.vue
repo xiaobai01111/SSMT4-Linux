@@ -28,7 +28,7 @@ const tr = (key: string, fallback: string) => {
           <div>
             <div class="card-header-title text-primary">{{ tr('settings.resource.sectionTitle', 'data-linux 资源版本') }}</div>
             <div class="setting-desc mt-1">
-              {{ tr('settings.resource.sectionHint', '优先从 GitHub 检查 data-linux（旧名 Data-parameters）版本；GitHub 异常时会自动回退到 Gitee 镜像，并可一键拉取更新。') }}
+              {{ tr('settings.resource.sectionHint', '从 GitHub 检查 data-linux（旧名 Data-parameters）版本，并可一键拉取更新。') }}
             </div>
           </div>
           <div class="flex-row w-auto">

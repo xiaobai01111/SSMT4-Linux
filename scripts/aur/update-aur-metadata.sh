@@ -26,6 +26,8 @@ if [[ -z "$version_raw" ]]; then
   exit 1
 fi
 
+require_release_tag_at_head "$ROOT_DIR" "$version_raw"
+
 pkgver="${version_raw//-/_}"
 sed -i "s/^pkgver=.*/pkgver=${pkgver}/" "$PKGBUILD_FILE"
 
@@ -53,4 +55,5 @@ fi
 
 echo "AUR 元数据已更新:"
 echo "  pkgver=${pkgver}"
+echo "  tag=${version_raw}"
 echo "  files: $PKGBUILD_FILE, $AUR_DIR/.SRCINFO"

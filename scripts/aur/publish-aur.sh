@@ -32,6 +32,9 @@ if [[ -z "$VERSION_RAW" ]]; then
   exit 1
 fi
 
+require_release_tag_at_head "$ROOT_DIR" "$VERSION_RAW"
+require_remote_release_tag "$ROOT_DIR" "$VERSION_RAW"
+
 if [[ ! -f "$PKGBUILD_FILE" ]]; then
   echo "错误: 未找到 PKGBUILD: $PKGBUILD_FILE" >&2
   echo "请确认 AUR 元数据目录存在：$AUR_DIR" >&2

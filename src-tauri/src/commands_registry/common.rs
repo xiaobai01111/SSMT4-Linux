@@ -7,6 +7,7 @@ const COMMANDS: &[&str] = &[
     "path_exists",
     "get_app_data_dir_path",
     "open_in_explorer",
+    "mark_startup_ready",
     #[cfg(feature = "devtools")]
     "toggle_devtools",
 ];
@@ -23,6 +24,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         commands::common::path_exists,
         commands::common::get_app_data_dir_path,
         commands::common::open_in_explorer,
+        commands::common::mark_startup_ready,
         #[cfg(feature = "devtools")]
         commands::common::toggle_devtools,
     ]

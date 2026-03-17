@@ -18,22 +18,10 @@ const APP_VERSION_REMOTE_SOURCES: &[(&str, &str, &str)] = &[
         "https://raw.githubusercontent.com/peachycommit/ssmt4-linux/main/version",
         "https://raw.githubusercontent.com/peachycommit/ssmt4-linux/main/version-log",
     ),
-    (
-        "Gitee",
-        "https://gitee.com/xiaobai01111/ssmt4-linux/raw/master/version",
-        "https://gitee.com/xiaobai01111/ssmt4-linux/raw/master/version-log",
-    ),
-    (
-        "Gitee (main)",
-        "https://gitee.com/xiaobai01111/ssmt4-linux/raw/main/version",
-        "https://gitee.com/xiaobai01111/ssmt4-linux/raw/main/version-log",
-    ),
 ];
 
-const APP_REPO_PAGES: &[(&str, &str)] = &[
-    ("GitHub", "https://github.com/peachycommit/ssmt4-linux"),
-    ("Gitee", "https://gitee.com/xiaobai01111/ssmt4-linux"),
-];
+const APP_REPO_PAGES: &[(&str, &str)] =
+    &[("GitHub", "https://github.com/peachycommit/ssmt4-linux")];
 
 fn read_trimmed_file(path: &Path) -> Option<String> {
     std::fs::read_to_string(path)

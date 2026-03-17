@@ -57,3 +57,8 @@ scripts/*
 .cache-tauri/
 
 xm/
+
+
+CLAUDE.md
+
+.claude/

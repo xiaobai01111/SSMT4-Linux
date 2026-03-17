@@ -54,27 +54,14 @@ fn metadata_modified_unix(metadata: &fs::Metadata) -> Option<u64> {
         .map(|value| value.as_secs())
 }
 
-fn calculate_entry_size(path: &Path) -> u64 {
-    let Ok(metadata) = fs::symlink_metadata(path) else {
-        return 0;
-    };
-
+fn entry_display_size(metadata: &fs::Metadata) -> u64 {
     if metadata.file_type().is_file() {
         return metadata.len();
     }
 
-    if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
-        return 0;
-    }
-
-    let Ok(entries) = fs::read_dir(path) else {
-        return 0;
-    };
-
-    entries
-        .flatten()
-        .map(|entry| calculate_entry_size(&entry.path()))
-        .sum()
+    // Mod 目录在进入页面时如果递归统计总大小，会把整棵目录树同步扫一遍。
+    // 在虚拟机和机械盘环境下，这一步很容易把页面入口直接拖死。
+    0
 }
 
 fn build_managed_entry(path: &Path) -> Result<ManagedModEntry, String> {
@@ -102,7 +89,7 @@ fn build_managed_entry(path: &Path) -> Result<ManagedModEntry, String> {
         } else {
             "file".to_string()
         },
-        size_bytes: calculate_entry_size(path),
+        size_bytes: entry_display_size(&metadata),
         modified_unix: metadata_modified_unix(&metadata),
         path: path.to_string_lossy().to_string(),
         relative_name,

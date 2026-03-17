@@ -3,6 +3,7 @@ import vue from "@vitejs/plugin-vue";
 import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
+import { resolve } from "node:path";
 
 
 const host = process.env.TAURI_DEV_HOST;
@@ -31,6 +32,10 @@ export default defineConfig(({ command }) => ({
       ? {
           cssCodeSplit: true,
           rollupOptions: {
+            input: {
+              main: resolve(__dirname, "index.html"),
+              splash: resolve(__dirname, "splash.html"),
+            },
             output: {
               manualChunks(id) {
                 if (!id.includes('node_modules')) return undefined

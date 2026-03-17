@@ -14,6 +14,7 @@ use self::legacy::{migrate_json_to_db, migrate_legacy_settings_to_db};
 pub use self::versioning::VersionCheckInfo;
 
 fn load_or_migrate_app_config() -> Result<AppConfig, String> {
+    let started_at = std::time::Instant::now();
     let pairs = db::list_setting_records();
     let mut loaded = match db::load_app_config() {
         Ok(Some(cfg)) => cfg,
@@ -38,6 +39,12 @@ fn load_or_migrate_app_config() -> Result<AppConfig, String> {
         // 启动时自动回写归一化结果，避免旧值反复触发 asset 404。
         db::save_app_config(&loaded)?;
     }
+
+    tracing::info!(
+        "AppConfig loaded in {}ms (normalized_changed={})",
+        started_at.elapsed().as_millis(),
+        normalized_changed
+    );
 
     Ok(loaded)
 }

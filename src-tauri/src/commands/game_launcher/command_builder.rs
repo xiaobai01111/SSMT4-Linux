@@ -1798,11 +1798,6 @@ fn build_bwrap_command(
         "DBUS_SESSION_BUS_ADDRESS",
         "LANG",
         "LC_ALL",
-        "XMODIFIERS",
-        "GTK_IM_MODULE",
-        "QT_IM_MODULE",
-        "QT_IM_MODULES",
-        "SDL_IM_MODULE",
     ] {
         if let Ok(value) = std::env::var(key) {
             cmd.arg("--setenv").arg(key).arg(value);

@@ -22,8 +22,10 @@
 
 发布顺序通常是：
 
-1. 先构建并上传 GitHub Release 里的 pacman 包产物
-2. 执行 `scripts/aur/update-aur-metadata.sh`
-3. 执行 `scripts/aur/publish-aur.sh`
+1. 先提交版本变更，并创建与 `version` 一致的 Git tag
+2. 推送 release commit 和 tag 到 GitHub
+3. 构建并上传 GitHub Release 里的 pacman 包产物
+4. 执行 `scripts/aur/update-aur-metadata.sh`
+5. 执行 `scripts/aur/publish-aur.sh`
 
 当前 AUR `PKGBUILD` 固定使用 GitHub tag 源，不再自动切换到 Gitee 镜像。
