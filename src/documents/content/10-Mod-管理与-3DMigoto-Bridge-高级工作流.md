@@ -211,6 +211,7 @@
 - 关闭某个 Mod 不会删除它；
 - 批量启用 / 禁用本质上是批量重命名；
 - 如果目标名称发生冲突，批量切换时会出现“跳过某些条目”的情况。
+- `.disabled` 只影响该包是否参与加载；只要游戏级 3DMigoto 已启用，EFMI / XXMI 本体仍会继续注入，以保留 F10/F12 等运行时控制。
 
 ### 4.3 打开目录时会尽量保证目录存在
 
@@ -351,6 +352,7 @@
 - `use_hook=false`
 - `enforce_rendering=false`
 - `xxmi_dll_init_delay=0`
+- 启动时会自动尝试修正旧式 `RabbitFX / SetTextures` 写法的 EFMI Mod；如需禁用，可显式设置 `SSMT4_ENABLE_EFMI_COMPAT_REWRITE=0`
 
 并且 EFMI 还带有一层旧默认值纠偏逻辑：
 

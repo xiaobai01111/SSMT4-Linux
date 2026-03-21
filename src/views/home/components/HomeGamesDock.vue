@@ -42,8 +42,10 @@ const dockTooltip = reactive({
 
 const TOOLTIP_MARGIN = 12;
 const TOOLTIP_GAP = 10;
+let tooltipPositionFrame = 0;
 
-const positionDockTooltip = (anchorEl?: HTMLElement | null) => {
+const flushTooltipPosition = (anchorEl?: HTMLElement | null) => {
+  tooltipPositionFrame = 0;
   const anchor = anchorEl ?? dockTooltip.anchorEl;
   if (!anchor) return;
 
@@ -61,6 +63,19 @@ const positionDockTooltip = (anchorEl?: HTMLElement | null) => {
   dockTooltip.top = rect.top - TOOLTIP_GAP;
 };
 
+const scheduleTooltipPosition = (anchorEl?: HTMLElement | null) => {
+  const anchor = anchorEl ?? dockTooltip.anchorEl;
+  if (!anchor || typeof window === 'undefined') return;
+
+  if (tooltipPositionFrame) {
+    window.cancelAnimationFrame(tooltipPositionFrame);
+  }
+
+  tooltipPositionFrame = window.requestAnimationFrame(() => {
+    flushTooltipPosition(anchor);
+  });
+};
+
 const showDockTooltip = async (label: string, event: MouseEvent) => {
   const anchorEl = event.currentTarget as HTMLElement | null;
   if (!anchorEl || !label) return;
@@ -70,18 +85,14 @@ const showDockTooltip = async (label: string, event: MouseEvent) => {
   dockTooltip.anchorEl = anchorEl;
 
   await nextTick();
-  positionDockTooltip(anchorEl);
-};
-
-const updateDockTooltip = (event: MouseEvent) => {
-  if (!dockTooltip.visible) return;
-  const anchorEl = event.currentTarget as HTMLElement | null;
-  if (!anchorEl) return;
-  dockTooltip.anchorEl = anchorEl;
-  positionDockTooltip(anchorEl);
+  scheduleTooltipPosition(anchorEl);
 };
 
 const hideDockTooltip = () => {
+  if (tooltipPositionFrame && typeof window !== 'undefined') {
+    window.cancelAnimationFrame(tooltipPositionFrame);
+    tooltipPositionFrame = 0;
+  }
   dockTooltip.visible = false;
   dockTooltip.label = '';
   dockTooltip.anchorEl = null;
@@ -89,7 +100,7 @@ const hideDockTooltip = () => {
 
 const handleViewportChange = () => {
   if (!dockTooltip.visible) return;
-  positionDockTooltip();
+  scheduleTooltipPosition();
 };
 
 if (typeof window !== 'undefined') {
@@ -99,6 +110,9 @@ if (typeof window !== 'undefined') {
 
 onBeforeUnmount(() => {
   if (typeof window === 'undefined') return;
+  if (tooltipPositionFrame) {
+    window.cancelAnimationFrame(tooltipPositionFrame);
+  }
   window.removeEventListener('resize', handleViewportChange);
   window.removeEventListener('scroll', handleViewportChange, true);
 });
@@ -143,7 +157,6 @@ const handleContextMenu = (event: MouseEvent, game: GameInfo) => {
       class="dock-icon"
       :class="{ active: isGameActive(game.name) }"
       @mouseenter="showDockTooltip(getGameName(game), $event)"
-      @mousemove="updateDockTooltip($event)"
       @mouseleave="hideDockTooltip"
       @click.stop="handleSelectGame(game)"
       @contextmenu.prevent="handleContextMenu($event, game)"

@@ -11,6 +11,7 @@ use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::time::SystemTime;
 use tracing::{info, warn};
 
 mod runtime;
@@ -721,6 +722,63 @@ fn heal_locked_importer_legacy_bool(
     }
 }
 
+fn contains_xxmi_runtime_dlls(path: &Path) -> bool {
+    path.join("d3d11.dll").is_file() && path.join("d3dcompiler_47.dll").is_file()
+}
+
+fn parse_version_sort_key(raw: &str) -> Vec<u32> {
+    raw.trim_start_matches(|ch: char| ch == 'v' || ch == 'V')
+        .split(|ch: char| !ch.is_ascii_digit())
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| segment.parse::<u32>().unwrap_or(0))
+        .collect()
+}
+
+fn resolve_xxmi_packages_folder(app_root: &Path) -> PathBuf {
+    let packages_root = app_root.join("3Dmigoto-data").join("Packages");
+    let legacy_dir = packages_root.join("XXMI");
+    let versioned_root = packages_root.join("xxmi-libs");
+
+    let latest_versioned = std::fs::read_dir(&versioned_root)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.flatten())
+        .filter_map(|entry| {
+            let path = entry.path();
+            if !path.is_dir() || !contains_xxmi_runtime_dlls(&path) {
+                return None;
+            }
+
+            let dir_name = entry.file_name().to_string_lossy().to_string();
+            let version_key = parse_version_sort_key(&dir_name);
+            let modified = entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            Some((version_key, modified, path))
+        })
+        .max_by(|(left_version, left_modified, _), (right_version, right_modified, _)| {
+            left_version
+                .cmp(right_version)
+                .then_with(|| left_modified.cmp(right_modified))
+        })
+        .map(|(_, _, path)| path);
+
+    if let Some(versioned_dir) = latest_versioned {
+        info!(
+            "Using latest xxmi-libs runtime package for bridge deployment: {}",
+            versioned_dir.display()
+        );
+        return versioned_dir;
+    }
+
+    info!(
+        "Falling back to legacy XXMI runtime package for bridge deployment: {}",
+        legacy_dir.display()
+    );
+    legacy_dir
+}
+
 /// Generate the bridge-config.json file content from game configuration.
 ///
 /// All paths are converted to Windows format (Z:\...) because the bridge
@@ -760,10 +818,7 @@ pub fn build_bridge_config(
     let migoto_data_linux = path_state.migoto_path.to_string_lossy().into_owned();
     let importer_folder_linux = path_state.importer_folder.to_string_lossy().into_owned();
 
-    let packages_folder_linux = app_root
-        .join("3Dmigoto-data")
-        .join("Packages")
-        .join("XXMI")
+    let packages_folder_linux = resolve_xxmi_packages_folder(app_root)
         .to_string_lossy()
         .into_owned();
     let cache_folder_linux = format!("{}/Cache", app_root_str);
@@ -971,6 +1026,16 @@ pub(crate) async fn run_bridge(
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        std::env::temp_dir().join(format!("ssmt4-bridge-test-{}-{}", name, suffix))
+    }
 
     fn build_test_bridge_config(importer_name: &str, migoto: Option<Value>) -> BridgeConfig {
         let game_config_json = migoto.map(|migoto| {
@@ -1186,5 +1251,40 @@ mod tests {
 
         let error = config.validate().expect_err("validation should fail");
         assert!(error.contains("pre_launch.cmd"));
+    }
+
+    #[test]
+    fn resolve_xxmi_packages_folder_prefers_latest_versioned_runtime() {
+        let root = unique_temp_dir("xxmi-latest");
+        let older = root.join("3Dmigoto-data/Packages/xxmi-libs/v0.7.9");
+        let newer = root.join("3Dmigoto-data/Packages/xxmi-libs/v0.8.1");
+        fs::create_dir_all(&older).expect("create older dir");
+        fs::create_dir_all(&newer).expect("create newer dir");
+        fs::write(older.join("d3d11.dll"), b"older").expect("write older d3d11");
+        fs::write(older.join("d3dcompiler_47.dll"), b"older").expect("write older compiler");
+        fs::write(newer.join("d3d11.dll"), b"newer").expect("write newer d3d11");
+        fs::write(newer.join("d3dcompiler_47.dll"), b"newer").expect("write newer compiler");
+
+        let resolved = resolve_xxmi_packages_folder(&root);
+
+        assert_eq!(resolved, newer);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_xxmi_packages_folder_falls_back_to_legacy_dir() {
+        let root = unique_temp_dir("xxmi-legacy");
+        let legacy = root.join("3Dmigoto-data/Packages/XXMI");
+        fs::create_dir_all(&legacy).expect("create legacy dir");
+        fs::write(legacy.join("d3d11.dll"), b"legacy").expect("write legacy d3d11");
+        fs::write(legacy.join("d3dcompiler_47.dll"), b"legacy")
+            .expect("write legacy compiler");
+
+        let resolved = resolve_xxmi_packages_folder(&root);
+
+        assert_eq!(resolved, legacy);
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

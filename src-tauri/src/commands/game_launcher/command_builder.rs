@@ -3,71 +3,15 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-fn migoto_section<'a>(config: Option<&'a Value>) -> Option<&'a Value> {
-    config
-        .and_then(|value| value.pointer("/other/migoto"))
-        .or_else(|| config.and_then(|value| value.get("migoto")))
-}
-
-fn migoto_bool_flag(migoto: Option<&Value>, key: &str) -> bool {
-    migoto
-        .and_then(|value| value.get(key))
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false)
-}
-
-fn migoto_string_flag(migoto: Option<&Value>, key: &str) -> Option<String> {
-    migoto
-        .and_then(|value| value.get(key))
-        .and_then(|value| value.as_str())
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
-fn has_active_migoto_entries(dir: &Path) -> bool {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return false;
-    };
-
-    entries.flatten().any(|entry| {
-        let file_name = entry.file_name();
-        let name = file_name.to_string_lossy();
-        !name.is_empty() && !name.starts_with('.') && !name.ends_with(".disabled")
-    })
-}
-
 fn should_run_migoto_bridge(
-    game_preset: &str,
-    game_config_data: Option<&Value>,
-    app_data_dir: &Path,
+    _game_preset: &str,
+    _game_config_data: Option<&Value>,
+    _app_data_dir: &Path,
 ) -> bool {
-    let migoto = migoto_section(game_config_data);
-    let path_state = crate::utils::migoto_layout::resolve_migoto_path_state_for_game(
-        game_preset,
-        game_config_data.unwrap_or(&Value::Null),
-        app_data_dir.join("3Dmigoto-data"),
-    );
-
-    let has_mod_entries = has_active_migoto_entries(&path_state.mod_folder);
-    let has_shader_fixes = has_active_migoto_entries(&path_state.shader_fixes_folder);
-    let has_debug_features = [
-        "enable_hunting",
-        "dump_shaders",
-        "calls_logging",
-        "debug_logging",
-    ]
-    .iter()
-    .any(|key| migoto_bool_flag(migoto, key));
-    let has_extra_libraries = migoto_bool_flag(migoto, "extra_libraries_enabled")
-        && migoto_string_flag(migoto, "extra_libraries_paths").is_some();
-    let has_custom_launch = migoto_bool_flag(migoto, "custom_launch_enabled")
-        && migoto_string_flag(migoto, "custom_launch_cmd").is_some();
-
-    has_mod_entries
-        || has_shader_fixes
-        || has_debug_features
-        || has_extra_libraries
-        || has_custom_launch
+    // Keep EFMI/XXMI injected whenever game-level 3DMigoto is enabled so
+    // runtime controls such as F10/F12 remain available even when all Mods
+    // are currently suffixed with `.disabled` or ShaderFixes is empty.
+    true
 }
 
 fn should_force_umu_runner_with_availability(
@@ -105,26 +49,26 @@ fn should_force_umu_runner(
     )
 }
 
+fn parse_env_bool_with_default(value: Option<&str>, default: bool) -> bool {
+    let Some(value) = value else {
+        return default;
+    };
+
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => true,
+        "0" | "false" | "no" | "off" => false,
+        _ => default,
+    }
+}
+
 fn should_apply_efmi_legacy_rabbitfx_compat() -> bool {
-    std::env::var("SSMT4_ENABLE_EFMI_COMPAT_REWRITE")
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
+    let configured = std::env::var("SSMT4_ENABLE_EFMI_COMPAT_REWRITE").ok();
+    parse_env_bool_with_default(configured.as_deref(), true)
 }
 
 fn should_use_endfield_official_launcher_chain() -> bool {
-    std::env::var("SSMT4_ENDFIELD_USE_OFFICIAL_LAUNCHER")
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
+    let configured = std::env::var("SSMT4_ENDFIELD_USE_OFFICIAL_LAUNCHER").ok();
+    parse_env_bool_with_default(configured.as_deref(), false)
 }
 
 fn configure_endfield_bridge_chain(
@@ -255,6 +199,7 @@ struct EfmiLegacyRabbitFxCompatSummary {
     removed_settextures_runs: usize,
     removed_stale_compat_runs: usize,
     removed_stale_compat_sections: usize,
+    removed_placeholder_texture_refs: usize,
     typo_fixes: usize,
 }
 
@@ -264,6 +209,7 @@ struct EfmiLegacyRabbitFxCompatFileRewrite {
     removed_settextures_runs: usize,
     removed_stale_compat_runs: usize,
     removed_stale_compat_sections: usize,
+    removed_placeholder_texture_refs: usize,
     typo_fixes: usize,
 }
 
@@ -309,6 +255,38 @@ fn is_stale_ssmt4_rabbitfx_compat_run(line: &str) -> bool {
     lower.starts_with("run") && lower.contains("ssmt4_rabbitfx_compat") && lower.contains('=')
 }
 
+fn parse_ini_section_name(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if !(trimmed.starts_with('[') && trimmed.ends_with(']')) {
+        return None;
+    }
+    Some(trimmed[1..trimmed.len() - 1].trim().to_ascii_lowercase())
+}
+
+fn is_texture_override_placeholder_texture_ref(
+    line: &str,
+    current_section: Option<&str>,
+) -> bool {
+    let Some(section) = current_section else {
+        return false;
+    };
+    if !section.starts_with("textureoverride") {
+        return false;
+    }
+
+    let trimmed = line.trim();
+    let Some((lhs, rhs)) = trimmed.split_once('=') else {
+        return false;
+    };
+
+    let lhs = lhs.trim().to_ascii_lowercase();
+    if !(lhs.starts_with("ps-t") && lhs[4..].chars().all(|ch| ch.is_ascii_digit())) {
+        return false;
+    }
+
+    rhs.trim().eq_ignore_ascii_case("ref Resource_Texture")
+}
+
 fn convert_rabbitfx_assignment_to_ps_slot(line: &str) -> Option<String> {
     let trimmed = line.trim();
     let lower = trimmed.to_ascii_lowercase();
@@ -338,10 +316,12 @@ fn convert_rabbitfx_assignment_to_ps_slot(line: &str) -> Option<String> {
 fn rewrite_efmi_legacy_rabbitfx_ini(
     content: &str,
 ) -> Option<(String, EfmiLegacyRabbitFxCompatFileRewrite)> {
-    if !content.contains("RabbitFX")
-        && !content.contains("handling = ski")
-        && !content.contains("SSMT4_RabbitFX_Compat")
-        && !content.contains("ssmt4_rabbitfx_compat")
+    let content_lower = content.to_ascii_lowercase();
+    if !content_lower.contains("rabbitfx")
+        && !content_lower.contains("ref resource_texture")
+        && !content_lower.contains("handling = ski")
+        && !content_lower.contains("handling=ski")
+        && !content_lower.contains("ssmt4_rabbitfx_compat")
     {
         return None;
     }
@@ -350,12 +330,14 @@ fn rewrite_efmi_legacy_rabbitfx_ini(
     let mut summary = EfmiLegacyRabbitFxCompatFileRewrite::default();
     let mut changed = false;
     let mut in_stale_compat_section = false;
+    let mut current_section = None::<String>;
 
     for line in content.lines() {
         let trimmed = line.trim();
 
         if is_stale_ssmt4_rabbitfx_compat_section_header(line) {
             in_stale_compat_section = true;
+            current_section = None;
             summary.removed_stale_compat_sections += 1;
             changed = true;
             continue;
@@ -368,6 +350,10 @@ fn rewrite_efmi_legacy_rabbitfx_ini(
                 changed = true;
                 continue;
             }
+        }
+
+        if let Some(section) = parse_ini_section_name(line) {
+            current_section = Some(section);
         }
 
         if is_stale_ssmt4_rabbitfx_compat_run(line) {
@@ -383,6 +369,12 @@ fn rewrite_efmi_legacy_rabbitfx_ini(
             let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
             rewritten.push(format!("{}handling = skip", indent));
             summary.typo_fixes += 1;
+            changed = true;
+            continue;
+        }
+
+        if is_texture_override_placeholder_texture_ref(line, current_section.as_deref()) {
+            summary.removed_placeholder_texture_refs += 1;
             changed = true;
             continue;
         }
@@ -436,6 +428,7 @@ fn apply_efmi_legacy_rabbitfx_compat(
         summary.removed_settextures_runs += file_summary.removed_settextures_runs;
         summary.removed_stale_compat_runs += file_summary.removed_stale_compat_runs;
         summary.removed_stale_compat_sections += file_summary.removed_stale_compat_sections;
+        summary.removed_placeholder_texture_refs += file_summary.removed_placeholder_texture_refs;
         summary.typo_fixes += file_summary.typo_fixes;
     }
 
@@ -510,21 +503,6 @@ pub(super) fn resolve_run_target(
             ),
         );
     }
-    if migoto_enabled && !migoto_runtime_required {
-        info!(
-            "3DMigoto 已启用，但未检测到有效 Mods/ShaderFixes 或高级调试功能，跳过 bridge 注入链: preset={}",
-            target.game_preset
-        );
-        super::append_game_log(
-            game_name,
-            "INFO",
-            "bridge",
-            format!(
-                "3DMigoto enabled for preset {}, but no active Mods/ShaderFixes or advanced bridge features were detected; skipping bridge injection",
-                target.game_preset
-            ),
-        );
-    }
     if migoto_enabled && !configured_migoto_importer.eq_ignore_ascii_case(&migoto_importer) {
         warn!(
             "3DMigoto importer 已按游戏预设校正: preset={}, configured={}, effective={}",
@@ -557,15 +535,17 @@ pub(super) fn resolve_run_target(
                         || summary.removed_settextures_runs > 0
                         || summary.removed_stale_compat_runs > 0
                         || summary.removed_stale_compat_sections > 0
+                        || summary.removed_placeholder_texture_refs > 0
                         || summary.typo_fixes > 0 =>
                 {
                     info!(
-                        "EFMI 兼容修复已应用: files={}, converted_bindings={}, removed_settextures_runs={}, removed_stale_compat_runs={}, removed_stale_compat_sections={}, typo_fixes={}, mod_root={}",
+                        "EFMI 兼容修复已应用: files={}, converted_bindings={}, removed_settextures_runs={}, removed_stale_compat_runs={}, removed_stale_compat_sections={}, removed_placeholder_texture_refs={}, typo_fixes={}, mod_root={}",
                         summary.files_rewritten,
                         summary.converted_bindings,
                         summary.removed_settextures_runs,
                         summary.removed_stale_compat_runs,
                         summary.removed_stale_compat_sections,
+                        summary.removed_placeholder_texture_refs,
                         summary.typo_fixes,
                         path_state.mod_folder.display()
                     );
@@ -574,12 +554,13 @@ pub(super) fn resolve_run_target(
                         "INFO",
                         "bridge",
                         format!(
-                            "EFMI compatibility patch applied: files={}, converted_bindings={}, removed_settextures_runs={}, removed_stale_compat_runs={}, removed_stale_compat_sections={}, typo_fixes={}",
+                            "EFMI compatibility patch applied: files={}, converted_bindings={}, removed_settextures_runs={}, removed_stale_compat_runs={}, removed_stale_compat_sections={}, removed_placeholder_texture_refs={}, typo_fixes={}",
                             summary.files_rewritten,
                             summary.converted_bindings,
                             summary.removed_settextures_runs,
                             summary.removed_stale_compat_runs,
                             summary.removed_stale_compat_sections,
+                            summary.removed_placeholder_texture_refs,
                             summary.typo_fixes
                         ),
                     );
@@ -1495,6 +1476,33 @@ mod tests {
     }
 
     #[test]
+    fn parse_env_bool_with_default_honors_defaults_and_explicit_values() {
+        assert!(parse_env_bool_with_default(None, true));
+        assert!(!parse_env_bool_with_default(None, false));
+        assert!(parse_env_bool_with_default(Some("true"), false));
+        assert!(parse_env_bool_with_default(Some("YES"), false));
+        assert!(!parse_env_bool_with_default(Some("false"), true));
+        assert!(!parse_env_bool_with_default(Some("off"), true));
+        assert!(parse_env_bool_with_default(Some("unexpected"), true));
+        assert!(!parse_env_bool_with_default(Some("unexpected"), false));
+    }
+
+    #[test]
+    fn migoto_bridge_stays_enabled_even_without_active_mod_entries() {
+        assert!(should_run_migoto_bridge(
+            "ArknightsEndfield",
+            Some(&serde_json::json!({
+                "other": {
+                    "migoto": {
+                        "enabled": true
+                    }
+                }
+            })),
+            Path::new("/tmp/ssmt4-no-mods"),
+        ));
+    }
+
+    #[test]
     fn rewrite_efmi_legacy_rabbitfx_converts_to_standard_ps_slots() {
         let input = r#"[TextureOverride_Component1]
 hash = 48e5c5f7
@@ -1518,6 +1526,52 @@ endif
         assert!(rewritten.contains("ps-t1 = ref ResourceLightmap05"));
         assert!(rewritten.contains("ps-t2 = ref ResourceNormalmap05"));
         assert!(!rewritten.contains("CommandList\\RabbitFX\\SetTextures"));
+    }
+
+    #[test]
+    fn rewrite_efmi_legacy_rabbitfx_detects_lowercase_rabbitfx_content() {
+        let input = r#"[TextureOverride_Component1]
+hash = 48e5c5f7
+if $mod_enabled
+    resource\rabbitfx\diffuse = ref ResourceDiffuse05
+    resource\rabbitfx\lightmap = ref ResourceLightmap05
+    resource\rabbitfx\normalmap = ref ResourceNormalmap05
+    run = commandlist\rabbitfx\settextures
+endif
+"#;
+
+        let (rewritten, summary) = rewrite_efmi_legacy_rabbitfx_ini(input).expect("compat rewrite");
+
+        assert_eq!(summary.converted_bindings, 3);
+        assert_eq!(summary.removed_settextures_runs, 1);
+        assert!(rewritten.contains("ps-t0 = ref ResourceDiffuse05"));
+        assert!(rewritten.contains("ps-t1 = ref ResourceLightmap05"));
+        assert!(rewritten.contains("ps-t2 = ref ResourceNormalmap05"));
+        assert!(!rewritten.contains("commandlist\\rabbitfx\\settextures"));
+    }
+
+    #[test]
+    fn rewrite_efmi_legacy_rabbitfx_removes_alpha4_placeholder_texture_refs() {
+        let input = r#"[TextureOverride_Component3]
+hash = 4dfadf17
+ps-t0 = ref Resource_Texture16
+ps-t1 = ref Resource_Texture
+ps-t2 = ref Resource_Texture
+if $mod_enabled && DRAW_TYPE == 4
+    handling = skip
+    run = CommandList_Draw_Component3
+endif
+
+[Resource_Texture16]
+filename = Textures/Components-3-6 t=74944372.dds
+"#;
+
+        let (rewritten, summary) = rewrite_efmi_legacy_rabbitfx_ini(input).expect("compat rewrite");
+
+        assert_eq!(summary.removed_placeholder_texture_refs, 2);
+        assert!(rewritten.contains("ps-t0 = ref Resource_Texture16"));
+        assert!(!rewritten.contains("ps-t1 = ref Resource_Texture"));
+        assert!(!rewritten.contains("ps-t2 = ref Resource_Texture"));
     }
 
     #[test]
