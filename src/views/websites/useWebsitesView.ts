@@ -4,7 +4,6 @@ import type { LinkItem } from './types';
 
 const baseLinks: LinkItem[] = [
   { key: 'github', category: 'project', url: 'https://github.com/xiaobai01111/SSMT4-Linux' },
-  { key: 'gitee', category: 'project', url: 'https://gitee.com/xiaobai01111/ssmt4-linux' },
   { key: 'dataMirror', category: 'project', url: 'https://github.com/xiaobai01111/data-linux' },
   { key: 'releases', category: 'project', url: 'https://github.com/xiaobai01111/SSMT4-Linux/releases' },
   { key: 'issues', category: 'project', url: 'https://github.com/xiaobai01111/SSMT4-Linux/issues' },

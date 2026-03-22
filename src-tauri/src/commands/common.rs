@@ -158,12 +158,6 @@ pub fn mark_startup_ready(app: tauri::AppHandle) -> Result<(), String> {
         let _ = main_window.set_focus();
     }
 
-    if let Some(splash_window) = app.get_webview_window("startup-splash") {
-        splash_window
-            .close()
-            .map_err(|e| format!("关闭启动动画窗口失败: {}", e))?;
-    }
-
     Ok(())
 }
 

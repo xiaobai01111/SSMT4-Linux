@@ -34,7 +34,6 @@ export default defineConfig(({ command }) => ({
           rollupOptions: {
             input: {
               main: resolve(__dirname, "index.html"),
-              splash: resolve(__dirname, "splash.html"),
             },
             output: {
               manualChunks(id) {

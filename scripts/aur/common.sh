@@ -33,16 +33,45 @@ ensure_aur_srcinfo() {
   )
 }
 
+try_sync_release_tag_from_origin() {
+  local root_dir="$1"
+  local tag_name="$2"
+
+  if ! git -C "$root_dir" remote get-url origin >/dev/null 2>&1; then
+    return 1
+  fi
+
+  echo "提示: 本地缺少 tag ${tag_name}，尝试从 origin 同步 tags..." >&2
+
+  if ! env \
+    GIT_TERMINAL_PROMPT=0 \
+    GIT_CONFIG_GLOBAL=/dev/null \
+    GIT_CONFIG_NOSYSTEM=1 \
+    git \
+      -C "$root_dir" \
+      -c credential.helper= \
+      -c core.askPass=true \
+      fetch --tags origin >/dev/null 2>&1; then
+    return 1
+  fi
+
+  git -C "$root_dir" rev-parse -q --verify "refs/tags/${tag_name}" >/dev/null 2>&1
+}
+
 require_release_tag_at_head() {
   local root_dir="$1"
   local tag_name="$2"
 
-  if ! git -C "$root_dir" rev-parse -q --verify "refs/tags/${tag_name}" >/dev/null 2>&1; then
+  if ! git -C "$root_dir" rev-parse -q --verify "refs/tags/${tag_name}" >/dev/null 2>&1 \
+    && ! try_sync_release_tag_from_origin "$root_dir" "$tag_name"; then
     echo "错误: 当前版本缺少本地 Git tag: ${tag_name}" >&2
-    echo "请先提交版本变更并创建 tag，例如：" >&2
+    echo "已尝试从 origin 同步 tags，但仍未找到该 tag。" >&2
+    echo "请先提交版本变更并创建 / 推送 tag，例如：" >&2
     echo "  git add version version-log package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml" >&2
     echo "  git commit -m \"release: ${tag_name}\"" >&2
     echo "  git tag ${tag_name}" >&2
+    echo "  git push origin HEAD" >&2
+    echo "  git push origin ${tag_name}" >&2
     return 1
   fi
 

@@ -1,5 +1,5 @@
 pkgname=ssmt4-linux
-pkgver=0.0.10_beta
+pkgver=0.0.11_beta
 pkgrel=1
 pkgdesc="SSMT4 - Super Simple Linux Game Tools 4th"
 arch=('x86_64')
