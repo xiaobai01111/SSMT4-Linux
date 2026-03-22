@@ -7,16 +7,16 @@ use std::process::Command;
 use std::sync::{Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const DATA_PARAMETERS_GITHUB_REPO_URL: &str = "https://github.com/peachycommit/data-linux.git";
+pub const DATA_PARAMETERS_GITHUB_REPO_URL: &str = "https://github.com/xiaobai01111/data-linux.git";
 pub const DATA_PARAMETERS_REPO_MIRRORS: &[(&str, &str)] =
     &[("GitHub", DATA_PARAMETERS_GITHUB_REPO_URL)];
-pub const DATA_PARAMETERS_GITHUB_PAGE_URL: &str = "https://github.com/peachycommit/data-linux";
+pub const DATA_PARAMETERS_GITHUB_PAGE_URL: &str = "https://github.com/xiaobai01111/data-linux";
 pub const DATA_PARAMETERS_REPO_PAGES: &[(&str, &str)] =
     &[("GitHub", DATA_PARAMETERS_GITHUB_PAGE_URL)];
 pub const DATA_PARAMETERS_VERSION_MIRRORS: &[(&str, &str)] = &[
     (
         "GitHub",
-        "https://raw.githubusercontent.com/peachycommit/data-linux/main/version",
+        "https://raw.githubusercontent.com/xiaobai01111/data-linux/main/version",
     ),
 ];
 pub const DATA_REPO_DIR_NAME: &str = "data-linux";

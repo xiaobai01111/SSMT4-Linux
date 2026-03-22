@@ -3,12 +3,12 @@ import { useI18n } from 'vue-i18n';
 import type { LinkItem } from './types';
 
 const baseLinks: LinkItem[] = [
-  { key: 'github', category: 'project', url: 'https://github.com/peachycommit/ssmt4-linux' },
+  { key: 'github', category: 'project', url: 'https://github.com/xiaobai01111/SSMT4-Linux' },
   { key: 'gitee', category: 'project', url: 'https://gitee.com/xiaobai01111/ssmt4-linux' },
-  { key: 'dataMirror', category: 'project', url: 'https://github.com/peachycommit/data-linux' },
-  { key: 'releases', category: 'project', url: 'https://github.com/peachycommit/ssmt4-linux/releases' },
-  { key: 'issues', category: 'project', url: 'https://github.com/peachycommit/ssmt4-linux/issues' },
-  { key: 'docs', category: 'project', url: 'https://github.com/peachycommit/ssmt4-linux/wiki' },
+  { key: 'dataMirror', category: 'project', url: 'https://github.com/xiaobai01111/data-linux' },
+  { key: 'releases', category: 'project', url: 'https://github.com/xiaobai01111/SSMT4-Linux/releases' },
+  { key: 'issues', category: 'project', url: 'https://github.com/xiaobai01111/SSMT4-Linux/issues' },
+  { key: 'docs', category: 'project', url: 'https://github.com/xiaobai01111/SSMT4-Linux/wiki' },
   { key: 'hsr', category: 'games', cnUrl: 'https://sr.mihoyo.com/', globalUrl: 'https://hsr.hoyoverse.com/' },
   { key: 'zzz', category: 'games', cnUrl: 'https://zzz.mihoyo.com/', globalUrl: 'https://zenless.hoyoverse.com/' },
   { key: 'ww', category: 'games', cnUrl: 'https://mc.kurogames.com/', globalUrl: 'https://wutheringwaves.kurogames.com/' },

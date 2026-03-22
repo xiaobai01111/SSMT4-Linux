@@ -60,7 +60,7 @@ echo "==> 版本信息"
 echo "    version : $VERSION_RAW"
 echo "    pkgver  : $PKGVER"
 echo "    pkgrel  : $PKGREL"
-echo "    source  : https://github.com/peachycommit/ssmt4-linux.git"
+echo "    source  : https://github.com/xiaobai01111/SSMT4-Linux.git"
 
 # ── 1. 更新 PKGBUILD pkgver ──────────────────────────
 

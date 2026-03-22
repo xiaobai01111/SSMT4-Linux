@@ -8,7 +8,7 @@ export const useDocumentsView = () => {
   const route = useRoute();
   const router = useRouter();
   const tr = (key: string, fallback: string) => (te(key) ? t(key) : fallback);
-  const wikiUrl = 'https://github.com/peachycommit/ssmt4-linux/wiki';
+  const wikiUrl = 'https://github.com/xiaobai01111/SSMT4-Linux/wiki';
 
   const fallbackDocContent = (title: string, file: string): string => [
     `# ${title}`,

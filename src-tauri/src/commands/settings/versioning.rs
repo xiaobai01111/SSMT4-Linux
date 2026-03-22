@@ -15,13 +15,13 @@ pub struct VersionCheckInfo {
 const APP_VERSION_REMOTE_SOURCES: &[(&str, &str, &str)] = &[
     (
         "GitHub",
-        "https://raw.githubusercontent.com/peachycommit/ssmt4-linux/main/version",
-        "https://raw.githubusercontent.com/peachycommit/ssmt4-linux/main/version-log",
+        "https://raw.githubusercontent.com/xiaobai01111/SSMT4-Linux/main/version",
+        "https://raw.githubusercontent.com/xiaobai01111/SSMT4-Linux/main/version-log",
     ),
 ];
 
 const APP_REPO_PAGES: &[(&str, &str)] =
-    &[("GitHub", "https://github.com/peachycommit/ssmt4-linux")];
+    &[("GitHub", "https://github.com/xiaobai01111/SSMT4-Linux")];
 
 fn read_trimmed_file(path: &Path) -> Option<String> {
     std::fs::read_to_string(path)
