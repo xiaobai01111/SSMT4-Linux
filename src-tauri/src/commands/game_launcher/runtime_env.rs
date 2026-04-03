@@ -163,7 +163,7 @@ pub(super) fn load_prefix_runtime_context(
         "INFO",
         "runtime",
         format!(
-            "proton settings: use_umu_run={}, use_pressure_vessel={}, sandbox_enabled={}, sandbox_isolate_home={}, steam_app_id={}, media_gst={}, wayland={}, no_d3d12={}, mangohud={}, steamdeck={}, steamos={}, custom_env_count={}",
+            "proton settings: use_umu_run={}, use_pressure_vessel={}, sandbox_enabled={}, sandbox_isolate_home={}, steam_app_id={}, media_gst={}, wayland={}, no_d3d12={}, mangohud={}, steamdeck={}, steamos={}, dxvk_hud={}, dxvk_async={}, dxvk_frame_rate={}, disable_gpu_filter={}, custom_env_count={}",
             settings.use_umu_run,
             settings.use_pressure_vessel,
             settings.sandbox_enabled,
@@ -175,6 +175,14 @@ pub(super) fn load_prefix_runtime_context(
             settings.mangohud,
             settings.steam_deck_compat,
             settings.steamos_compat,
+            if settings.dxvk_hud.trim().is_empty() {
+                "(disabled)"
+            } else {
+                settings.dxvk_hud.trim()
+            },
+            settings.dxvk_async,
+            settings.dxvk_frame_rate,
+            settings.disable_gpu_filter,
             settings.custom_env.len()
         ),
     );
@@ -435,6 +443,7 @@ pub(super) fn build_launch_environment(
         env.insert("STEAMOS".to_string(), "1".to_string());
         env.insert("steamos".to_string(), "1".to_string());
     }
+    apply_dxvk_env_settings(settings, &mut env);
 
     apply_preset_env_defaults(target.preset_meta, &mut env);
 
@@ -506,7 +515,7 @@ pub(super) fn build_launch_environment(
                             "VK_LOADER_DRIVERS_SELECT".to_string(),
                             "nvidia*".to_string(),
                         );
-                        env.insert("DXVK_FILTER_DEVICE_NAME".to_string(), "NVIDIA".to_string());
+                        apply_dxvk_filter_device_name(settings, &mut env, "NVIDIA");
                         info!(
                             "GPU 选择: NVIDIA GPU {} ({}) [Vulkan+OpenGL]",
                             gpu.index, gpu.name
@@ -658,6 +667,47 @@ fn apply_preset_env_defaults(
             env.insert(key.clone(), value.clone());
         }
     }
+}
+
+fn apply_dxvk_env_settings(
+    settings: &crate::configs::wine_config::ProtonSettings,
+    env: &mut HashMap<String, String>,
+) {
+    let hud = settings.dxvk_hud.trim();
+    if !hud.is_empty() {
+        env.insert("DXVK_HUD".to_string(), hud.to_string());
+    }
+
+    if settings.dxvk_async {
+        env.insert("DXVK_ASYNC".to_string(), "1".to_string());
+    }
+
+    if settings.dxvk_frame_rate > 0 {
+        env.insert(
+            "DXVK_FRAME_RATE".to_string(),
+            settings.dxvk_frame_rate.to_string(),
+        );
+    }
+}
+
+fn apply_dxvk_filter_device_name(
+    settings: &crate::configs::wine_config::ProtonSettings,
+    env: &mut HashMap<String, String>,
+    filter_name: &str,
+) {
+    if settings.disable_gpu_filter {
+        return;
+    }
+
+    let filter_name = filter_name.trim();
+    if filter_name.is_empty() {
+        return;
+    }
+
+    env.insert(
+        "DXVK_FILTER_DEVICE_NAME".to_string(),
+        filter_name.to_string(),
+    );
 }
 
 pub(super) fn find_umu_run_binary() -> Option<PathBuf> {
@@ -877,6 +927,57 @@ mod tests {
         assert_eq!(
             env.get("STEAM_COMPAT_APP_ID").map(String::as_str),
             Some("2452330")
+        );
+    }
+
+    #[test]
+    fn apply_dxvk_env_settings_exports_user_facing_dxvk_options() {
+        let mut settings = default_settings();
+        settings.dxvk_hud = "full".to_string();
+        settings.dxvk_async = true;
+        settings.dxvk_frame_rate = 120;
+        let mut env = HashMap::new();
+
+        apply_dxvk_env_settings(&settings, &mut env);
+
+        assert_eq!(env.get("DXVK_HUD").map(String::as_str), Some("full"));
+        assert_eq!(env.get("DXVK_ASYNC").map(String::as_str), Some("1"));
+        assert_eq!(env.get("DXVK_FRAME_RATE").map(String::as_str), Some("120"));
+    }
+
+    #[test]
+    fn apply_dxvk_env_settings_skips_disabled_values() {
+        let settings = default_settings();
+        let mut env = HashMap::new();
+
+        apply_dxvk_env_settings(&settings, &mut env);
+
+        assert!(!env.contains_key("DXVK_HUD"));
+        assert!(!env.contains_key("DXVK_ASYNC"));
+        assert!(!env.contains_key("DXVK_FRAME_RATE"));
+    }
+
+    #[test]
+    fn apply_dxvk_filter_device_name_respects_disable_gpu_filter() {
+        let mut settings = default_settings();
+        settings.disable_gpu_filter = true;
+        let mut env = HashMap::new();
+
+        apply_dxvk_filter_device_name(&settings, &mut env, "NVIDIA");
+
+        assert!(!env.contains_key("DXVK_FILTER_DEVICE_NAME"));
+    }
+
+    #[test]
+    fn apply_dxvk_filter_device_name_sets_value_when_enabled() {
+        let settings = default_settings();
+        let mut env = HashMap::new();
+
+        apply_dxvk_filter_device_name(&settings, &mut env, "NVIDIA");
+
+        assert_eq!(
+            env.get("DXVK_FILTER_DEVICE_NAME").map(String::as_str),
+            Some("NVIDIA")
         );
     }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, provide, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { appSettings, BGType } from "./store";
@@ -28,8 +28,20 @@ const effectiveContentBlur = computed(() => {
   if (!isBlurRoute.value) return 0;
   return Math.min(Math.max(appSettings.contentBlur || 0, 0), 3);
 });
+const targetBackgroundSrc = computed(() => (
+  appSettings.bgType === BGType.Image ? appSettings.bgImage || '' : ''
+));
+
+const activeBackgroundSrc = ref('');
+const pendingBackgroundSrc = ref('');
+const pendingBackgroundVisible = ref(false);
 
 let settingsPreloadTimer: ReturnType<typeof setTimeout> | null = null;
+let backgroundTransitionTimer: ReturnType<typeof setTimeout> | null = null;
+let backgroundDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let backgroundRequestId = 0;
+const BACKGROUND_FADE_MS = 220;
+const LIBRARY_BACKGROUND_DEBOUNCE_MS = 180;
 
 const scheduleSettingsPreload = () => {
   const run = () => {
@@ -50,6 +62,119 @@ const scheduleSettingsPreload = () => {
 
   settingsPreloadTimer = setTimeout(run, 900);
 };
+
+const clearBackgroundTransitionTimer = () => {
+  if (!backgroundTransitionTimer) return;
+  clearTimeout(backgroundTransitionTimer);
+  backgroundTransitionTimer = null;
+};
+
+const clearBackgroundDebounceTimer = () => {
+  if (!backgroundDebounceTimer) return;
+  clearTimeout(backgroundDebounceTimer);
+  backgroundDebounceTimer = null;
+};
+
+const finalizePendingBackground = () => {
+  if (!pendingBackgroundSrc.value) return;
+  activeBackgroundSrc.value = pendingBackgroundSrc.value;
+  pendingBackgroundSrc.value = '';
+  pendingBackgroundVisible.value = false;
+  clearBackgroundTransitionTimer();
+};
+
+const preloadBackgroundImage = (src: string) => new Promise<boolean>((resolve) => {
+  if (!src || typeof Image === 'undefined') {
+    resolve(Boolean(src));
+    return;
+  }
+
+  const image = new Image();
+  let settled = false;
+  const finish = (ok: boolean) => {
+    if (settled) return;
+    settled = true;
+    image.onload = null;
+    image.onerror = null;
+    resolve(ok);
+  };
+
+  image.decoding = 'async';
+  image.onload = () => finish(true);
+  image.onerror = () => finish(false);
+  image.src = src;
+
+  if (image.complete) {
+    finish(true);
+  }
+});
+
+const updateBackgroundLayer = async (src: string) => {
+  backgroundRequestId += 1;
+  const requestId = backgroundRequestId;
+  clearBackgroundTransitionTimer();
+
+  if (!src) {
+    activeBackgroundSrc.value = '';
+    pendingBackgroundSrc.value = '';
+    pendingBackgroundVisible.value = false;
+    return;
+  }
+
+  if (!activeBackgroundSrc.value) {
+    activeBackgroundSrc.value = src;
+    pendingBackgroundSrc.value = '';
+    pendingBackgroundVisible.value = false;
+    return;
+  }
+
+  if (src === activeBackgroundSrc.value || src === pendingBackgroundSrc.value) {
+    return;
+  }
+
+  const preloadSucceeded = await preloadBackgroundImage(src);
+  if (requestId !== backgroundRequestId) return;
+
+  if (!preloadSucceeded) {
+    activeBackgroundSrc.value = src;
+    pendingBackgroundSrc.value = '';
+    pendingBackgroundVisible.value = false;
+    return;
+  }
+
+  pendingBackgroundVisible.value = false;
+  pendingBackgroundSrc.value = src;
+  await nextTick();
+  if (requestId !== backgroundRequestId) return;
+
+  window.requestAnimationFrame(() => {
+    if (requestId !== backgroundRequestId || !pendingBackgroundSrc.value) return;
+    pendingBackgroundVisible.value = true;
+    clearBackgroundTransitionTimer();
+    backgroundTransitionTimer = setTimeout(() => {
+      if (requestId !== backgroundRequestId) return;
+      finalizePendingBackground();
+    }, BACKGROUND_FADE_MS + 32);
+  });
+};
+
+watch(
+  [targetBackgroundSrc, () => route.path],
+  ([src, routePath]) => {
+    clearBackgroundDebounceTimer();
+    const delay = routePath === '/games' ? LIBRARY_BACKGROUND_DEBOUNCE_MS : 0;
+    if (delay <= 0) {
+      void updateBackgroundLayer(src);
+      return;
+    }
+
+    backgroundDebounceTimer = setTimeout(() => {
+      backgroundDebounceTimer = null;
+      void updateBackgroundLayer(src);
+    }, delay);
+  },
+  { immediate: true },
+);
 
 /**
  * =========================================================================
@@ -150,6 +275,8 @@ onUnmounted(() => {
     clearTimeout(settingsPreloadTimer);
     settingsPreloadTimer = null;
   }
+  clearBackgroundDebounceTimer();
+  clearBackgroundTransitionTimer();
 });
 
 /* bgStyle removed, handled in template */
@@ -169,12 +296,21 @@ onUnmounted(() => {
 
     <!-- Background Layer -->
     <div class="bg-layer">
-      <!-- Image Background -->
-      <div
-        v-if="appSettings.bgType === BGType.Image && appSettings.bgImage"
-        class="bg-item"
-        :style="{ backgroundImage: `url(${appSettings.bgImage})` }"
-      ></div>
+      <img
+        v-if="activeBackgroundSrc"
+        class="bg-image current"
+        :src="activeBackgroundSrc"
+        alt=""
+        draggable="false"
+      />
+      <img
+        v-if="pendingBackgroundSrc"
+        class="bg-image incoming"
+        :class="{ 'is-visible': pendingBackgroundVisible }"
+        :src="pendingBackgroundSrc"
+        alt=""
+        draggable="false"
+      />
     </div>
     
     <!-- Home & Websites & Settings Ambient Shadow Layer -->
@@ -405,7 +541,9 @@ input, textarea {
 
 .task-toast-enter-active,
 .task-toast-leave-active {
-  transition: all 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
 }
 
 .task-toast-enter-from,
@@ -433,20 +571,36 @@ input, textarea {
   z-index: 0;
   overflow: hidden;
   background-color: #050505; /* Black fallback for transitions */
+  contain: strict;
+  isolation: isolate;
 }
 
 /* Background Transition Items */
-.bg-item {
+.bg-image {
   position: absolute;
-  top: 0;
-  left: 0;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  background-size: cover;
-  background-position: center;
-  will-change: opacity;
+  pointer-events: none;
+  user-select: none;
   contain: strict;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+.bg-image.current {
+  opacity: 1;
+}
+
+.bg-image.incoming {
+  opacity: 0;
+  transition: opacity 0.22s ease;
+  will-change: opacity;
+}
+
+.bg-image.incoming.is-visible {
+  opacity: 1;
 }
 
 /* Transition Classes */
@@ -479,6 +633,7 @@ input, textarea {
     
     /* 2. Very subtle cinematic vignette (corners only, center is pure clean) */
     radial-gradient(circle at 50% 50%, transparent 75%, rgba(0, 0, 0, 0.4) 140%);
+  contain: strict;
 }
 
 .global-dim-layer {
@@ -497,6 +652,7 @@ input, textarea {
         rgba(0, 0, 0, 0.9) 50%, 
         rgba(0, 0, 0, 0.98) 90%
     );
+  contain: strict;
 }
 </style>
 
@@ -508,6 +664,7 @@ input, textarea {
   position: relative;
   z-index: 1; /* Above bg */
   padding-top: 32px; /* TitleBar height */
+  isolation: isolate;
 }
 
 .app-main {
@@ -516,7 +673,8 @@ input, textarea {
   padding: 0;
   overflow: hidden;
   position: relative;
-  contain: layout style;
+  contain: layout style paint;
+  isolation: isolate;
   /* Content area: Configurable */
   background-color: rgba(255, 255, 255, var(--content-bg-opacity, 0.55)); 
   backdrop-filter: none;
@@ -539,6 +697,7 @@ input, textarea {
   overflow-y: auto;
   padding: 0 0 32px 0; /* Add 32px bottom padding globally */
   box-sizing: border-box; /* Ensures padding doesn't cause overflow */
+  contain: layout style paint;
 }
 
 /* Custom Scrollbar for Content */

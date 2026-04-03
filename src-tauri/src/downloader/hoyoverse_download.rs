@@ -584,6 +584,39 @@ async fn download_file_to_disk_chunked(
     Ok(())
 }
 
+async fn promote_verified_temp_file(
+    temp_path: &Path,
+    dest: &Path,
+    expected_size: u64,
+    expected_sha256: Option<&str>,
+    expected_md5: Option<&str>,
+) -> Result<bool, String> {
+    match hash_verify::verify_file_integrity(
+        temp_path,
+        expected_size,
+        expected_sha256,
+        expected_md5,
+    )
+    .await
+    {
+        Ok(_) => {
+            tokio::fs::rename(temp_path, dest)
+                .await
+                .map_err(|e| format!("重命名临时文件失败: {}", e))?;
+            Ok(true)
+        }
+        Err(err) => {
+            warn!(
+                "临时文件校验失败，删除损坏缓存后重新下载: {} ({})",
+                temp_path.display(),
+                err
+            );
+            tokio::fs::remove_file(temp_path).await.ok();
+            Ok(false)
+        }
+    }
+}
+
 async fn download_file_to_disk(request: DiskDownloadRequest<'_>) -> Result<(), String> {
     let DiskDownloadRequest {
         client,
@@ -628,6 +661,21 @@ async fn download_file_to_disk(request: DiskDownloadRequest<'_>) -> Result<(), S
             );
             // 已有部分也计入共享进度
             shared_bytes.fetch_add(downloaded_bytes, Ordering::Relaxed);
+            if expected_size > 0 && downloaded_bytes >= expected_size {
+                if promote_verified_temp_file(
+                    &temp_path,
+                    dest,
+                    expected_size,
+                    Some(expected_sha256),
+                    Some(expected_md5),
+                )
+                .await?
+                {
+                    return Ok(());
+                }
+                shared_bytes.fetch_sub(downloaded_bytes, Ordering::Relaxed);
+                downloaded_bytes = 0;
+            }
         }
     }
 
@@ -699,17 +747,24 @@ async fn download_file_to_disk(request: DiskDownloadRequest<'_>) -> Result<(), S
         }
         416 => {
             if temp_path.exists() {
-                hash_verify::verify_file_integrity(
+                if promote_verified_temp_file(
                     &temp_path,
+                    dest,
                     expected_size,
                     Some(expected_sha256),
                     Some(expected_md5),
                 )
-                .await?;
-                tokio::fs::rename(&temp_path, dest)
-                    .await
-                    .map_err(|e| format!("重命名临时文件失败: {}", e))?;
-                return Ok(());
+                .await?
+                {
+                    return Ok(());
+                }
+                if downloaded_bytes > 0 {
+                    shared_bytes.fetch_sub(downloaded_bytes, Ordering::Relaxed);
+                }
+                return Err(format!(
+                    "HTTP 416 且临时文件校验失败，已清理损坏缓存: {}",
+                    url
+                ));
             }
             return Err(format!("HTTP 416 且无临时文件: {}", url));
         }
@@ -1476,5 +1531,55 @@ mod tests {
         assert_eq!(targets[0].sha256, "sha-test");
 
         let _ = std::fs::remove_dir_all(&game_folder);
+    }
+
+    #[tokio::test]
+    async fn promote_verified_temp_file_removes_corrupt_complete_temp() {
+        let dir = unique_temp_dir("ssmt4-corrupt-temp");
+        std::fs::create_dir_all(&dir).unwrap();
+        let temp_path = dir.join("game.7z.temp");
+        let dest_path = dir.join("game.7z");
+        std::fs::write(&temp_path, b"HELLO").unwrap();
+
+        let promoted = promote_verified_temp_file(
+            &temp_path,
+            &dest_path,
+            5,
+            None,
+            Some("5d41402abc4b2a76b9719d911017c592"),
+        )
+        .await
+        .unwrap();
+
+        assert!(!promoted);
+        assert!(!temp_path.exists());
+        assert!(!dest_path.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn promote_verified_temp_file_promotes_valid_complete_temp() {
+        let dir = unique_temp_dir("ssmt4-valid-temp");
+        std::fs::create_dir_all(&dir).unwrap();
+        let temp_path = dir.join("game.7z.temp");
+        let dest_path = dir.join("game.7z");
+        std::fs::write(&temp_path, b"hello").unwrap();
+
+        let promoted = promote_verified_temp_file(
+            &temp_path,
+            &dest_path,
+            5,
+            None,
+            Some("5d41402abc4b2a76b9719d911017c592"),
+        )
+        .await
+        .unwrap();
+
+        assert!(promoted);
+        assert!(!temp_path.exists());
+        assert_eq!(std::fs::read(&dest_path).unwrap(), b"hello");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

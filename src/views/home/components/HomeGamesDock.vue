@@ -257,8 +257,14 @@ const handleContextMenu = (event: MouseEvent, game: GameInfo) => {
   position: relative;
   cursor: pointer;
   background-color: rgba(255, 255, 255, 0.05);
-  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition:
+    transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
+    border-color 0.3s ease,
+    box-shadow 0.3s ease,
+    background-color 0.3s ease,
+    color 0.3s ease;
   border: 1px solid rgba(255, 255, 255, 0.05);
+  will-change: transform;
 }
 
 .dock-icon img {
@@ -315,6 +321,8 @@ const handleContextMenu = (event: MouseEvent, game: GameInfo) => {
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  contain: layout style paint;
+  will-change: transform, opacity;
 }
 
 .dock-tooltip-fade-enter-active,

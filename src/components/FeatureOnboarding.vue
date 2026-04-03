@@ -227,6 +227,24 @@ const stepIndex = computed(() => {
 
 const currentStep = computed(() => steps[stepIndex.value]);
 const isLastStep = computed(() => stepIndex.value >= steps.length - 1);
+const highlightMaskSegments = computed(() => {
+  if (!highlight.visible) return [];
+
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const top = clamp(highlight.top, 0, viewportHeight);
+  const left = clamp(highlight.left, 0, viewportWidth);
+  const right = clamp(highlight.left + highlight.width, 0, viewportWidth);
+  const bottom = clamp(highlight.top + highlight.height, 0, viewportHeight);
+  const focusHeight = Math.max(0, bottom - top);
+
+  return [
+    { top: '0px', left: '0px', width: `${viewportWidth}px`, height: `${top}px` },
+    { top: `${bottom}px`, left: '0px', width: `${viewportWidth}px`, height: `${Math.max(0, viewportHeight - bottom)}px` },
+    { top: `${top}px`, left: '0px', width: `${left}px`, height: `${focusHeight}px` },
+    { top: `${top}px`, left: `${right}px`, width: `${Math.max(0, viewportWidth - right)}px`, height: `${focusHeight}px` },
+  ];
+});
 
 const clearGuideVisuals = () => {
   highlight.visible = false;
@@ -621,12 +639,20 @@ onBeforeUnmount(() => {
 <template>
   <transition name="guide-fade">
     <div v-if="onboardingVisible" class="onboarding-overlay">
-      <div v-if="highlight.visible" class="onboarding-focus-ring" :style="{
-        top: `${highlight.top}px`,
-        left: `${highlight.left}px`,
-        width: `${highlight.width}px`,
-        height: `${highlight.height}px`,
-      }"></div>
+      <div v-if="highlight.visible" class="onboarding-mask-layer">
+        <div
+          v-for="(maskStyle, index) in highlightMaskSegments"
+          :key="index"
+          class="onboarding-mask-segment"
+          :style="maskStyle"
+        ></div>
+        <div class="onboarding-focus-ring" :style="{
+          top: `${highlight.top}px`,
+          left: `${highlight.left}px`,
+          width: `${highlight.width}px`,
+          height: `${highlight.height}px`,
+        }"></div>
+      </div>
       <div v-else class="onboarding-mask"></div>
 
       <div
@@ -665,26 +691,54 @@ onBeforeUnmount(() => {
   inset: 0;
   z-index: 20000;
   pointer-events: none;
+  isolation: isolate;
+}
+
+.onboarding-mask-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 20000;
+  contain: layout style paint;
+}
+
+.onboarding-mask,
+.onboarding-mask-segment {
+  position: fixed;
+  background: rgba(7, 12, 22, 0.42);
+  z-index: 20000;
 }
 
 .onboarding-mask {
-  position: fixed;
   inset: 0;
-  background: rgba(7, 12, 22, 0.42);
-  z-index: 20000;
+}
+
+.onboarding-mask-segment {
+  transition:
+    top 0.35s cubic-bezier(0.25, 0.8, 0.25, 1),
+    left 0.35s cubic-bezier(0.25, 0.8, 0.25, 1),
+    width 0.35s cubic-bezier(0.25, 0.8, 0.25, 1),
+    height 0.35s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
 .onboarding-focus-ring {
   position: fixed;
   border-radius: 12px;
+  border: 2px solid rgba(93, 231, 255, 0.95);
   box-shadow:
-    0 0 0 9999px rgba(7, 12, 22, 0.42),
-    0 0 0 2px rgba(93, 231, 255, 0.95),
+    0 0 0 1px rgba(93, 231, 255, 0.28) inset,
     0 0 28px rgba(73, 212, 255, 0.55);
   animation: focusPulse 1.35s ease-in-out infinite;
   pointer-events: none;
-  transition: all 0.35s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition:
+    top 0.35s cubic-bezier(0.25, 0.8, 0.25, 1),
+    left 0.35s cubic-bezier(0.25, 0.8, 0.25, 1),
+    width 0.35s cubic-bezier(0.25, 0.8, 0.25, 1),
+    height 0.35s cubic-bezier(0.25, 0.8, 0.25, 1),
+    opacity 0.35s cubic-bezier(0.25, 0.8, 0.25, 1),
+    transform 0.35s cubic-bezier(0.25, 0.8, 0.25, 1);
   z-index: 20001;
+  will-change: transform, opacity;
+  transform: translateZ(0);
 }
 
 .onboarding-bubble {
@@ -701,8 +755,15 @@ onBeforeUnmount(() => {
   color: #ecf8ff;
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.6);
   padding: 14px 14px 12px;
-  transition: all 0.35s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition:
+    top 0.35s cubic-bezier(0.25, 0.8, 0.25, 1),
+    left 0.35s cubic-bezier(0.25, 0.8, 0.25, 1),
+    opacity 0.35s cubic-bezier(0.25, 0.8, 0.25, 1),
+    transform 0.35s cubic-bezier(0.25, 0.8, 0.25, 1);
   z-index: 20002;
+  contain: layout style paint;
+  will-change: transform, opacity;
+  transform: translateZ(0);
 }
 
 .onboarding-bubble::after {
@@ -712,7 +773,12 @@ onBeforeUnmount(() => {
   height: 12px;
   background: rgba(13, 24, 36, 0.98);
   transform: rotate(45deg);
-  transition: all 0.35s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition:
+    top 0.35s cubic-bezier(0.25, 0.8, 0.25, 1),
+    right 0.35s cubic-bezier(0.25, 0.8, 0.25, 1),
+    bottom 0.35s cubic-bezier(0.25, 0.8, 0.25, 1),
+    left 0.35s cubic-bezier(0.25, 0.8, 0.25, 1),
+    opacity 0.35s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
 .onboarding-bubble.placement-top::after {

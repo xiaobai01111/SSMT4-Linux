@@ -131,7 +131,11 @@ pub fn set_game_prefix_path(
         prefix_path.as_deref(),
         previous_prefix_path.as_deref(),
     )?;
-    info!("Updated prefix path for game {} -> {}", game_id, path.display());
+    info!(
+        "Updated prefix path for game {} -> {}",
+        game_id,
+        path.display()
+    );
     Ok(path.to_string_lossy().to_string())
 }
 

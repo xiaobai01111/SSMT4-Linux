@@ -98,6 +98,7 @@ export function useModsView() {
   const isSavingGameToggle = ref(false);
   const isBulkOperating = ref(false);
   const activeModEntryName = ref('');
+  let selectedModsRequestId = 0;
 
   const getGameLocaleName = (localeKey: (typeof gameNameLocales)[number], gameName: string) => {
     const value = (messages[localeKey] as Record<string, unknown>)?.games as
@@ -287,31 +288,79 @@ export function useModsView() {
     return selectedState.value?.entries.filter((entry) => !entry.enabled).length || 0;
   });
 
+  const patchGameSummary = (
+    gameName: string,
+    updater: (summary: ModGameSummary) => ModGameSummary,
+  ) => {
+    let changed = false;
+    const nextSummaries = gameSummaries.value.map((summary) => {
+      if (summary.name !== gameName) return summary;
+      const nextSummary = updater(summary);
+      changed = changed || nextSummary !== summary;
+      return nextSummary;
+    });
+    if (changed) {
+      gameSummaries.value = nextSummaries;
+    }
+  };
+
+  const patchSelectedState = (
+    updater: (state: GameModDirectoryState) => GameModDirectoryState,
+  ) => {
+    const currentState = selectedState.value;
+    if (!currentState) return;
+    const nextState = updater(currentState);
+    if (nextState !== currentState) {
+      selectedState.value = nextState;
+    }
+  };
+
+  const patchSelectedEntries = (
+    updater: (entries: ManagedModEntry[]) => ManagedModEntry[],
+  ) => {
+    patchSelectedState((state) => {
+      const nextEntries = updater(state.entries);
+      if (nextEntries === state.entries) return state;
+      return {
+        ...state,
+        entries: nextEntries,
+      };
+    });
+  };
+
   const syncSummaryFromState = (state: GameModDirectoryState) => {
-    const summary = gameSummaries.value.find((entry) => entry.name === state.gameName);
-    if (!summary) return;
-    summary.migotoSupported = state.migotoSupported;
-    summary.importer = state.importer;
-    summary.migotoEnabled = state.migotoSupported && state.migotoEnabled;
-    summary.modFolder = state.modFolder;
-    summary.modFolderExists = state.modFolderExists;
-    summary.shaderFixesFolder = state.shaderFixesFolder;
-    summary.shaderFixesFolderExists = state.shaderFixesFolderExists;
+    patchGameSummary(state.gameName, (summary) => ({
+      ...summary,
+      migotoSupported: state.migotoSupported,
+      importer: state.importer,
+      migotoEnabled: state.migotoSupported && state.migotoEnabled,
+      modFolder: state.modFolder,
+      modFolderExists: state.modFolderExists,
+      shaderFixesFolder: state.shaderFixesFolder,
+      shaderFixesFolderExists: state.shaderFixesFolderExists,
+    }));
   };
 
   const loadSelectedGameMods = async () => {
+    const requestId = ++selectedModsRequestId;
     if (!selectedGameName.value || !appSettings.migotoEnabled) {
-      selectedState.value = null;
+      if (requestId === selectedModsRequestId) {
+        selectedState.value = null;
+      }
       return;
     }
 
     try {
-      isLoadingSelectedMods.value = true;
-      selectedState.value = null;
+      if (requestId === selectedModsRequestId) {
+        isLoadingSelectedMods.value = true;
+        selectedState.value = null;
+      }
       const state = await scanGameMods(selectedGameName.value);
+      if (requestId !== selectedModsRequestId) return;
       selectedState.value = state;
       syncSummaryFromState(state);
     } catch (error) {
+      if (requestId !== selectedModsRequestId) return;
       selectedState.value = null;
       await toast(
         'error',
@@ -319,7 +368,9 @@ export function useModsView() {
         tr('mods.scanFailed', `读取当前游戏 Mod 列表失败: ${error}`).replace('{error}', String(error)),
       );
     } finally {
-      isLoadingSelectedMods.value = false;
+      if (requestId === selectedModsRequestId) {
+        isLoadingSelectedMods.value = false;
+      }
     }
   };
 
@@ -430,10 +481,17 @@ export function useModsView() {
       if (!config.other.migoto) config.other.migoto = {};
       config.other.migoto.enabled = enabled;
       await saveGameConfig(summary.name, config);
-      summary.migotoEnabled = enabled;
-      if (selectedState.value && selectedState.value.gameName === summary.name) {
-        selectedState.value.migotoEnabled = enabled;
-      }
+      patchGameSummary(summary.name, (currentSummary) => ({
+        ...currentSummary,
+        migotoEnabled: enabled,
+      }));
+      patchSelectedState((state) => {
+        if (state.gameName !== summary.name) return state;
+        return {
+          ...state,
+          migotoEnabled: enabled,
+        };
+      });
       await toast(
         'success',
         tr('mods.savedTitle', '保存成功'),
@@ -454,10 +512,27 @@ export function useModsView() {
     const enabled = Boolean(nextValue);
     if (enabled === entry.enabled) return;
 
+    const previousState = selectedState.value;
+    if (!previousState || previousState.gameName !== selectedGameName.value) return;
+
+    patchSelectedEntries((entries) => entries.map((currentEntry) => (
+      currentEntry.relativeName === entry.relativeName
+        ? { ...currentEntry, enabled }
+        : currentEntry
+    )));
+
     try {
       activeModEntryName.value = entry.relativeName;
-      await setGameModEntryEnabled(selectedGameName.value, entry.relativeName, enabled);
-      await loadSelectedGameMods();
+      const updatedEntry = await setGameModEntryEnabled(
+        selectedGameName.value,
+        entry.relativeName,
+        enabled,
+      );
+      patchSelectedEntries((entries) => entries.map((currentEntry) => (
+        currentEntry.relativeName === entry.relativeName
+          ? { ...currentEntry, ...updatedEntry }
+          : currentEntry
+      )));
       await toast(
         'success',
         tr('mods.savedTitle', '保存成功'),
@@ -466,6 +541,7 @@ export function useModsView() {
           : tr('mods.modDisabled', 'Mod 已禁用并停止加载'),
       );
     } catch (error) {
+      selectedState.value = previousState;
       await toast('error', tr('mods.saveFailedTitle', '保存失败'), String(error));
     } finally {
       activeModEntryName.value = '';
@@ -475,10 +551,32 @@ export function useModsView() {
   const toggleAllMods = async (enabled: boolean) => {
     if (!selectedGameName.value || isBulkOperating.value) return;
 
+    const previousState = selectedState.value;
+    if (!previousState || previousState.gameName !== selectedGameName.value) return;
+    const previousEntryMap = new Map(
+      previousState.entries.map((item) => [item.relativeName, item]),
+    );
+
+    patchSelectedEntries((entries) => entries.map((entry) => ({
+      ...entry,
+      enabled,
+    })));
+
     try {
       isBulkOperating.value = true;
       const result = await setAllGameModEntriesEnabled(selectedGameName.value, enabled);
-      await loadSelectedGameMods();
+      if (result.skipped.length > 0) {
+        const skipped = new Set(result.skipped);
+        patchSelectedEntries((entries) => entries.map((currentEntry) => {
+          if (!skipped.has(currentEntry.relativeName)) return currentEntry;
+          const previousEntry = previousEntryMap.get(currentEntry.relativeName);
+          if (!previousEntry) return currentEntry;
+          return {
+            ...currentEntry,
+            enabled: previousEntry.enabled,
+          };
+        }));
+      }
 
       const skippedText = result.skipped.length > 0
         ? `\n${tr('mods.bulkSkipped', '以下条目因名称冲突被跳过')}: ${result.skipped.join(', ')}`
@@ -494,6 +592,7 @@ export function useModsView() {
         ).replace('{count}', String(result.changed)) + skippedText,
       );
     } catch (error) {
+      selectedState.value = previousState;
       await toast('error', tr('mods.saveFailedTitle', '保存失败'), String(error));
     } finally {
       isBulkOperating.value = false;

@@ -5,5 +5,6 @@ pub mod github_releases;
 pub mod hash_verify;
 pub mod logger;
 pub mod migoto_layout;
+pub mod migoto_logs;
 pub mod migoto_packages;
 pub mod runtime_log;

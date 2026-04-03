@@ -357,6 +357,7 @@ struct ResolvedRunTarget {
     runner_exe_path: String,
     extra_args: Vec<String>,
     used_bridge: bool,
+    managed_migoto_logs: Option<crate::utils::migoto_logs::ManagedMigotoLogPaths>,
 }
 
 #[derive(Debug)]
@@ -367,6 +368,7 @@ struct PreparedLaunchCommand {
     command_program_path: String,
     runner_exe_path: String,
     used_bridge: bool,
+    managed_migoto_logs: Option<crate::utils::migoto_logs::ManagedMigotoLogPaths>,
 }
 
 #[derive(Debug)]
@@ -420,6 +422,7 @@ struct LaunchMonitorContext {
     root_start_ticks: Option<u64>,
     exe_name: String,
     launch_exe_path: String,
+    managed_migoto_logs: Option<crate::utils::migoto_logs::ManagedMigotoLogPaths>,
 }
 
 #[derive(Debug)]

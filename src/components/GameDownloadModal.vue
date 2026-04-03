@@ -1189,7 +1189,9 @@ useGameDownloadModalLifecycle({
   height: 80vh; max-height: 700px;
   border-radius: 12px; display: flex; flex-direction: column; 
   animation: slideUp 0.15s cubic-bezier(0.25, 0.8, 0.25, 1);
-  contain: layout style;
+  contain: layout style paint;
+  isolation: isolate;
+  will-change: transform, opacity;
 }
 @keyframes slideUp {
   from { opacity: 0; transform: translateY(20px) scale(0.98); }
@@ -1202,7 +1204,10 @@ useGameDownloadModalLifecycle({
 .dl-title { font-size: 18px; font-weight: 600; color: var(--el-color-primary); text-transform: uppercase; letter-spacing: 1px; }
 .dl-close {
   width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
-  border-radius: 6px; cursor: pointer; color: rgba(255, 255, 255, 0.6); transition: all 0.2s;
+  border-radius: 6px; cursor: pointer; color: rgba(255, 255, 255, 0.6);
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
 }
 .dl-close:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
 .dl-body { padding: 30px; overflow-y: auto; flex: 1; }
@@ -1235,7 +1240,11 @@ useGameDownloadModalLifecycle({
 .server-btn {
   padding: 6px 16px; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px;
   background: rgba(255, 255, 255, 0.05); color: rgba(255, 255, 255, 0.7);
-  font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s;
+  font-size: 13px; font-weight: 500; cursor: pointer;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease;
 }
 .server-btn:hover { background: rgba(255, 255, 255, 0.15); }
 .server-btn.active {
@@ -1246,7 +1255,10 @@ useGameDownloadModalLifecycle({
 /* 状态卡片 */
 .state-card {
   padding: 18px 20px; margin-bottom: 24px;
-  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition:
+    transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1),
+    border-color 0.3s ease,
+    background-color 0.3s ease;
 }
 .state-card:hover { transform: translateY(-2px); }
 .state-card.state-ok { border-color: rgba(var(--el-color-success-rgb), 0.4); background: rgba(var(--el-color-success-rgb), 0.05); }
@@ -1261,7 +1273,9 @@ useGameDownloadModalLifecycle({
 
 .channel-mode-card {
   padding: 16px 20px; margin-bottom: 24px;
-  transition: all 0.3s ease;
+  transition:
+    border-color 0.3s ease,
+    background-color 0.3s ease;
 }
 .channel-mode-card:hover { border-color: rgba(255, 255, 255, 0.15); }
 .channel-mode-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
@@ -1290,7 +1304,9 @@ useGameDownloadModalLifecycle({
   color: #fff;
   font-size: 14px;
   outline: none;
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease;
 }
 .install-dir-row .dl-input:focus {
   background: rgba(0, 0, 0, 0.4);
@@ -1300,7 +1316,12 @@ useGameDownloadModalLifecycle({
   display: flex; align-items: center; justify-content: center;
   color: #fff; padding: 0 16px; height: 42px;
   border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px;
-  background: rgba(255, 255, 255, 0.05); cursor: pointer; transition: all 0.2s;
+  background: rgba(255, 255, 255, 0.05); cursor: pointer;
+  transition:
+    transform 0.2s ease,
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease;
 }
 .install-dir-row .dir-btn:hover { 
   background: rgba(255, 255, 255, 0.15); border-color: rgba(255, 255, 255, 0.25); transform: translateY(-1px);
@@ -1315,7 +1336,11 @@ useGameDownloadModalLifecycle({
 .lang-checkbox {
   display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 6px;
   background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(255, 255, 255, 0.05);
-  cursor: pointer; transition: all 0.2s; user-select: none;
+  cursor: pointer; user-select: none;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease;
 }
 .lang-checkbox:hover { background: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.2); }
 .lang-checkbox input[type="checkbox"] { accent-color: var(--el-color-primary); width: 16px; height: 16px; cursor: pointer; }
@@ -1336,7 +1361,13 @@ useGameDownloadModalLifecycle({
 /* 统一动作按钮 (与 GameSettingsModal 一致) */
 .action-btn {
   padding: 10px 18px; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px;
-  font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s;
+  font-size: 13px; font-weight: 500; cursor: pointer;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease,
+    transform 0.2s ease,
+    opacity 0.2s ease;
   color: #fff; background: rgba(255, 255, 255, 0.05);
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   flex: 1; min-width: 120px; height: 40px;

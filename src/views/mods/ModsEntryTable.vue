@@ -55,9 +55,9 @@ const modStatusFilterModel = computed({
           </template>
         </el-input>
         <el-radio-group v-model="modStatusFilterModel">
-          <el-radio-button label="all">{{ tr('mods.filterAll', '全部') }}</el-radio-button>
-          <el-radio-button label="enabled">{{ tr('mods.filterEnabled', '已启用') }}</el-radio-button>
-          <el-radio-button label="disabled">{{ tr('mods.filterDisabled', '已禁用') }}</el-radio-button>
+          <el-radio-button value="all">{{ tr('mods.filterAll', '全部') }}</el-radio-button>
+          <el-radio-button value="enabled">{{ tr('mods.filterEnabled', '已启用') }}</el-radio-button>
+          <el-radio-button value="disabled">{{ tr('mods.filterDisabled', '已禁用') }}</el-radio-button>
         </el-radio-group>
       </div>
     </div>

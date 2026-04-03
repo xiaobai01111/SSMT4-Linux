@@ -12,13 +12,11 @@ pub struct VersionCheckInfo {
     pub update_log: String,
 }
 
-const APP_VERSION_REMOTE_SOURCES: &[(&str, &str, &str)] = &[
-    (
-        "GitHub",
-        "https://raw.githubusercontent.com/xiaobai01111/SSMT4-Linux/main/version",
-        "https://raw.githubusercontent.com/xiaobai01111/SSMT4-Linux/main/version-log",
-    ),
-];
+const APP_VERSION_REMOTE_SOURCES: &[(&str, &str, &str)] = &[(
+    "GitHub",
+    "https://raw.githubusercontent.com/xiaobai01111/SSMT4-Linux/main/version",
+    "https://raw.githubusercontent.com/xiaobai01111/SSMT4-Linux/main/version-log",
+)];
 
 const APP_REPO_PAGES: &[(&str, &str)] =
     &[("GitHub", "https://github.com/xiaobai01111/SSMT4-Linux")];

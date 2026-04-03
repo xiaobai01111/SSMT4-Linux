@@ -757,11 +757,13 @@ fn resolve_xxmi_packages_folder(app_root: &Path) -> PathBuf {
                 .unwrap_or(SystemTime::UNIX_EPOCH);
             Some((version_key, modified, path))
         })
-        .max_by(|(left_version, left_modified, _), (right_version, right_modified, _)| {
-            left_version
-                .cmp(right_version)
-                .then_with(|| left_modified.cmp(right_modified))
-        })
+        .max_by(
+            |(left_version, left_modified, _), (right_version, right_modified, _)| {
+                left_version
+                    .cmp(right_version)
+                    .then_with(|| left_modified.cmp(right_modified))
+            },
+        )
         .map(|(_, _, path)| path);
 
     if let Some(versioned_dir) = latest_versioned {
@@ -1278,8 +1280,7 @@ mod tests {
         let legacy = root.join("3Dmigoto-data/Packages/XXMI");
         fs::create_dir_all(&legacy).expect("create legacy dir");
         fs::write(legacy.join("d3d11.dll"), b"legacy").expect("write legacy d3d11");
-        fs::write(legacy.join("d3dcompiler_47.dll"), b"legacy")
-            .expect("write legacy compiler");
+        fs::write(legacy.join("d3dcompiler_47.dll"), b"legacy").expect("write legacy compiler");
 
         let resolved = resolve_xxmi_packages_folder(&root);
 

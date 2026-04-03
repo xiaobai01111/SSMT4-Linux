@@ -192,6 +192,57 @@ fn build_bridge_config_args(config_wine_path: &str) -> Vec<String> {
     vec!["--config".to_string(), config_wine_path.to_string()]
 }
 
+fn resolve_managed_migoto_logs(
+    game_name: &str,
+    importer_name: &str,
+    app_data_dir: &Path,
+    target: &ResolvedLaunchTarget,
+) -> crate::utils::migoto_logs::ManagedMigotoLogPaths {
+    let default_migoto_path = app_data_dir.join("3Dmigoto-data");
+    let path_state = target.game_config_data.as_ref().map_or_else(
+        || {
+            crate::utils::migoto_layout::resolve_migoto_path_state(
+                importer_name,
+                None,
+                default_migoto_path.clone(),
+            )
+        },
+        |config| {
+            crate::utils::migoto_layout::resolve_migoto_path_state_for_game(
+                game_name,
+                config,
+                default_migoto_path.clone(),
+            )
+        },
+    );
+
+    crate::utils::migoto_logs::ManagedMigotoLogPaths::new(
+        &target.game_root,
+        &path_state.importer_folder,
+        &path_state.mod_folder,
+        &path_state.shader_fixes_folder,
+        &app_data_dir.join("Cache").join("bridge"),
+    )
+}
+
+fn log_migoto_log_prune_summary(
+    game_name: &str,
+    phase: &str,
+    summary: &crate::utils::migoto_logs::MigotoLogPruneSummary,
+) {
+    if summary.is_noop() {
+        return;
+    }
+
+    let level = if summary.failures > 0 { "WARN" } else { "INFO" };
+    super::append_game_log(
+        game_name,
+        level,
+        "migoto-log",
+        format!("{}: {}", phase, summary.describe()),
+    );
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 struct EfmiLegacyRabbitFxCompatSummary {
     files_rewritten: usize,
@@ -263,10 +314,7 @@ fn parse_ini_section_name(line: &str) -> Option<String> {
     Some(trimmed[1..trimmed.len() - 1].trim().to_ascii_lowercase())
 }
 
-fn is_texture_override_placeholder_texture_ref(
-    line: &str,
-    current_section: Option<&str>,
-) -> bool {
+fn is_texture_override_placeholder_texture_ref(line: &str, current_section: Option<&str>) -> bool {
     let Some(section) = current_section else {
         return false;
     };
@@ -519,6 +567,7 @@ pub(super) fn resolve_run_target(
         );
     }
 
+    let mut managed_migoto_logs = None;
     let (run_exe, extra_args) = if migoto_runtime_required {
         if migoto_importer.eq_ignore_ascii_case("EFMI")
             && should_apply_efmi_legacy_rabbitfx_compat()
@@ -600,6 +649,22 @@ pub(super) fn resolve_run_target(
             .and_then(|n| n.to_str())
             .unwrap_or("game.exe")
             .to_string();
+        let resolved_managed_logs =
+            resolve_managed_migoto_logs(game_name, &migoto_importer, &app_data_dir, target);
+        let prelaunch_log_summary =
+            crate::utils::migoto_logs::prune_stale_logs(&resolved_managed_logs);
+        if !prelaunch_log_summary.is_noop() {
+            info!(
+                "3DMigoto 运行时日志已在启动前整理: {}",
+                prelaunch_log_summary.describe()
+            );
+            log_migoto_log_prune_summary(
+                game_name,
+                "migoto log cleanup before launch",
+                &prelaunch_log_summary,
+            );
+        }
+        managed_migoto_logs = Some(resolved_managed_logs);
 
         let mut bridge_config = crate::commands::bridge::build_bridge_config(
             &migoto_importer,
@@ -705,6 +770,7 @@ pub(super) fn resolve_run_target(
         runner_exe_path,
         extra_args,
         used_bridge: migoto_runtime_required,
+        managed_migoto_logs,
     })
 }
 
@@ -952,6 +1018,7 @@ pub(super) fn prepare_launch_command(
         command_program_path,
         runner_exe_path: run_target.runner_exe_path.clone(),
         used_bridge: run_target.used_bridge,
+        managed_migoto_logs: run_target.managed_migoto_logs.clone(),
     })
 }
 

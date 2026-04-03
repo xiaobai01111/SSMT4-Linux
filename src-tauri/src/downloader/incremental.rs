@@ -354,12 +354,20 @@ pub async fn ensure_hpatchz_public() -> Result<PathBuf, String> {
 
 /// hpatchz 允许的 SHA256 白名单（多版本兼容）
 /// 新版本发布时在此追加哈希即可。
-/// 默认 fail-closed：若此列表与环境变量都为空，将拒绝执行 hpatchz。
+/// 默认校验顺序为：可信 sidecar -> 白名单 -> 不安全环境变量放行。
+/// 若 sidecar 与白名单都不存在，则默认 fail-closed。
 const HPATCHZ_ALLOWED_SHA256: &[&str] = &[
     // 如需固定版本，请在此填入已知的 SHA256 哈希（小写十六进制）
     // 例如: "a1b2c3d4e5f6..."
     // 留空时可通过环境变量 SSMT4_HPATCHZ_ALLOWED_SHA256 传入（逗号分隔）
 ];
+
+/// 固定到已验证的官方 HDiffPatch 发行包，避免 `latest` 漂移导致默认安装失效。
+/// SHA256 取自官方发布页的 linux64 zip 资产摘要。
+const HPATCHZ_OFFICIAL_RELEASE_VERSION: &str = "v4.12.2";
+const HPATCHZ_OFFICIAL_RELEASE_ZIP_NAME: &str = "hdiffpatch_v4.12.2_bin_linux64.zip";
+const HPATCHZ_OFFICIAL_RELEASE_ZIP_SHA256: &str =
+    "432886341e6099adeb5223427454e9bc0b565f81edfbe2e3387f804611c07e4a";
 
 /// hpatchz 最小合理大小（字节），低于此值视为损坏/截断
 const HPATCHZ_MIN_SIZE: u64 = 100_000; // ~100KB
@@ -371,32 +379,44 @@ const HPATCHZ_ALLOW_UNVERIFIED_ENV: &str = "SSMT4_HPATCHZ_ALLOW_UNVERIFIED";
 async fn ensure_hpatchz() -> Result<PathBuf, String> {
     let tools_dir = crate::utils::file_manager::get_tools_dir();
     let hpatchz_path = tools_dir.join("hpatchz");
+    let sidecar_path = hpatchz_hash_sidecar_path(&hpatchz_path);
 
     if hpatchz_path.exists() {
-        // 已存在时也做完整性检查
-        verify_hpatchz_integrity(&hpatchz_path).await?;
-        return Ok(hpatchz_path);
+        match verify_hpatchz_integrity(&hpatchz_path).await {
+            Ok(()) => return Ok(hpatchz_path),
+            Err(err) => {
+                warn!(
+                    "现有 hpatchz 校验失败，准备重新下载官方发行包: {} ({})",
+                    hpatchz_path.display(),
+                    err
+                );
+                std::fs::remove_file(&hpatchz_path).ok();
+                std::fs::remove_file(&sidecar_path).ok();
+            }
+        }
     }
 
     crate::utils::file_manager::ensure_dir(&tools_dir)?;
 
-    // Primary: GitHub（固定来源）
-    let github_url = "https://github.com/AXiX-official/hpatchz-release/releases/latest/download/hpatchz-linux-x64";
-    // Fallback: Gitee
-    let gitee_url = "https://gitee.com/tiz/LutheringLaves/raw/main/tools/hpatchz";
-
+    let zip_path = tools_dir.join(HPATCHZ_OFFICIAL_RELEASE_ZIP_NAME);
+    let github_url = format!(
+        "https://github.com/sisong/HDiffPatch/releases/download/{}/{}",
+        HPATCHZ_OFFICIAL_RELEASE_VERSION, HPATCHZ_OFFICIAL_RELEASE_ZIP_NAME
+    );
     let client = Client::new();
 
-    info!("Downloading hpatchz from GitHub...");
-    let result = fetcher::download_simple(&client, github_url, &hpatchz_path).await;
+    info!(
+        "Downloading hpatchz official release asset from GitHub: {}",
+        github_url
+    );
+    fetcher::download_simple(&client, &github_url, &zip_path).await?;
 
-    if result.is_err() {
-        warn!("GitHub download failed, trying gitee...");
-        fetcher::download_simple(&client, gitee_url, &hpatchz_path).await?;
-    }
-
-    // 下载后执行前：完整性校验
+    verify_hpatchz_release_zip(&zip_path).await?;
+    extract_hpatchz_from_release_zip(&zip_path, &hpatchz_path).await?;
+    let actual_hash = crate::utils::hash_verify::sha256_file(&hpatchz_path).await?;
+    write_hpatchz_hash_sidecar(&hpatchz_path, &actual_hash)?;
     verify_hpatchz_integrity(&hpatchz_path).await?;
+    std::fs::remove_file(&zip_path).ok();
 
     // chmod +x
     #[cfg(unix)]
@@ -417,10 +437,12 @@ async fn ensure_hpatchz() -> Result<PathBuf, String> {
 /// 验证 hpatchz 二进制完整性
 async fn verify_hpatchz_integrity(path: &Path) -> Result<(), String> {
     let meta = std::fs::metadata(path).map_err(|e| format!("无法读取 hpatchz 元数据: {}", e))?;
+    let sidecar_path = hpatchz_hash_sidecar_path(path);
 
     // 1. 大小校验
     if meta.len() < HPATCHZ_MIN_SIZE {
         std::fs::remove_file(path).ok();
+        std::fs::remove_file(&sidecar_path).ok();
         return Err(format!(
             "hpatchz 文件异常（大小 {} 字节，低于最小阈值 {}），已删除",
             meta.len(),
@@ -429,29 +451,43 @@ async fn verify_hpatchz_integrity(path: &Path) -> Result<(), String> {
     }
 
     // 2. SHA256 哈希校验（默认 fail-closed）
-    let allowed_sha256 = collect_hpatchz_allowed_sha256();
-    if !allowed_sha256.is_empty() {
-        let actual_hash = crate::utils::hash_verify::sha256_file(path).await?;
-        if !allowed_sha256.iter().any(|h| h == &actual_hash) {
+    let actual_hash = crate::utils::hash_verify::sha256_file(path).await?;
+    if let Some(expected_hash) = read_hpatchz_hash_sidecar(path) {
+        if actual_hash != expected_hash {
             std::fs::remove_file(path).ok();
+            std::fs::remove_file(&sidecar_path).ok();
             return Err(format!(
-                "hpatchz SHA256 校验失败（实际: {}），不在允许列表中，已删除",
-                actual_hash
+                "hpatchz SHA256 校验失败（实际: {}，期望: {}），已删除",
+                actual_hash, expected_hash
             ));
         }
-        info!("hpatchz SHA256 校验通过: {}", actual_hash);
+        info!("hpatchz SHA256 sidecar 校验通过: {}", actual_hash);
     } else {
-        if allow_unverified_hpatchz() {
-            warn!(
-                "未配置 hpatchz SHA256 白名单，但 {}=1，已按不安全模式放行。请仅在受信环境临时使用。",
-                HPATCHZ_ALLOW_UNVERIFIED_ENV
-            );
+        let allowed_sha256 = collect_hpatchz_allowed_sha256();
+        if !allowed_sha256.is_empty() {
+            if !allowed_sha256.iter().any(|h| h == &actual_hash) {
+                std::fs::remove_file(path).ok();
+                std::fs::remove_file(&sidecar_path).ok();
+                return Err(format!(
+                    "hpatchz SHA256 校验失败（实际: {}），不在允许列表中，已删除",
+                    actual_hash
+                ));
+            }
+            info!("hpatchz SHA256 校验通过: {}", actual_hash);
         } else {
-            std::fs::remove_file(path).ok();
-            return Err(format!(
-                "未配置 hpatchz SHA256 白名单，已拒绝执行并删除文件。请配置允许列表（SSMT4_HPATCHZ_ALLOWED_SHA256），或仅在受信环境设置 {}=1 临时放行。",
-                HPATCHZ_ALLOW_UNVERIFIED_ENV
-            ));
+            if allow_unverified_hpatchz() {
+                warn!(
+                    "未配置 hpatchz SHA256 白名单，但 {}=1，已按不安全模式放行。请仅在受信环境临时使用。",
+                    HPATCHZ_ALLOW_UNVERIFIED_ENV
+                );
+            } else {
+                std::fs::remove_file(path).ok();
+                std::fs::remove_file(&sidecar_path).ok();
+                return Err(format!(
+                    "未配置 hpatchz SHA256 白名单，且不存在可信 sidecar，已拒绝执行并删除文件。请配置允许列表（SSMT4_HPATCHZ_ALLOWED_SHA256），或仅在受信环境设置 {}=1 临时放行。",
+                    HPATCHZ_ALLOW_UNVERIFIED_ENV
+                ));
+            }
         }
     }
 
@@ -461,11 +497,95 @@ async fn verify_hpatchz_integrity(path: &Path) -> Result<(), String> {
         let header = std::fs::read(path).map_err(|e| format!("无法读取 hpatchz: {}", e))?;
         if header.len() < 4 || &header[..4] != b"\x7fELF" {
             std::fs::remove_file(path).ok();
+            std::fs::remove_file(&sidecar_path).ok();
             return Err("hpatchz 不是有效的 ELF 可执行文件，已删除".to_string());
         }
     }
 
     Ok(())
+}
+
+fn hpatchz_hash_sidecar_path(path: &Path) -> PathBuf {
+    path.with_extension("sha256")
+}
+
+fn read_hpatchz_hash_sidecar(path: &Path) -> Option<String> {
+    std::fs::read_to_string(hpatchz_hash_sidecar_path(path))
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+}
+
+fn write_hpatchz_hash_sidecar(path: &Path, sha256: &str) -> Result<(), String> {
+    let sidecar_path = hpatchz_hash_sidecar_path(path);
+    std::fs::write(
+        &sidecar_path,
+        format!("{}\n", sha256.trim().to_ascii_lowercase()),
+    )
+    .map_err(|e| format!("写入 hpatchz SHA256 sidecar 失败: {}", e))
+}
+
+async fn verify_hpatchz_release_zip(path: &Path) -> Result<(), String> {
+    let actual_hash = crate::utils::hash_verify::sha256_file(path).await?;
+    if actual_hash != HPATCHZ_OFFICIAL_RELEASE_ZIP_SHA256 {
+        std::fs::remove_file(path).ok();
+        return Err(format!(
+            "官方 hpatchz ZIP SHA256 校验失败（实际: {}，期望: {}），已删除",
+            actual_hash, HPATCHZ_OFFICIAL_RELEASE_ZIP_SHA256
+        ));
+    }
+    Ok(())
+}
+
+async fn extract_hpatchz_from_release_zip(zip_path: &Path, dest_path: &Path) -> Result<(), String> {
+    let zip_path = zip_path.to_path_buf();
+    let dest_path = dest_path.to_path_buf();
+
+    tokio::task::spawn_blocking(move || {
+        extract_hpatchz_from_release_zip_blocking(&zip_path, &dest_path)
+    })
+    .await
+    .map_err(|e| format!("等待 hpatchz ZIP 解压任务失败: {}", e))?
+}
+
+fn extract_hpatchz_from_release_zip_blocking(
+    zip_path: &Path,
+    dest_path: &Path,
+) -> Result<(), String> {
+    let file =
+        std::fs::File::open(zip_path).map_err(|e| format!("打开 hpatchz ZIP 失败: {}", e))?;
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|e| format!("解析 hpatchz ZIP 失败: {}", e))?;
+
+    let Some(parent) = dest_path.parent() else {
+        return Err("hpatchz 目标路径缺少父目录".to_string());
+    };
+    std::fs::create_dir_all(parent).map_err(|e| format!("创建 tools 目录失败: {}", e))?;
+
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("读取 hpatchz ZIP 条目失败: {}", e))?;
+        let Some(relative_path) = entry.enclosed_name().map(|p| p.to_path_buf()) else {
+            continue;
+        };
+        if entry.is_dir() {
+            continue;
+        }
+        if relative_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name == "hpatchz")
+        {
+            let mut outfile = std::fs::File::create(dest_path)
+                .map_err(|e| format!("创建 hpatchz 失败: {}", e))?;
+            std::io::copy(&mut entry, &mut outfile)
+                .map_err(|e| format!("写入 hpatchz 失败: {}", e))?;
+            return Ok(());
+        }
+    }
+
+    Err("官方 hpatchz ZIP 中未找到 hpatchz 可执行文件".to_string())
 }
 
 fn collect_hpatchz_allowed_sha256() -> Vec<String> {
@@ -520,7 +640,31 @@ fn build_resource_url(cdn_url: &str, resources_base_path: &str, dest: &str) -> S
 
 #[cfg(test)]
 mod tests {
-    use super::parse_env_bool;
+    use super::{
+        extract_hpatchz_from_release_zip_blocking, hpatchz_hash_sidecar_path, parse_env_bool,
+        verify_hpatchz_integrity, write_hpatchz_hash_sidecar,
+    };
+    use crate::utils::hash_verify;
+    use std::io::Write;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("ssmt4-hpatchz-{label}-{nonce}"));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    fn fake_elf_bytes(len: usize) -> Vec<u8> {
+        let mut bytes = vec![0u8; len.max(4)];
+        bytes[..4].copy_from_slice(b"\x7fELF");
+        bytes[4..].fill(b'X');
+        bytes
+    }
 
     #[test]
     fn parse_env_bool_accepts_truthy_values() {
@@ -537,5 +681,62 @@ mod tests {
         assert!(!parse_env_bool("false"));
         assert!(!parse_env_bool("no"));
         assert!(!parse_env_bool("random"));
+    }
+
+    #[tokio::test]
+    async fn verify_hpatchz_integrity_accepts_matching_sidecar_hash() {
+        let dir = unique_temp_dir("sidecar");
+        let binary_path = dir.join("hpatchz");
+        std::fs::write(&binary_path, fake_elf_bytes(120_000)).expect("write hpatchz");
+        let sha256 = hash_verify::sha256_file(&binary_path)
+            .await
+            .expect("hash hpatchz");
+        write_hpatchz_hash_sidecar(&binary_path, &sha256).expect("write sidecar");
+
+        verify_hpatchz_integrity(&binary_path)
+            .await
+            .expect("verify hpatchz with sidecar");
+
+        assert_eq!(
+            std::fs::read_to_string(hpatchz_hash_sidecar_path(&binary_path))
+                .expect("read sidecar")
+                .trim(),
+            sha256
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn extract_hpatchz_from_release_zip_blocking_finds_nested_binary() {
+        let dir = unique_temp_dir("zip");
+        let zip_path = dir.join("hpatchz.zip");
+        let binary_path = dir.join("out").join("hpatchz");
+
+        let file = std::fs::File::create(&zip_path).expect("create zip");
+        let mut writer = zip::ZipWriter::new(file);
+        let options = zip::write::FileOptions::default();
+        writer
+            .start_file("nested/bin/hpatchz", options)
+            .expect("start hpatchz entry");
+        writer
+            .write_all(&fake_elf_bytes(256))
+            .expect("write hpatchz entry");
+        writer
+            .start_file("nested/bin/hdiffz", options)
+            .expect("start hdiffz entry");
+        writer.write_all(b"other").expect("write other entry");
+        writer.finish().expect("finish zip");
+
+        extract_hpatchz_from_release_zip_blocking(&zip_path, &binary_path)
+            .expect("extract hpatchz");
+
+        assert!(binary_path.exists());
+        assert_eq!(
+            std::fs::read(&binary_path).expect("read extracted hpatchz")[..4],
+            *b"\x7fELF"
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

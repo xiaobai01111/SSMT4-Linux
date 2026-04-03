@@ -3,6 +3,61 @@ use tauri::Manager;
 
 const AUTO_MINIMIZE_POLL_INTERVAL_MS: u64 = 250;
 const AUTO_MINIMIZE_MAX_POLLS: usize = 24;
+const MIGOTO_LOG_MAINTENANCE_INTERVAL_SECS: u64 = 15;
+
+fn log_migoto_log_maintenance(
+    game_name: &str,
+    phase: &str,
+    summary: &crate::utils::migoto_logs::MigotoLogPruneSummary,
+) {
+    if summary.is_noop() {
+        return;
+    }
+
+    let level = if summary.failures > 0 { "WARN" } else { "INFO" };
+    super::append_game_log(
+        game_name,
+        level,
+        "migoto-log",
+        format!("{}: {}", phase, summary.describe()),
+    );
+}
+
+fn spawn_migoto_log_maintainer(
+    game_name: String,
+    managed_logs: crate::utils::migoto_logs::ManagedMigotoLogPaths,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(
+                MIGOTO_LOG_MAINTENANCE_INTERVAL_SECS,
+            ))
+            .await;
+
+            if !process_monitor::is_game_running(&game_name).await {
+                break;
+            }
+
+            let summary = match tokio::task::spawn_blocking({
+                let managed_logs = managed_logs.clone();
+                move || crate::utils::migoto_logs::prune_live_logs(&managed_logs)
+            })
+            .await
+            {
+                Ok(summary) => summary,
+                Err(err) => {
+                    warn!("3DMigoto 日志维护任务失败: {}", err);
+                    break;
+                }
+            };
+
+            if !summary.is_noop() {
+                info!("3DMigoto 运行期日志已整理: {}", summary.describe());
+                log_migoto_log_maintenance(&game_name, "migoto live log trim", &summary);
+            }
+        }
+    })
+}
 
 pub(super) async fn spawn_monitored_launch(
     app: tauri::AppHandle,
@@ -17,6 +72,7 @@ pub(super) async fn spawn_monitored_launch(
         command_program_path,
         runner_exe_path,
         used_bridge,
+        managed_migoto_logs,
     } = prepared;
     let ResolvedLaunchTarget {
         configured_exe_path,
@@ -71,6 +127,7 @@ pub(super) async fn spawn_monitored_launch(
         root_start_ticks: started_launch.root_start_ticks,
         exe_name: started_launch.exe_name,
         launch_exe_path: started_launch.launch_exe_path,
+        managed_migoto_logs,
     };
 
     spawn_launch_exit_monitor(child, write_guard, monitor_context);
@@ -78,10 +135,7 @@ pub(super) async fn spawn_monitored_launch(
     Ok(format!("Game launched (PID: {})", started_launch.pid))
 }
 
-fn schedule_main_window_minimize_after_focus_handoff(
-    app: tauri::AppHandle,
-    game_name: String,
-) {
+fn schedule_main_window_minimize_after_focus_handoff(app: tauri::AppHandle, game_name: String) {
     tokio::spawn(async move {
         let Some(window) = app.get_webview_window("main") else {
             return;
@@ -111,7 +165,10 @@ fn schedule_main_window_minimize_after_focus_handoff(
                         &game_name,
                         "WARN",
                         "session",
-                        format!("failed to read launcher focus state before auto-minimize: {}", error),
+                        format!(
+                            "failed to read launcher focus state before auto-minimize: {}",
+                            error
+                        ),
                     );
                     return;
                 }
@@ -127,7 +184,10 @@ fn schedule_main_window_minimize_after_focus_handoff(
                     &game_name,
                     "WARN",
                     "session",
-                    format!("failed to minimize launcher window after focus handoff: {}", error),
+                    format!(
+                        "failed to minimize launcher window after focus handoff: {}",
+                        error
+                    ),
                 );
                 return;
             }
@@ -218,6 +278,10 @@ fn spawn_launch_exit_monitor(
 ) {
     tokio::spawn(async move {
         let _write_guard = write_guard;
+        let migoto_log_maintainer = context
+            .managed_migoto_logs
+            .clone()
+            .map(|paths| spawn_migoto_log_maintainer(context.game_name.clone(), paths));
         let observation = wait_for_initial_child_exit(&mut child, &context).await;
         if context.used_bridge {
             let appended = super::append_bridge_exit_log(&context.game_name, observation.crashed);
@@ -244,6 +308,37 @@ fn spawn_launch_exit_monitor(
         .await;
 
         process_monitor::unregister_game_process(&context.game_name).await;
+        if let Some(handle) = migoto_log_maintainer {
+            handle.abort();
+            let _ = handle.await;
+        }
+        if let Some(managed_logs) = context.managed_migoto_logs.clone() {
+            match tokio::task::spawn_blocking(move || {
+                crate::utils::migoto_logs::prune_stale_logs(&managed_logs)
+            })
+            .await
+            {
+                Ok(summary) => {
+                    if !summary.is_noop() {
+                        info!("3DMigoto 结束后日志已整理: {}", summary.describe());
+                        log_migoto_log_maintenance(
+                            &context.game_name,
+                            "migoto post-exit cleanup",
+                            &summary,
+                        );
+                    }
+                }
+                Err(err) => {
+                    warn!("3DMigoto 退出后日志整理任务失败: {}", err);
+                    super::append_game_log(
+                        &context.game_name,
+                        "WARN",
+                        "migoto-log",
+                        format!("migoto post-exit cleanup failed: {}", err),
+                    );
+                }
+            }
+        }
 
         let outcome = LaunchMonitorOutcome {
             observation,

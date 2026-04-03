@@ -1881,7 +1881,8 @@ defineExpose({
   overflow: hidden;
   animation: slideUp 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
   will-change: transform;
-  contain: layout style;
+  contain: layout style paint;
+  isolation: isolate;
 }
 
 @keyframes slideUp {
@@ -1954,7 +1955,9 @@ defineExpose({
   padding: 12px 20px;
   color: rgba(255, 255, 255, 0.65);
   cursor: pointer;
-  transition: all 0.2s;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
   font-size: 14px;
   margin: 2px 10px;
   border-radius: 6px;
@@ -2053,7 +2056,9 @@ defineExpose({
   border-radius: 6px;
   cursor: pointer;
   color: rgba(255, 255, 255, 0.6);
-  transition: all 0.2s;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
 }
 
 .close-btn:hover {
@@ -2107,7 +2112,9 @@ defineExpose({
   color: #fff;
   font-size: 14px;
   outline: none;
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease;
 }
 
 .custom-input:focus {
@@ -2128,7 +2135,12 @@ defineExpose({
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease,
+    transform 0.2s ease,
+    opacity 0.2s ease;
   color: #fff;
   background: rgba(255, 255, 255, 0.05);
 }

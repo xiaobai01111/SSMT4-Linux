@@ -137,8 +137,12 @@ const { t } = useI18n();
   border-radius: 28px;
   cursor: pointer;
   overflow: hidden;
-  transition: all 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    background-color 0.2s ease,
+    box-shadow 0.2s ease;
   box-shadow: 0 8px 20px rgba(var(--el-color-primary-rgb), 0.3);
+  will-change: transform;
 }
 
 .btn-background-fx {
@@ -251,7 +255,10 @@ const { t } = useI18n();
   justify-content: center;
   color: #fff;
   cursor: pointer;
-  transition: all 0.2s;
+  transition:
+    transform 0.2s ease,
+    background-color 0.2s ease,
+    border-color 0.2s ease;
 }
 
 .settings-btn:hover {
@@ -291,7 +298,9 @@ const { t } = useI18n();
   color: rgba(255, 255, 255, 0.85) !important;
   padding: 10px 16px !important;
   font-size: 14px !important;
-  transition: all 0.2s !important;
+  transition:
+    background-color 0.2s ease !important,
+    color 0.2s ease !important;
 }
 
 .settings-dropdown .el-dropdown-menu__item:hover,

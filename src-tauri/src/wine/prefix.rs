@@ -348,8 +348,8 @@ fn persist_custom_prefix_path_in_db(
     }
     root.remove("prefixPath");
 
-    let serialized = serde_json::to_string_pretty(&data)
-        .map_err(|e| format!("序列化游戏配置失败: {}", e))?;
+    let serialized =
+        serde_json::to_string_pretty(&data).map_err(|e| format!("序列化游戏配置失败: {}", e))?;
     crate::configs::database::set_game_config(&game_id, &serialized);
     Ok(())
 }
@@ -599,7 +599,8 @@ fn ensure_safe_prefix_delete_target(game_id: &str, prefix_dir: &Path) -> Result<
     }
 
     if let Some(custom_prefix_dir) = resolve_custom_prefix_from_db(game_id) {
-        let canonical_custom = std::fs::canonicalize(&custom_prefix_dir).unwrap_or(custom_prefix_dir);
+        let canonical_custom =
+            std::fs::canonicalize(&custom_prefix_dir).unwrap_or(custom_prefix_dir);
         if canonical_prefix == canonical_custom {
             allowed = true;
         }
